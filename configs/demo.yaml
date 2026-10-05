@@ -1,0 +1,17 @@
+model_path: /home/test/testdata/models/Qwen3.5-4B
+model_name: Qwen3.5-4B
+vllm_base_url: http://127.0.0.1:8001/v1
+max_model_len: 32768
+max_tokens: 16384
+temperature: 0.9
+top_p: 0.95
+top_k: 20
+presence_penalty: 0.0
+prompt_policy: blind
+max_retries: 2
+max_plies: 300
+record_video: false
+host: 0.0.0.0
+port: 7860
+vllm_image: vllm/vllm-openai:v0.20.1
+gpu_memory_utilization: 0.45

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LLMGo! 中国象棋</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">LLMGo!</p>
+      <h1>中国象棋对局</h1>
+      <p class="sub">红方和黑方各看各的思考。两边只共享棋盘和已经落下的走法。</p>
+    </div>
+    <form id="controls">
+      <label>后端
+        <select name="backend">
+          <option value="vllm">vLLM · Qwen3.5-4B</option>
+          <option value="scripted">脚本试下</option>
+        </select>
+      </label>
+      <label>提示
+        <select name="prompt_policy">
+          <option value="blind">不给合法着法</option>
+          <option value="legal_list">列出合法着法</option>
+        </select>
+      </label>
+      <label>红方温度 <input name="red_temperature" type="number" min="0" max="2" step="0.1" value="0.9" /></label>
+      <label>黑方温度 <input name="black_temperature" type="number" min="0" max="2" step="0.1" value="0.9" /></label>
+      <label>最多步数 <input name="max_plies" type="number" min="1" max="600" value="300" /></label>
+      <label class="check"><input name="record_video" type="checkbox" /> 保存录像</label>
+      <button type="submit" id="start">开始</button>
+      <button type="button" id="stop" disabled>停止</button>
+      <span id="health" class="health">正在检查 vLLM</span>
+    </form>
+  </header>
+
+  <main>
+    <section class="seat" id="red-seat">
+      <header>
+        <h2>红方</h2>
+        <p>只显示红方自己的输出</p>
+      </header>
+      <h3>送给模型的提示</h3>
+      <pre id="red-prompt" class="stream prompt"></pre>
+      <h3>思考</h3>
+      <pre id="red-reasoning" class="stream"></pre>
+      <h3>正式输出</h3>
+      <pre id="red-content" class="stream short"></pre>
+      <div id="red-archive" class="archive"></div>
+    </section>
+
+    <section class="table">
+      <div class="board-shell">
+        <div class="file-labels top" id="files-top"></div>
+        <div class="board-row">
+          <div class="rank-labels" id="ranks"></div>
+          <div class="board" id="board">
+            <svg id="lines" viewBox="0 0 8 9" preserveAspectRatio="none"></svg>
+            <div class="river"><span>楚河</span><span>汉界</span></div>
+            <div id="marks"></div>
+            <div id="pieces"></div>
+          </div>
+        </div>
+        <div class="file-labels bottom" id="files-bottom"></div>
+      </div>
+      <p id="status" class="status">还没有开局</p>
+      <div class="playback">
+        <button type="button" id="replay-prev">上一手</button>
+        <button type="button" id="replay-next">下一手</button>
+        <button type="button" id="replay-play">播放</button>
+        <span id="replay-label"></span>
+      </div>
+      <div id="moves" class="moves"></div>
+    </section>
+
+    <section class="seat" id="black-seat">
+      <header>
+        <h2>黑方</h2>
+        <p>只显示黑方自己的输出</p>
+      </header>
+      <h3>送给模型的提示</h3>
+      <pre id="black-prompt" class="stream prompt"></pre>
+      <h3>思考</h3>
+      <pre id="black-reasoning" class="stream"></pre>
+      <h3>正式输出</h3>
+      <pre id="black-content" class="stream short"></pre>
+      <div id="black-archive" class="archive"></div>
+    </section>
+  </main>
+
+  <section class="reports">
+    <article>
+      <h2>本局诊断</h2>
+      <div id="game-report" class="report">开始对局后，这里显示首步合法率和错误类型。</div>
+    </article>
+    <article>
+      <h2>全部对局</h2>
+      <div id="all-report" class="report">还没有汇总。</div>
+      <div id="game-list" class="game-list"></div>
+    </article>
+  </section>
+  <script src="/static/app.js?v=len"></script>
+</body>
+</html>

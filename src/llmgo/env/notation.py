@@ -221,16 +221,15 @@ def _destination_from_words(
 
 
 def parse_model_move(text: str, pos: Position) -> tuple[Move | None, str | None]:
-    """从模型原文取出走法。返回 (move, parsed_by)。"""
+    """从模型原文取出走法。有多个 <move> 时用最后一个。返回 (move, parsed_by)。"""
     chunks = TAG_RE.findall(text or "")
-    sources = chunks or [text or ""]
-    for chunk in sources:
-        iccs = ICCS_RE.search(chunk)
-        if iccs:
-            move = Move.parse(iccs.group(0))
-            if move is not None:
-                return move, "iccs"
-        move = parse_chinese(pos, chunk)
+    chunk = chunks[-1] if chunks else (text or "")
+    iccs_hits = ICCS_RE.findall(chunk)
+    if iccs_hits:
+        move = Move.parse(iccs_hits[-1])
         if move is not None:
-            return move, "chinese"
+            return move, "iccs"
+    move = parse_chinese(pos, chunk)
+    if move is not None:
+        return move, "chinese"
     return None, None

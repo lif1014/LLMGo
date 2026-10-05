@@ -74,6 +74,8 @@ class XiangqiTests(unittest.TestCase):
         self.assertEqual((parsed.uci if parsed else None, how), ("h2e2", "chinese"))
         parsed, how = parse_model_move("<move>h2e2</move>", pos)
         self.assertEqual(how, "iccs")
+        parsed, how = parse_model_move("<move>h2e2</move> 后来决定 <move>b2e2</move>", pos)
+        self.assertEqual((parsed.uci if parsed else None, how), ("b2e2", "iccs"))
         red = Observation.from_position(pos, "red", [], "马腿被挡，只有红方看得到", 1, "blind")
         black = Observation.from_position(pos, "black", [], None, 0, "blind")
         red_prompt = render_user_prompt(red)

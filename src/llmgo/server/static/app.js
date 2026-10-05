@@ -127,6 +127,41 @@ function setLive(seat) {
   document.getElementById(`${seat}-content`).textContent = state.live[seat].content;
 }
 
+const dirtyChannels = new Set();
+let paintScheduled = false;
+
+function schedulePaint(seat, channel) {
+  dirtyChannels.add(`${seat}:${channel}`);
+  if (paintScheduled) return;
+  paintScheduled = true;
+  requestAnimationFrame(() => {
+    paintScheduled = false;
+    for (const key of dirtyChannels) {
+      const [paintedSeat, paintedChannel] = key.split(":");
+      const node = document.getElementById(`${paintedSeat}-${paintedChannel}`);
+      node.textContent = state.live[paintedSeat][paintedChannel];
+      node.scrollTop = node.scrollHeight;
+    }
+    dirtyChannels.clear();
+  });
+}
+
+function watchLive(gameId) {
+  if (state.socket && state.id === gameId && state.socket.readyState <= 1) return;
+  state.id = gameId;
+  document.getElementById("start").disabled = true;
+  document.getElementById("stop").disabled = false;
+  document.getElementById("status").textContent = "正在接上进行中的对局…";
+  if (state.socket) state.socket.close();
+  const protocol = location.protocol === "https:" ? "wss" : "ws";
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/games/${gameId}`);
+  state.socket = socket;
+  socket.onmessage = (message) => onEvent(JSON.parse(message.data));
+  for (const button of document.querySelectorAll("#game-list button")) {
+    button.classList.toggle("active", button.dataset.id === gameId);
+  }
+}
+
 function addMove(attempt) {
   const row = document.createElement("div");
   row.className = attempt.ok ? "move" : "move bad";
@@ -214,9 +249,7 @@ function onEvent(event) {
   }
   if (event.type === "token") {
     state.live[event.seat][event.channel] += event.text;
-    const node = document.getElementById(`${event.seat}-${event.channel}`);
-    node.textContent = state.live[event.seat][event.channel];
-    node.scrollTop = node.scrollHeight;
+    schedulePaint(event.seat, event.channel);
     return;
   }
   if (event.type === "attempt") {
@@ -333,7 +366,7 @@ async function openReplay(gameId) {
   const summary = [...(data.events || [])].reverse().find((event) => event.type === "summary" || event.type === "game_finished");
   const report = summary && (summary.game || summary.summary);
   if (report) renderSummary(document.getElementById("game-report"), report, "本局首步合法率");
-  showFrame(0);
+  showFrame(Math.max(0, replay.frames.length - 1));
   for (const button of document.querySelectorAll("#game-list button")) {
     button.classList.toggle("active", button.dataset.id === gameId);
   }
@@ -345,24 +378,39 @@ async function loadReports() {
   renderSummary(document.getElementById("all-report"), data.aggregate, `共 ${data.aggregate.games} 局`);
   const list = document.getElementById("game-list");
   list.innerHTML = "";
+  const rows = [];
   for (const game of data.games || []) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.id = game.game_id;
-    const rate = percent(game.first_try_legal_rate);
-    let stateLabel = game.result;
-    if (!stateLabel) {
-      stateLabel = "已中断";
+    let stateLabel = game.result || "已中断";
+    let live = false;
+    if (!game.result) {
       try {
         const info = await (await fetch(`/api/games/${game.game_id}`)).json();
-        if (info.live) stateLabel = "进行中";
+        live = Boolean(info.live);
+        stateLabel = live ? "进行中" : "已中断";
       } catch (error) {
         stateLabel = "已中断";
       }
     }
-    button.textContent = `${game.game_id}  ${stateLabel}  首步合法率 ${rate}`;
-    button.addEventListener("click", () => openReplay(game.game_id));
+    rows.push({ game, stateLabel, live });
+  }
+  rows.sort((a, b) => Number(b.live) - Number(a.live) || (a.game.game_id < b.game.game_id ? 1 : -1));
+  let liveId = null;
+  for (const row of rows) {
+    if (row.live && !liveId) liveId = row.game.game_id;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.id = row.game.game_id;
+    const rate = percent(row.game.first_try_legal_rate);
+    button.textContent = `${row.game.game_id}  ${row.stateLabel}  首步合法率 ${rate}`;
+    button.addEventListener("click", () => {
+      if (row.live) watchLive(row.game.game_id);
+      else openReplay(row.game.game_id);
+    });
     list.appendChild(button);
+  }
+  if (liveId && !state.socket) watchLive(liveId);
+  for (const button of document.querySelectorAll("#game-list button")) {
+    button.classList.toggle("active", button.dataset.id === state.id);
   }
 }
 
@@ -399,14 +447,8 @@ document.getElementById("controls").addEventListener("submit", async (event) => 
     document.getElementById("status").textContent = data.detail || "无法开局";
     return;
   }
-  state.id = data.id;
-  document.getElementById("start").disabled = true;
-  document.getElementById("stop").disabled = false;
-  if (state.socket) state.socket.close();
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/games/${data.id}`);
-  state.socket = socket;
-  socket.onmessage = (message) => onEvent(JSON.parse(message.data));
+  watchLive(data.id);
+  loadReports();
 });
 
 document.getElementById("stop").addEventListener("click", async () => {

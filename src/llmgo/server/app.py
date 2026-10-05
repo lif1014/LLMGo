@@ -241,8 +241,23 @@ async def watch(socket: WebSocket, game_id: str):
     await socket.accept()
     async with game.lock:
         await socket.send_json({"type": "replay_begin"})
+        # 历史 token 合并成一块再送，避免刷新时把几万条逐字事件堵在锁里。
+        pending: dict[tuple[str, str], str] = {}
+
+        async def flush_tokens() -> None:
+            for (seat, channel), text in pending.items():
+                if text:
+                    await socket.send_json({"type": "token", "seat": seat, "channel": channel, "text": text})
+            pending.clear()
+
         for event in game.events:
+            if event.get("type") == "token":
+                key = (event.get("seat") or "", event.get("channel") or "")
+                pending[key] = pending.get(key, "") + (event.get("text") or "")
+                continue
+            await flush_tokens()
             await socket.send_json(event)
+        await flush_tokens()
         game.sockets.add(socket)
     try:
         while True:

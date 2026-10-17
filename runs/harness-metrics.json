@@ -1,0 +1,181 @@
+{
+  "primary_score": 0.4,
+  "wins": 2,
+  "draws": 4,
+  "losses": 4,
+  "forfeits": 0,
+  "random_moves": 438,
+  "tool_uses": {
+    "legal": 537,
+    "hanging": 75,
+    "king": 49,
+    "material": 44
+  },
+  "games": [
+    {
+      "game_id": "20261017-064643-4135",
+      "result": "draw",
+      "result_reason": "repetition",
+      "model_seat": "white",
+      "seconds": 6308.717864513397,
+      "random_moves": 22,
+      "tool_uses": {
+        "legal": 35,
+        "hanging": 2,
+        "king": 2,
+        "material": 2
+      }
+    },
+    {
+      "game_id": "20261017-064643-1a0f",
+      "result": "black_win",
+      "result_reason": "checkmate",
+      "model_seat": "white",
+      "seconds": 3090.6024103164673,
+      "random_moves": 13,
+      "tool_uses": {
+        "legal": 17,
+        "hanging": 3,
+        "king": 2,
+        "material": 0
+      }
+    },
+    {
+      "game_id": "20261017-064643-bceb",
+      "result": "white_win",
+      "result_reason": "checkmate",
+      "model_seat": "white",
+      "seconds": 2272.2648973464966,
+      "random_moves": 9,
+      "tool_uses": {
+        "legal": 12,
+        "hanging": 1,
+        "king": 1,
+        "material": 1
+      }
+    },
+    {
+      "game_id": "20261017-064643-165c",
+      "result": "draw",
+      "result_reason": "insufficient_material",
+      "model_seat": "white",
+      "seconds": 14223.6685693264,
+      "random_moves": 62,
+      "tool_uses": {
+        "legal": 78,
+        "hanging": 6,
+        "king": 5,
+        "material": 8
+      }
+    },
+    {
+      "game_id": "20261017-064644-ae0e",
+      "result": "black_win",
+      "result_reason": "checkmate",
+      "model_seat": "white",
+      "seconds": 5133.121720790863,
+      "random_moves": 20,
+      "tool_uses": {
+        "legal": 23,
+        "hanging": 7,
+        "king": 3,
+        "material": 2
+      }
+    },
+    {
+      "game_id": "20261017-064644-c355",
+      "result": "black_win",
+      "result_reason": "checkmate",
+      "model_seat": "black",
+      "seconds": 4861.12109875679,
+      "random_moves": 23,
+      "tool_uses": {
+        "legal": 26,
+        "hanging": 2,
+        "king": 3,
+        "material": 1
+      }
+    },
+    {
+      "game_id": "20261017-064644-9b02",
+      "result": "draw",
+      "result_reason": "truncated",
+      "model_seat": "black",
+      "seconds": 22779.406334877014,
+      "random_moves": 104,
+      "tool_uses": {
+        "legal": 124,
+        "hanging": 18,
+        "king": 16,
+        "material": 11
+      }
+    },
+    {
+      "game_id": "20261017-064644-caf8",
+      "result": "white_win",
+      "result_reason": "checkmate",
+      "model_seat": "black",
+      "seconds": 9721.258832454681,
+      "random_moves": 51,
+      "tool_uses": {
+        "legal": 54,
+        "hanging": 10,
+        "king": 3,
+        "material": 4
+      }
+    },
+    {
+      "game_id": "20261017-083152-9802",
+      "result": "draw",
+      "result_reason": "insufficient_material",
+      "model_seat": "black",
+      "seconds": 17970.064554691315,
+      "random_moves": 86,
+      "tool_uses": {
+        "legal": 102,
+        "hanging": 11,
+        "king": 11,
+        "material": 9
+      }
+    },
+    {
+      "game_id": "20261017-073814-e7a8",
+      "result": "white_win",
+      "result_reason": "checkmate",
+      "model_seat": "black",
+      "seconds": 10779.93997168541,
+      "random_moves": 48,
+      "tool_uses": {
+        "legal": 66,
+        "hanging": 15,
+        "king": 3,
+        "material": 6
+      }
+    }
+  ],
+  "protocol": {
+    "game": "chess",
+    "llmgo_root": "/user/liyaohu4170/LLMGo!",
+    "engine": "/user/liyaohu4170/LLMGo!/engines/fairy-stockfish",
+    "level": 1,
+    "anchor_elo": 800,
+    "skill": -9,
+    "movetime_sec": 0.05,
+    "depth": 5,
+    "games": 10,
+    "white": 5,
+    "black": 5,
+    "temperature": 0.9,
+    "top_p": 0.95,
+    "top_k": 20,
+    "presence_penalty": 0.0,
+    "max_tokens": 32768,
+    "max_plies": 300,
+    "max_retries": 2,
+    "policy": "blind",
+    "model_name": "Qwen3.5-4B"
+  },
+  "model_path": "/user/liyaohu4170/models/Qwen3.5-4B",
+  "gpus": 8,
+  "harness": true
+}

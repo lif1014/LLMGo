@@ -1,0 +1,122 @@
+{
+  "batch_id": "20261006-163955-9105",
+  "level": {
+    "anchor_elo": 800,
+    "skill": -9,
+    "movetime": 0.05,
+    "depth": 5
+  },
+  "games": [
+    {
+      "game_id": "20261006-163955-3675",
+      "result": "black_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "white",
+      "anchor_elo": 800,
+      "seconds": 4653.107226848602
+    },
+    {
+      "game_id": "20261006-163957-b514",
+      "result": "black_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "white",
+      "anchor_elo": 800,
+      "seconds": 5511.351268291473
+    },
+    {
+      "game_id": "20261006-163957-c510",
+      "result": "white_win",
+      "result_reason": "checkmate",
+      "model_seat": "white",
+      "anchor_elo": 800,
+      "seconds": 4532.82821559906
+    },
+    {
+      "game_id": "20261006-163957-05d3",
+      "result": "black_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "white",
+      "anchor_elo": 800,
+      "seconds": 3047.130051136017
+    },
+    {
+      "game_id": "20261006-163957-1b60",
+      "result": "black_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "white",
+      "anchor_elo": 800,
+      "seconds": 7422.623871564865
+    },
+    {
+      "game_id": "20261006-163957-a413",
+      "result": "white_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "black",
+      "anchor_elo": 800,
+      "seconds": 10743.338753700256
+    },
+    {
+      "game_id": "20261006-163957-c11d",
+      "result": "white_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "black",
+      "anchor_elo": 800,
+      "seconds": 10572.025672674179
+    },
+    {
+      "game_id": "20261006-163957-c0f5",
+      "result": "white_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "black",
+      "anchor_elo": 800,
+      "seconds": 18173.213458299637
+    },
+    {
+      "game_id": "20261006-163957-6af9",
+      "result": "white_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "black",
+      "anchor_elo": 800,
+      "seconds": 7761.985238790512
+    },
+    {
+      "game_id": "20261006-163957-41f9",
+      "result": "white_win",
+      "result_reason": "illegal_forfeit",
+      "model_seat": "black",
+      "anchor_elo": 800,
+      "seconds": 10458.474915981293
+    }
+  ],
+  "report": {
+    "finished": 10,
+    "unfinished": 0,
+    "by_anchor": [
+      {
+        "anchor_elo": 800.0,
+        "all": {
+          "anchor_elo": 800.0,
+          "score": 1.0,
+          "games": 10,
+          "p": 0.1,
+          "rating": 418.30299622427003,
+          "se": 183.11463174094047,
+          "saturated": null
+        },
+        "played": {
+          "anchor_elo": 800.0,
+          "score": 1.0,
+          "games": 1,
+          "p": 1.0,
+          "rating": null,
+          "se": null,
+          "saturated": "high"
+        },
+        "forfeits": 9,
+        "wins": 1,
+        "draws": 0,
+        "losses": 9
+      }
+    ]
+  }
+}

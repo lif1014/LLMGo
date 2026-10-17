@@ -1,0 +1,12 @@
+log=/user/liyaohu4170/LLMGo!/runs/eval-harness-20261017-060555.log
+==== eval harness ====
+time=2026-10-17T06:05:55.828927+00:00
+host=job-rsi-train-1255586-main-0
+cwd=/user/liyaohu4170/LLMGo!
+python=/usr/bin/python3
+version=3.12.13
+argv=scripts/eval_harness.py --model-path /user/liyaohu4170/models/Qwen3.5-4B --output /user/liyaohu4170/LLMGo!/runs/harness-metrics.json
+cuda_visible_devices=
+deps=install python-chess
+pip=/usr/bin/python3 -m pip install --disable-pip-version-check --upgrade-strategy only-if-needed -i https://mirrors.ustc.edu.cn/pypi/simple python-chess
+安裝依賴失敗，結束碼 1

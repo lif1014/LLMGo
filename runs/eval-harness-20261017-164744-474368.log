@@ -1,0 +1,14 @@
+log=/home/test/test06/lyh/LLMGo!/runs/eval-harness-20261017-164744-474368.log
+==== eval harness ====
+time=2026-10-17T16:47:44.476339+00:00
+host=g26
+cwd=/home/test/test06/lyh/LLMGo!
+python=/home/test1267/test-6/miniconda3/bin/python3
+version=3.12.2
+argv=scripts/eval_harness.py --model-path /home/test/testdata/models/Qwen3.5-4B --output /home/test/test06/lyh/LLMGo!/runs/harness-metrics.json --protocol /home/test/test06/lyh/LLMGo!/runs/protocol-g26.json --gpus 1
+cuda_visible_devices=5
+http_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+https_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+no_proxy=.paratera.com,.thuwayinfo.com,.modelbest.co,127.0.0.1,localhost
+deps=already-installed python-chess httpx
+vLLM 沒有就緒。日誌：/home/test/test06/lyh/LLMGo!/runs/harness_runs/service_logs/20261017-164744-14646b-vllm-0.log

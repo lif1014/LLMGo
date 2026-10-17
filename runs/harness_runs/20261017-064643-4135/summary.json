@@ -1,0 +1,31 @@
+{
+  "game_id": "20261017-064643-4135",
+  "game": "chess",
+  "result": "draw",
+  "result_reason": "repetition",
+  "attempts": 81,
+  "first_try_total": 81,
+  "first_try_legal": 81,
+  "first_try_legal_rate": 1.0,
+  "error_types": {},
+  "by_seat": {
+    "white": {
+      "first_try_total": 41,
+      "first_try_legal": 41,
+      "error_types": {}
+    },
+    "black": {
+      "first_try_total": 40,
+      "first_try_legal": 40,
+      "error_types": {}
+    }
+  },
+  "finish_length_count": 0,
+  "random_moves": 22,
+  "tool_uses": {
+    "legal": 35,
+    "hanging": 2,
+    "king": 2,
+    "material": 2
+  }
+}

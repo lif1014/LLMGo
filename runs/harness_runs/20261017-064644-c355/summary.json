@@ -1,0 +1,31 @@
+{
+  "game_id": "20261017-064644-c355",
+  "game": "chess",
+  "result": "black_win",
+  "result_reason": "checkmate",
+  "attempts": 62,
+  "first_try_total": 62,
+  "first_try_legal": 62,
+  "first_try_legal_rate": 1.0,
+  "error_types": {},
+  "by_seat": {
+    "white": {
+      "first_try_total": 31,
+      "first_try_legal": 31,
+      "error_types": {}
+    },
+    "black": {
+      "first_try_total": 31,
+      "first_try_legal": 31,
+      "error_types": {}
+    }
+  },
+  "finish_length_count": 0,
+  "random_moves": 23,
+  "tool_uses": {
+    "legal": 26,
+    "hanging": 2,
+    "king": 3,
+    "material": 1
+  }
+}

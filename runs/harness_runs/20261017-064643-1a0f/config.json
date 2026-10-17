@@ -1,0 +1,8 @@
+{
+  "id": "20261017-064643-1a0f",
+  "eval": "harness",
+  "game": "chess",
+  "model_seat": "white",
+  "model": "Qwen3.5-4B",
+  "vllm_base_url": "http://127.0.0.1:8001/v1"
+}

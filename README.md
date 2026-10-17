@@ -39,14 +39,21 @@ vLLM。未給 URL 時，每張選定 GPU 啟動一個模型服務。`--gpus 1` �
 
 - `turn_started`：本手設定及工具庫。
 - `model_request started/finished`：實際 prompt、請求參數、完整 reasoning/content、
-  原始 HTTP 回應、usage、延遲、finish_reason、解析結果與重試序號。
+  原始 HTTP／SSE 回應、usage、延遲、首段文字延遲、finish_reason、解析結果與重試序號。
+- `token`：模型生成中的文字片段，包含 request_id、reasoning/content 通道、片段序號、
+  時間及必要的文字替換標記；片段數不等於 tokenizer 的 token 數。
 - `tool_call started/finished`：工具名稱、參數、完整回傳與計算時間。
 - `choice`：全部完整合法步與最終選擇，唯一合法步記為 `forced`。
 - `fallback`：隨機後備的原因、範圍及剩餘預算；舊日誌的 `route_recovery` 仍可回放。
 - `attempt`、`position`、`game_finished`：實際走子、局面與結果。
 
 每筆有時間戳及 sequence。網頁可逐手回放完整請求與工具結果，並展示工具庫、
-條件式 skills、生成預算及選擇完成率。命令列進行中的棋局會以增量輪詢顯示。
+條件式 skills、生成預算及選擇完成率。模型請求使用 SSE 串流，網頁透過 WebSocket
+即時顯示思考與最終回答。命令列進行中的棋局也透過 WebSocket 增量讀取 JSONL，
+約每 0.1 秒檢查新記錄。重新連線會補上已生成的內容，完成時不重複追加全文；
+停止、逾時或斷線後，已生成的片段仍保留供回放。精確 token 數以串流末尾的 usage
+為準，服務未提供 usage 時明確標示估算。重啟網頁服務並啟動新對局後即可使用，
+既有 vLLM 服務可繼續重用；舊評測進程需重新啟動，才會開始寫入串流片段。
 舊對局仍可回放，但當時沒有保存的診斷不會被補造。
 
 每批結果除 `--output` 外，也保存於 `harness_batches/<batch>.json`，避免被下一批

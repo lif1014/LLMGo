@@ -184,7 +184,7 @@ class ServerHarnessTests(unittest.TestCase):
         async def down(*args, **kwargs):
             return AskResult("", 0, error="test connection failure")
         async def probe():
-            with tempfile.TemporaryDirectory() as folder, patch.object(server, 'RUNS', Path(folder)), patch('llmgo.harness.player.VllmAsker.__call__', down):
+            with tempfile.TemporaryDirectory() as folder, patch.object(server, 'RUNS', Path(folder)), patch('llmgo.harness.player.VllmAsker.stream', down):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as client:
                     response = await client.post('/api/games', json={'backend':'harness','game':'chess','opponent':'model','max_plies':2,'max_tokens':64})
                     self.assertEqual(response.status_code, 200, response.text)

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from llmgo.env.games import get_game as load_rules
 from llmgo.env.xiangqi import Position
-from llmgo.eval.report import aggregate, load_runs
+from llmgo.eval.report import aggregate, load_runs, summarize_attempts
 from llmgo.render.frames import draw_attempt
 from llmgo.render.video import write_gif
 from llmgo.runner.loop import GameRunner
@@ -210,7 +210,7 @@ def _saved_game_dir(game_id: str) -> Path | None:
 
 def _public_event(event: dict) -> dict | None:
     kind = event.get("type")
-    if kind not in {"position", "attempt", "summary", "game_finished", "turn_started", "choice", "model_request", "tool_call", "fallback", "route_recovery"}:
+    if kind not in {"position", "attempt", "summary", "game_finished", "turn_started", "choice", "model_request", "tool_call", "fallback", "route_recovery", "token"}:
         return None
     shown = dict(event)
     if kind in {"attempt", "turn_started"} and shown.get("prompt") and not shown.get("llm_input"):
@@ -314,37 +314,104 @@ async def start_game(body: NewGame):
     return {"id": game_id}
 
 
+def _coalesce_tokens(events):
+    """Combine replay chunks without losing request IDs or replacement semantics."""
+    pending = {}
+    for event in events:
+        if event.get('type') != 'token':
+            yield from pending.values()
+            pending.clear()
+            yield event
+            continue
+        key = (event.get('seat'), event.get('request_id'), event.get('channel'))
+        if key not in pending or event.get('replace'):
+            pending[key] = dict(event)
+        else:
+            pending[key]['text'] += event.get('text', '')
+            for field in ('sequence', 'timestamp', 'chunk_index', 'elapsed_ms'):
+                if field in event: pending[key][field] = event[field]
+    yield from pending.values()
+
+
+async def _watch_saved(socket: WebSocket, folder: Path):
+    """Tail CLI-written JSONL as it grows; never consume a partial record."""
+    await socket.accept()
+    await socket.send_json({'type': 'replay_begin'})
+
+    async def publish():
+        with (folder / 'events.jsonl').open('rb') as handle:
+            while True:
+                batch = []
+                at_end = False
+                for _ in range(1024):
+                    offset = handle.tell()
+                    line = handle.readline()
+                    if not line.endswith(b'\n'):
+                        handle.seek(offset)
+                        at_end = True
+                        break
+                    if line.strip():
+                        event = _public_event(json.loads(line))
+                        if event is not None: batch.append(event)
+                for event in _coalesce_tokens(batch):
+                    await socket.send_json(event)
+                    if event['type'] == 'game_finished':
+                        await socket.close(code=1000)
+                        return
+                if at_end:
+                    summary = folder / 'summary.json'
+                    if summary.is_file():
+                        try:
+                            result = json.loads(summary.read_text(encoding='utf-8'))
+                        except json.JSONDecodeError:
+                            pass  # summary writer may still be flushing
+                        else:
+                            await socket.send_json({'type': 'game_finished', 'result': result.get('result'),
+                                                    'result_reason': result.get('result_reason'), 'summary': result})
+                            await socket.close(code=1000)
+                            return
+                    await asyncio.sleep(0.1)
+                else:
+                    await asyncio.sleep(0)
+
+    async def receive():
+        while True:
+            message = await socket.receive()
+            if message['type'] == 'websocket.disconnect': return
+
+    tasks = {asyncio.create_task(publish()), asyncio.create_task(receive())}
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done: task.result()
+    except (WebSocketDisconnect, OSError, RuntimeError):
+        pass
+    finally:
+        for task in tasks: task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @app.websocket("/ws/games/{game_id}")
 async def watch(socket: WebSocket, game_id: str):
     game = hub.games.get(game_id)
     if game is None:
-        await socket.close(code=4404)
+        folder = _saved_game_dir(game_id)
+        if folder is not None and (folder / 'events.jsonl').is_file():
+            await _watch_saved(socket, folder)
+        else:
+            await socket.close(code=4404)
         return
     await socket.accept()
     async with game.lock:
         await socket.send_json({"type": "replay_begin"})
-        # 历史 token 合并成一块再送，避免刷新时把几万条逐字事件堵在锁里。
-        pending: dict[tuple[str, str], str] = {}
-
-        async def flush_tokens() -> None:
-            for (seat, channel), text in pending.items():
-                if text:
-                    await socket.send_json({"type": "token", "seat": seat, "channel": channel, "text": text})
-            pending.clear()
-
-        for event in game.events:
-            if event.get("type") == "token":
-                key = (event.get("seat") or "", event.get("channel") or "")
-                pending[key] = pending.get(key, "") + (event.get("text") or "")
-                continue
-            await flush_tokens()
+        for event in _coalesce_tokens(game.events):
             await socket.send_json(event)
-        await flush_tokens()
         game.sockets.add(socket)
     try:
         while True:
             await socket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         async with game.lock:
             game.sockets.discard(socket)
 
@@ -429,14 +496,12 @@ async def _drive(game: GameSession) -> None:
         await runner.run(game.emit)
     except asyncio.CancelledError:
         if not game.finished:
-            await game.emit(
-                {
-                    "type": "game_finished",
-                    "result": "aborted",
-                    "result_reason": "stopped",
-                    "summary": game.summary,
-                }
-            )
+            attempts = [event for event in game.events if event['type'] == 'attempt']
+            summary = summarize_attempts(game.id, attempts, 'aborted', 'stopped', rules.seats, rules.name)
+            game.store.write_summary(summary)
+            done = {"type": "game_finished", "result": "aborted", "result_reason": "stopped", "summary": summary}
+            game.store.append(done)
+            await game.emit(done)
         raise
     finally:
         if engine_seat is not None:

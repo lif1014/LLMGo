@@ -79,4 +79,41 @@ assert.equal(node('red-content').textContent, 'e2e4');
 assert.match(node('red-tools').textContent, /candidates/);
 vm.runInContext(`onEvent({type:'choice',stage:'move',status:'answered',seat:'white',uci:'h8h7',source:'forced',blackboard:[]});`, context);
 assert.match(node('status').textContent, /唯一合法步/);
+// Live chunks are visible before finish, reconciled once, and separated across retries.
+vm.runInContext(`
+  onEvent({type:'turn_started',seat:'white',tool_library:[]});
+  onEvent({type:'model_request',status:'started',seat:'white',request_id:'stream:1',stage:'move',prompt:'stream prompt'});
+  onEvent({type:'token',seat:'white',request_id:'stream:1',channel:'reasoning',text:'Live ',replace:false});
+  onEvent({type:'token',seat:'white',request_id:'stream:1',channel:'reasoning',text:'thought',replace:false});
+`, context);
+assert.equal(node('red-reasoning').textContent, 'Live thought');
+assert.equal(node('red-content').textContent, '');
+vm.runInContext(`
+  onEvent({type:'token',seat:'white',request_id:'stream:1',channel:'content',text:'{"move":"e2e4"}',replace:false});
+  onEvent({type:'model_request',status:'finished',seat:'white',request_id:'stream:1',stage:'move',reasoning:'Live thought',text:'{"move":"e2e4"}',output:'Live thought</think>{"move":"e2e4"}',streamed:true});
+  onEvent({type:'token',seat:'white',request_id:'stream:1',channel:'reasoning',text:'late duplicate',replace:false});
+`, context);
+assert.equal(node('red-reasoning').textContent, 'Live thought');
+assert.equal(node('red-content').textContent, '{"move":"e2e4"}');
+vm.runInContext(`
+  onEvent({type:'model_request',status:'started',seat:'white',request_id:'stream:2',stage:'move',prompt:'retry prompt'});
+  onEvent({type:'token',seat:'white',request_id:'stream:2',channel:'reasoning',text:'provisional',replace:false});
+  onEvent({type:'token',seat:'white',request_id:'stream:2',channel:'reasoning',text:'',replace:true});
+  onEvent({type:'token',seat:'white',request_id:'stream:2',channel:'content',text:'{"move":"d2d4"}',replace:false});
+  onEvent({type:'model_request',status:'finished',seat:'white',request_id:'stream:2',stage:'move',reasoning:'Second thought',text:'{"move":"d2d4"}'});
+`, context);
+assert.equal(node('red-reasoning').textContent, 'Live thought\n\nSecond thought');
+assert.equal(node('red-content').textContent, '{"move":"d2d4"}');
+context.partialSample = [
+  {type:'position',game:'chess',pieces:[],side:'white',last_move:null},
+  {type:'model_request',status:'started',seat:'white',stage:'move',request_id:'partial:1',prompt:'unfinished prompt'},
+  {type:'token',seat:'white',request_id:'partial:1',channel:'reasoning',text:'Preserved partial thinking',replace:false}
+];
+vm.runInContext(`
+  replay.frames = buildFrames(partialSample); replay.id = 'partial';
+  if (replay.frames.length !== 2 || !replay.frames[1].pending) throw new Error('lost unfinished response');
+  showFrame(1);
+`, context);
+assert.equal(node('red-reasoning').textContent, 'Preserved partial thinking');
+assert.equal(node('red-prompt').textContent, 'unfinished prompt');
 console.log('Harness UI trace, archive, replay and initial board: passed');

@@ -178,11 +178,17 @@ def test_eval_cli_runs_real_fairy_stockfish_against_local_http_model(tmp_path):
             options = re.findall(r'\b([a-h][1-8][a-h][1-8][qrbn]?) \(', prompt.split('Legal moves (',1)[1])
             assert options and 'Tools\n' not in prompt and 'Pick\n' not in prompt
             assert body['chat_template_kwargs']['enable_thinking'] is True
-            answer = 'I compared candidate alternatives.\n</think>\n' + json.dumps({'move':options[0]})
-            response = json.dumps({'choices':[{'finish_reason':'stop','message':{'content':answer,'reasoning':None}}],
-                                   'usage':{'prompt_tokens':500,'completion_tokens':50}}).encode()
-            self.send_response(200); self.send_header('Content-Type','application/json')
-            self.send_header('Content-Length',str(len(response))); self.end_headers(); self.wfile.write(response)
+            assert body['stream'] and body['stream_options']['include_usage']
+            self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+            chunks = [
+                {'choices':[{'delta':{'content':'I compared candidate alternatives.'},'finish_reason':None}]},
+                {'choices':[{'delta':{'content':'\n</think>\n' + json.dumps({'move':options[0]})},'finish_reason':None}]},
+                {'choices':[{'delta':{},'finish_reason':'stop'}]},
+                {'choices':[],'usage':{'prompt_tokens':500,'completion_tokens':50}},
+            ]
+            for chunk in chunks:
+                self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode()); self.wfile.flush()
+            self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush()
     server=ThreadingHTTPServer(('127.0.0.1',0),ModelServer)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     # Server paths remain untouched; only this temporary test protocol uses local fixtures.
@@ -223,6 +229,8 @@ def test_eval_cli_runs_real_fairy_stockfish_against_local_http_model(tmp_path):
         assert all(e['stage']=='move' for e in records if e['type']=='model_request')
         assert len([e for e in records if e['type']=='tool_call' and e['status']=='finished'])==6
         assert all(e['accepted'] for e in records if e['type']=='model_request' and e['status']=='finished')
+        assert any(e['type']=='token' and e['channel']=='reasoning' for e in records)
+        assert all(e['streamed'] for e in records if e['type']=='model_request' and e['status']=='finished')
         assert json.loads((folder/'config.json').read_text())['harness_config']['request_timeout_sec']==540
     probe_metrics=json.loads(probe_output.read_text())
     assert probe_metrics['request_count']==3 and probe_metrics['random_moves']==0

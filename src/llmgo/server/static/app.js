@@ -277,13 +277,47 @@ function choiceTrace(choices, previousStart) {
   return lines.join("\n\n");
 }
 
+function updateRequest(live, event) {
+  if (!event.request_id) return false;
+  if (!live.requests) live.requests = new Map();
+  let request = live.requests.get(event.request_id);
+  if (!request) {
+    request = { reasoning: "", content: "", finished: false };
+    live.requests.set(event.request_id, request);
+  }
+  if (event.type === "token") {
+    if (request.finished || !["reasoning", "content"].includes(event.channel)) return false;
+    request[event.channel] = event.replace ? event.text : request[event.channel] + event.text;
+  } else if (event.status === "finished") {
+    // Replace streamed/provisional text with the authoritative complete response.
+    request.reasoning = event.reasoning || (!event.text ? event.output || "" : "");
+    request.content = event.text || event.failure_reason || "";
+    request.finished = true;
+  }
+  const requests = [...live.requests.values()];
+  live.reasoning = requests.map(item => item.reasoning).filter(Boolean).join("\n\n");
+  live.content = requests[requests.length - 1].content;
+  return true;
+}
+
+function requestView(choices) {
+  const live = { reasoning: "", content: "" };
+  for (const event of choices || []) {
+    if (event.type === "model_request" || event.type === "token") updateRequest(live, event);
+  }
+  if (!live.requests || !live.requests.size) {
+    const tokens = (choices || []).filter(event => event.type === "token");
+    for (const event of tokens) {
+      if (["reasoning", "content"].includes(event.channel)) live[event.channel] = event.replace ? event.text : live[event.channel] + event.text;
+    }
+    if (!tokens.length) live.reasoning = (choices || []).map(event => event.output || "").filter(Boolean).join("\n\n");
+  }
+  return live;
+}
+
 function modelOutput(choices) {
-  const requests = (choices || []).filter((event) => event.type === "model_request" && event.status === "finished");
-  if (requests.length) return requests.map((event) => event.output || event.reasoning || event.text || "").join("\n\n");
-  return (choices || [])
-    .map((event) => event.output || "")
-    .filter((text) => text)
-    .join("\n\n");
+  const view = requestView(choices);
+  return view.reasoning || (view.requests?.size ? "" : view.content);
 }
 
 function toolTrace(choices) {
@@ -406,6 +440,7 @@ function archive(seat) {
   live.tools = "";
   live.content = "";
   live.blackboardLines = [];
+  live.requests = new Map();
   setLive(seat);
 }
 
@@ -431,7 +466,7 @@ function schedulePaint(seat, channel) {
     for (const key of dirtyChannels) {
       const [paintedSeat, paintedChannel] = key.split(":");
       const node = document.getElementById(`${column(paintedSeat)}-${paintedChannel}`);
-      node.textContent = state.live[paintedSeat][paintedChannel];
+      node.textContent = state.live[paintedSeat]?.[paintedChannel] || "";
       node.scrollTop = node.scrollHeight;
     }
     dirtyChannels.clear();
@@ -456,28 +491,8 @@ async function watchLive(gameId) {
     return;
   }
   if (info.external) {
-    state.socket = null;
-    state.modelSeat = info.model_seat;
-    state.modelName = info.model;
-    resetView();
+    // CLI games tail events.jsonl through the same WebSocket as web-started games.
     document.getElementById("stop").disabled = true;
-    let cursor = 0;
-    let busy = false;
-    const poll = async () => {
-      if (busy || state.id !== gameId) return;
-      busy = true;
-      try {
-        const data = await (await fetch(`/api/games/${gameId}/events?after=${cursor}`)).json();
-        for (const event of data.events || []) onEvent(event);
-        cursor = data.cursor || cursor;
-        if (!data.live && state.externalTimer) {
-          clearInterval(state.externalTimer); state.externalTimer = null;
-        }
-      } finally { busy = false; }
-    };
-    await poll();
-    state.externalTimer = setInterval(poll, 2500);
-    return;
   }
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${location.host}/ws/games/${gameId}`);
@@ -594,9 +609,9 @@ function onEvent(event) {
   if (["model_request", "tool_call", "fallback", "route_recovery"].includes(event.type)) {
     appendTrace(event.seat, event);
     const live = ensureLive(event.seat);
-    if (event.type === "model_request" && event.status === "finished") {
-      live.reasoning = [live.reasoning, event.output || event.reasoning || event.text || ""].filter(Boolean).join("\n\n");
-      live.content = event.text || event.failure_reason || live.content;
+    if (event.type === "model_request") {
+      live.prompt = event.prompt || live.prompt;
+      updateRequest(live, event);
     }
     if (event.type === "tool_call" && event.status === "finished") {
       live.tools = [live.tools, `${event.tool}:\n${(event.result || []).join("\n")}`].filter(Boolean).join("\n\n");
@@ -607,8 +622,12 @@ function onEvent(event) {
     return;
   }
   if (event.type === "token") {
-    ensureLive(event.seat)[event.channel] += event.text;
-    schedulePaint(event.seat, event.channel);
+    if (!["reasoning", "content"].includes(event.channel)) return;
+    const live = ensureLive(event.seat);
+    if (event.request_id) updateRequest(live, event);
+    else live[event.channel] = event.replace ? event.text : live[event.channel] + event.text;
+    schedulePaint(event.seat, "reasoning");
+    schedulePaint(event.seat, "content");
     return;
   }
   if (event.type === "attempt") {
@@ -705,10 +724,12 @@ function showFrame(index) {
   const lastBySeat = new Map();
   for (let i = 0; i <= replay.index; i += 1) {
     const past = replay.frames[i];
-    if (past.attempt) lastBySeat.set(past.attempt.seat, past);
+    if (past.attempt || past.pending) lastBySeat.set(past.attempt ? past.attempt.seat : past.seat, past);
   }
   for (const past of lastBySeat.values()) {
-    const attempt = past.attempt;
+    const pendingView = requestView(past.choices);
+    const pendingPrompt = [...(past.choices || [])].reverse().find(event => event.prompt);
+    const attempt = past.attempt || {seat: past.seat, prompt: pendingPrompt?.prompt || "", content: pendingView.content};
     if (!attempt) continue;
     const engine = attempt.source === "engine" ? "这一步是 Fairy-Stockfish，不是模型。" : "";
     state.live[attempt.seat] = {
@@ -739,7 +760,7 @@ function buildFrames(events) {
   let accepted = null;
   let choices = [];
   for (const event of events) {
-    if (["choice", "model_request", "tool_call", "fallback", "route_recovery"].includes(event.type)) {
+    if (["choice", "model_request", "tool_call", "fallback", "route_recovery", "token"].includes(event.type)) {
       choices.push(event);
     } else if (event.type === "position" && !event.last_move) {
       position = event;
@@ -766,6 +787,11 @@ function buildFrames(events) {
       accepted = null;
       choices = [];
     }
+  }
+  if (choices.length && position) {
+    const latest = [...choices].reverse().find(event => event.seat);
+    frames.push({position, attempt: null, choices, pending: true, seat: latest?.seat,
+      label: "尚未落子的模型回应（含未完成的生成）"});
   }
   return frames;
 }

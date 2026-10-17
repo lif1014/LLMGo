@@ -27,6 +27,9 @@ class AskResult:
     latency_ms: float = 0.0
     http_status: int | None = None
     normalization_error: str | None = None
+    streamed: bool = False
+    stream_chunks: int = 0
+    first_token_ms: float | None = None
 
 @dataclass
 class Decision:
@@ -80,7 +83,7 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
         await send(choice('answered', uci=move.uci(), source='random', fallback_reason=reason,
                           origins=[chess.square_name(move.from_square)], targets=[chess.square_name(move.to_square)]))
         return Decision(move.uci(), 'random', tools, spent, prompt,
-                        '\n\n'.join(item['output'] for item in requests if item['output']), diagnostics(reason))
+                        '\n\n'.join(item['reasoning'] for item in requests if item['reasoning']), diagnostics(reason))
 
     await send({'type': 'turn_started', 'attempt_index': 0, 'prompt': '', 'framework': 'single_choice',
                 'fen': board.fen(), 'tool_library': TOOL_LIBRARY, 'harness_config': cfg.as_dict(),
@@ -129,17 +132,31 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
         if cap <= 0:
             return await fallback('turn_budget_exhausted')
         request_id = f'{turn_id}:{attempt + 1}'
-        payload_builder = getattr(ask, 'build_payload', None)
+        streamer = getattr(ask, 'stream', None)
+        payload_builder = getattr(ask, 'build_stream_payload' if streamer else 'build_payload', None)
         payload = payload_builder(prompt, cap) if payload_builder else {}
         base = {'type': 'model_request', 'stage': 'move', 'request_id': request_id, 'attempt_index': attempt,
                 'prompt': prompt, 'allowed_choices': sorted(allowed), 'max_tokens': cap,
                 'enable_thinking': True, 'budget_total': budget}
         await send({**base, 'status': 'started', 'budget_spent': spent, 'request_payload': payload})
         tick = time.monotonic()
+        cancelled = False
+
+        async def emit_chunk(chunk):
+            await send({'type': 'token', 'stage': 'move', 'request_id': request_id,
+                        'attempt_index': attempt, **chunk})
+
         try:
-            result = await asyncio.wait_for(ask(prompt, cap), timeout=min(cfg.request_timeout_sec, remaining_time))
+            timeout = min(cfg.request_timeout_sec, remaining_time)
+            if streamer:
+                result = await streamer(prompt, cap, emit_chunk, timeout_sec=timeout)
+            else:
+                result = await asyncio.wait_for(ask(prompt, cap), timeout=timeout)
         except TimeoutError:
             result = AskResult('', 0, error='request_timeout', tokens_exact=False)
+        except asyncio.CancelledError as exc:
+            cancelled = True
+            result = getattr(exc, 'partial', AskResult('', 0, error='request_cancelled', tokens_exact=False))
         except Exception as exc:
             result = AskResult('', 0, error=f'{type(exc).__name__}: {exc}', tokens_exact=False)
         used = max(0, result.tokens)
@@ -149,7 +166,7 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
         uci = parse_move(final, allowed) if not (result.error or normalization_error or result.finish_reason == 'length') else None
         timeout_error = result.error and any(name in result.error for name in ('request_timeout', 'ReadTimeout', 'ConnectTimeout', 'WriteTimeout', 'PoolTimeout'))
         reason = None if uci else ('request_timeout' if timeout_error else
-                  'request_error' if result.error else 'length_without_choice' if result.finish_reason == 'length' else
+                  'request_cancelled' if cancelled else 'request_error' if result.error else 'length_without_choice' if result.finish_reason == 'length' else
                   normalization_error or 'invalid_choice')
         record = {**base, 'status': 'finished', 'text': final, 'reasoning': reasoning,
                   'output': result.output or '\n\n'.join(part for part in (reasoning, final) if part),
@@ -157,15 +174,18 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
                   'http_status': result.http_status, 'usage': result.usage, 'completion_tokens': used,
                   'tokens_exact': result.tokens_exact, 'latency_ms': (time.monotonic() - tick) * 1000,
                   'finish_reason': result.finish_reason, 'error': result.error, 'normalization_error': normalization_error,
+                  'streamed': result.streamed, 'stream_chunks': result.stream_chunks, 'first_token_ms': result.first_token_ms,
                   'uci': uci, 'accepted': uci is not None, 'failure_reason': reason, 'budget_spent': spent}
         requests.append(record)
         await send(record)
+        if cancelled:
+            raise asyncio.CancelledError
         if uci:
             move = chess.Move.from_uci(uci)
             await send(choice('answered', uci=uci, source='model',
                               origins=[chess.square_name(move.from_square)], targets=[chess.square_name(move.to_square)]))
             return Decision(uci, 'model', tools, spent, prompt,
-                            '\n\n'.join(item['output'] for item in requests if item['output']), diagnostics())
+                            '\n\n'.join(item['reasoning'] for item in requests if item['reasoning']), diagnostics())
         if result.error or result.finish_reason == 'length':
             return await fallback(reason)
         correction = ('The previous final answer was not accepted (' + reason + '). '

@@ -41,7 +41,10 @@ class UciPlayer:
     def _ensure(self) -> chess.engine.SimpleEngine:
         if self._engine is not None:
             return self._engine
-        engine = chess.engine.SimpleEngine.popen_uci(self.engine_path)
+        engine = chess.engine.SimpleEngine.popen_uci(
+            self.engine_path,
+            cwd=str(Path(self.engine_path).resolve().parent),
+        )
         option = engine.options.get("Skill Level")
         if option is None or option.min is None or option.max is None:
             engine.close()

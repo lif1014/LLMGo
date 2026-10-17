@@ -5,7 +5,13 @@ import re
 
 
 def split_thinking(content: str, reasoning: str = '') -> tuple[str, str, str | None]:
-    """Handle both server-separated reasoning and Qwen's closing-tag-only output."""
+    """Handle server-separated reasoning, closing-tag output, and bare final JSON.
+
+    Qwen's thinking mode sometimes streams reasoning and the final answer in the
+    same ``content`` channel without emitting ``</think>``.  In that case the
+    last ``{"move": "..."}`` object is the final answer; the preceding text is
+    thinking and should not make the decision fall back to a random move.
+    """
     if '</think>' in content:
         thoughts, final = content.rsplit('</think>', 1)
         thoughts = thoughts.removeprefix('<think>').strip()
@@ -17,6 +23,13 @@ def split_thinking(content: str, reasoning: str = '') -> tuple[str, str, str | N
         return final.strip(), reasoning, None
     if '<think>' in content:
         return '', '\n\n'.join(part for part in (reasoning, content) if part), 'incomplete_thinking'
+    matches = list(re.finditer(r'\{\s*"move"\s*:\s*"[^"]+"\s*\}', content, re.DOTALL))
+    if matches:
+        match = matches[-1]
+        before = content[: match.start()].strip()
+        after = content[match.end():].strip()
+        reasoning = '\n\n'.join(part for part in (reasoning, before, after) if part)
+        return match.group(0).strip(), reasoning, None
     return content.strip(), reasoning, None
 
 

@@ -70,7 +70,8 @@ class VllmAsker:
 
         def result(failure=None):
             content, reasoning, normalization_error = split_thinking(text.content, text.reasoning)
-            if not text.reasoning and '</think>' not in text.content and text.shown['reasoning']:
+            if (not text.reasoning and not content and normalization_error is None
+                    and '</think>' not in text.content and text.shown['reasoning']):
                 content, reasoning = '', text.content.removeprefix('<think>')
                 normalization_error = 'incomplete_thinking'
             output = '\n\n'.join(part for part in (text.reasoning, text.content) if part)

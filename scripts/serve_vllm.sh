@@ -4,8 +4,8 @@
 set -euo pipefail
 
 IMAGE="${IMAGE:-vllm/vllm-openai:v0.20.1}"
-MODEL="${MODEL:-/home/test/testdata/models/Qwen3.5-4B}"
-PORT="${PORT:-8000}"
+MODEL="${MODEL:-/user/liyaohu4170/models/Qwen3.5-4B}"
+PORT="${PORT:-8001}"
 MIN_FREE_MIB="${MIN_FREE_MIB:-20000}"
 
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
@@ -33,7 +33,7 @@ if [[ "${FREE}" -lt "${MIN_FREE_MIB}" && "${FORCE:-0}" != "1" ]]; then
   exit 1
 fi
 
-echo "使用镜像 ${IMAGE} ，GPU ${GPU} ，max-model-len 32768"
+echo "使用镜像 ${IMAGE} ，GPU ${GPU} ，max-model-len 40960"
 exec docker run --rm --name llmgo-vllm \
   --gpus "device=${GPU}" \
   --network host \
@@ -44,7 +44,7 @@ exec docker run --rm --name llmgo-vllm \
   --host 127.0.0.1 \
   --port "${PORT}" \
   --tensor-parallel-size 1 \
-  --max-model-len 32768 \
+  --max-model-len 40960 \
   --max-num-seqs 32 \
   --reasoning-parser qwen3 \
   --language-model-only \

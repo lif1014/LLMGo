@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -13,11 +14,15 @@ class TrajectoryStore:
         self.events_path = root / "events.jsonl"
         self.summary_path = root / "summary.json"
         self.config_path = root / "config.json"
+        self.sequence = 0
 
     def write_config(self, config: dict) -> None:
         self.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def append(self, event: dict) -> None:
+        self.sequence += 1
+        event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        event.setdefault("sequence", self.sequence)
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 

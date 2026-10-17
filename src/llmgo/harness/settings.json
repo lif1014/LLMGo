@@ -1,0 +1,12 @@
+{
+  "tool_tokens": 4096,
+  "piece_tokens": 8192,
+  "preview_tokens": 4096,
+  "move_tokens": 16384,
+  "max_lookups": 2,
+  "attempts_per_choice": 2,
+  "request_timeout_sec": 540.0,
+  "turn_timeout_sec": 1800.0,
+  "skills_limit": 3,
+  "history_plies": 12
+}

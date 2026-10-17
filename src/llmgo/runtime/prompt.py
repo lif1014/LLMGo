@@ -39,6 +39,8 @@ class Observation:
     ply: int
     attempt_index: int
     policy: str = "blind"
+    system_text: str | None = None
+    user_text: str | None = None
 
     @classmethod
     def from_position(
@@ -89,6 +91,11 @@ def system_prompt_for(seat: str) -> str:
 
 
 def messages_for(obs: Observation) -> list[dict[str, str]]:
+    if obs.system_text is not None and obs.user_text is not None:
+        return [
+            {"role": "system", "content": obs.system_text},
+            {"role": "user", "content": obs.user_text},
+        ]
     return [
         {"role": "system", "content": system_prompt_for(obs.seat)},
         {"role": "user", "content": render_user_prompt(obs)},

@@ -1,0 +1,252 @@
+[
+  {
+    "id": "answer-check",
+    "title": "Answer a check first",
+    "priority": 100,
+    "stages": [
+      "piece",
+      "move",
+      "preview"
+    ],
+    "trigger": "in_check",
+    "when": "Your king is in check.",
+    "rule": "Compare the legal evasions. Use preview to check the resulting position; do not assume an evasion is tactically safe.",
+    "counterexample": "A legal king escape can still allow mate on the next move. A checking counterattack is valid only if it also resolves your own check.",
+    "sources": [
+      "https://python-chess.readthedocs.io/en/latest/core.html#chess.Board.legal_moves"
+    ]
+  },
+  {
+    "id": "defend-mate",
+    "title": "Inspect the opponent forcing reply",
+    "priority": 95,
+    "stages": [
+      "move",
+      "preview"
+    ],
+    "trigger": "opponent_forcing_material",
+    "when": "The opponent still has a queen or rook and you are inspecting or committing a candidate.",
+    "rule": "Use preview on risky candidates and examine opponent mate-in-one and captures of the moved piece. Resolve immediate mating threats before pursuing a slow plan.",
+    "counterexample": "No mate-in-one found only excludes that short horizon; it does not prove safety. A genuine forcing mate for your side can finish the game before the opponent gets another move.",
+    "sources": [
+      "https://lichess.org/study/LteGa5JT/cFv9dmED"
+    ],
+    "evidence": [
+      {
+        "game": "opera-1858",
+        "before_ply": 32,
+        "san": "Rd8#"
+      }
+    ]
+  },
+  {
+    "id": "finish-mate",
+    "title": "Verify a forcing finish",
+    "priority": 90,
+    "stages": [
+      "piece",
+      "move",
+      "preview"
+    ],
+    "trigger": "checks_available",
+    "when": "At least one legal checking move is available.",
+    "rule": "Inspect promising checks with preview. A verified checkmate ends the game; otherwise compare captures, quiet threats and the opponent's replies.",
+    "counterexample": "A check can throw away a queen or miss a free queen. Morphy's queen sacrifice works because the full forcing continuation exists, not because every check is strong.",
+    "sources": [
+      "https://lichess.org/study/LteGa5JT/cFv9dmED"
+    ],
+    "evidence": [
+      {
+        "game": "opera-1858",
+        "before_ply": 32,
+        "san": "Rd8#"
+      }
+    ]
+  },
+  {
+    "id": "capture-reply",
+    "title": "Calculate the reply to a capture",
+    "priority": 80,
+    "stages": [
+      "piece",
+      "move",
+      "preview"
+    ],
+    "trigger": "captures_available",
+    "when": "A candidate captures an enemy piece.",
+    "rule": "Compare the captured piece with what the opponent can take next. Preview the landing square and immediate mate threats; nominal defenders may be pinned.",
+    "counterexample": "Capturing a pawn with the queen can lose the queen. Conversely a sacrifice may be sound if a forcing mating line is actually verified.",
+    "sources": [
+      "https://lichess.org/study/swGPAS0z/JHGjKfwb"
+    ],
+    "evidence": [
+      {
+        "game": "rubinstein-1907",
+        "before_ply": 43,
+        "san": "Rxc3"
+      },
+      {
+        "game": "rubinstein-1907",
+        "before_ply": 45,
+        "san": "Rd2"
+      }
+    ]
+  },
+  {
+    "id": "development",
+    "title": "Develop toward the centre",
+    "priority": 60,
+    "stages": [
+      "piece",
+      "move"
+    ],
+    "trigger": "opening",
+    "when": "Early in the game and minor pieces remain on their starting squares.",
+    "rule": "Prefer useful central pawn moves and development of knights and bishops. Coordinate pieces and prepare legal castling. Explain a concrete reason before moving the same piece repeatedly.",
+    "counterexample": "A threatened piece or an immediate tactical opportunity can require another move. Do not mechanically develop while a queen can be won or your king is threatened.",
+    "sources": [
+      "https://lichess.org/study/LteGa5JT/cFv9dmED"
+    ],
+    "evidence": [
+      {
+        "game": "opera-1858",
+        "before_ply": 14,
+        "san": "Nc3"
+      },
+      {
+        "game": "opera-1858",
+        "before_ply": 22,
+        "san": "O-O-O"
+      }
+    ]
+  },
+  {
+    "id": "coordinate-rooks",
+    "title": "Bring inactive pieces into play",
+    "priority": 55,
+    "stages": [
+      "piece",
+      "move"
+    ],
+    "trigger": "inactive_rook",
+    "when": "The opening is ending and one of your rooks is still on its starting square.",
+    "rule": "Look for safe open or semi-open files and ways to make rooks cooperate with developed pieces. Preview tactical consequences before lifting a rook.",
+    "counterexample": "An open file is not useful if the rook can immediately be captured. A rook lift that delays king safety needs a concrete justification.",
+    "sources": [
+      "https://lichess.org/study/LteGa5JT/cFv9dmED",
+      "https://lichess.org/study/swGPAS0z/JHGjKfwb"
+    ],
+    "evidence": [
+      {
+        "game": "opera-1858",
+        "before_ply": 26,
+        "san": "Rd1"
+      },
+      {
+        "game": "rubinstein-1907",
+        "before_ply": 35,
+        "san": "Rac8"
+      }
+    ]
+  },
+  {
+    "id": "endgame-activity",
+    "title": "Activate the king and preserve useful material",
+    "priority": 70,
+    "stages": [
+      "piece",
+      "move",
+      "preview"
+    ],
+    "trigger": "endgame",
+    "when": "Queens are gone and relatively little non-pawn material remains.",
+    "rule": "Coordinate the king and rook with passed pawns. Keep the rook out of legal enemy captures and use checks for a purpose. Before trading, inspect terminal draws and the resulting material.",
+    "counterexample": "Do not centralize the king into a forcing attack. Trading the last mating piece can leave insufficient material; repeated aimless checks may throw away winning chances.",
+    "sources": [
+      "https://lichess.org/study/M3mZMe8l/MshiKf1G"
+    ],
+    "evidence": [
+      {
+        "game": "capablanca-1924",
+        "before_ply": 68,
+        "san": "Kg3"
+      },
+      {
+        "game": "capablanca-1924",
+        "before_ply": 76,
+        "san": "Kf6"
+      }
+    ]
+  },
+  {
+    "id": "opening-white-centre",
+    "title": "Start with a central pawn and a development plan",
+    "priority": 75,
+    "stages": ["piece", "move"],
+    "trigger": "opening_white_centre",
+    "when": "You are White in the first three moves, both central pawns are still on d2/e2, both kings and queens are home, and you are not in check.",
+    "rule": "Consider 1.e4 (e2e4) or 1.d4 (d2d4) to occupy the centre and free a bishop. One familiar start is 1. e4 e5 2. Nf3: the knight develops and attacks e5. After d4, develop toward the centre and consider c4 against ...d5. These are examples; choose from the current legal options and respond to the actual opponent move.",
+    "counterexample": "An early enemy attack or exposed piece can require a different move. Do not push a second central pawn automatically, and do not assume Black will play the example reply.",
+    "sources": ["https://raw.githubusercontent.com/lichess-org/chess-openings/master/c.tsv", "https://raw.githubusercontent.com/lichess-org/chess-openings/master/d.tsv"],
+    "opening_examples": [{"name": "King's Knight Opening", "pgn": "1. e4 e5 2. Nf3", "source": "https://raw.githubusercontent.com/lichess-org/chess-openings/master/c.tsv"}]
+  },
+  {
+    "id": "opening-black-central-reply",
+    "title": "Meet a central pawn with a clear development plan",
+    "priority": 75,
+    "stages": ["piece", "move"],
+    "trigger": "opening_black_reply",
+    "when": "You are Black in the first three moves, White has a pawn on e4 or d4, your d7/e7 pawns are unmoved, you have not chosen ...c5/...c6, both kings and queens are home, and you are not in check.",
+    "rule": "A simple starting repertoire is to consider ...e5 (e7e5) against e4 and ...d5 (d7d5) against d4. In the open game, ...Nc6 can defend e5 against Nf3; develop the other minor pieces and prepare legal castling. Against c4 in a d4/d5 structure, ...e6 supports d5 before ...Nf6 and ...Be7. Use the actual board, not a memorized move number.",
+    "counterexample": "These replies are choices, not mandatory moves. If White advances both central pawns, attacks your queen, or creates an immediate tactical threat, calculate that position instead of blindly copying a line.",
+    "sources": ["https://raw.githubusercontent.com/lichess-org/chess-openings/master/c.tsv", "https://raw.githubusercontent.com/lichess-org/chess-openings/master/d.tsv"]
+  },
+  {
+    "id": "opening-open-game",
+    "title": "Develop in an e4/e5 open game",
+    "priority": 74,
+    "stages": ["piece", "move"],
+    "trigger": "opening_open_game",
+    "when": "During the first six moves, White has a pawn on e4, Black on e5, both kings and queens remain home, and you are not in check.",
+    "rule": "Typical Italian development is 1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6. White's Nf3 attacks e5; Black's Nc6 supports it; bishops develop before legal castling. Use this to understand useful squares and king safety, not to replay missing moves. Prefer completing development over repeated queen moves without a concrete gain.",
+    "counterexample": "After ...Nf6 instead of ...Nc6, or after a central pawn exchange, the example is no longer the same position. Bc4 or castling must not ignore a hanging piece, check, or a blocked/attacked castling path.",
+    "sources": ["https://raw.githubusercontent.com/lichess-org/chess-openings/master/c.tsv"],
+    "opening_examples": [{"name": "Italian Game", "pgn": "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. O-O Nf6", "source": "https://raw.githubusercontent.com/lichess-org/chess-openings/master/c.tsv"}]
+  },
+  {
+    "id": "opening-white-sicilian",
+    "title": "Develop before opening the centre against ...c5",
+    "priority": 74,
+    "stages": ["piece", "move"],
+    "trigger": "opening_sicilian",
+    "when": "You are White in the first six moves with a pawn on e4, Black has a pawn on c5 (or on d4 with c7 empty after an exchange) and none on e5, both kings and queens are home, and you are not in check.",
+    "rule": "A typical Open Sicilian start is 1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4. Nf3 develops a knight that can recapture on d4; d4 contests the centre. Compare the actual capture and recapture before opening it, then develop the remaining minor pieces and prepare castling.",
+    "counterexample": "Do not play d4 just because ...c5 was played: the recapturing knight may be absent, pinned, or threatened. A different Black setup can change the move order; avoid early queen recaptures that lose time or material.",
+    "sources": ["https://raw.githubusercontent.com/lichess-org/chess-openings/master/b.tsv"],
+    "opening_examples": [{"name": "Sicilian Defense: Open", "pgn": "1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4", "source": "https://raw.githubusercontent.com/lichess-org/chess-openings/master/b.tsv"}]
+  },
+  {
+    "id": "opening-white-caro-kann",
+    "title": "Build and defend a centre against ...c6",
+    "priority": 74,
+    "stages": ["piece", "move"],
+    "trigger": "opening_caro_kann",
+    "when": "You are White in the first six moves, Black has a pawn on c6 and none on e5, you have a pawn on e4 (or d4 facing a black pawn on e4 with d7 empty after an exchange), both kings and queens are home, and you are not in check.",
+    "rule": "Black's ...c6 often prepares ...d5. Consider d4 to build a centre and a developing knight move to support it. One classical example is 1. e4 c6 2. d4 d5 3. Nd2 dxe4 4. Nxe4 Bf5. The knight recapture depends on its actual square. Develop and prepare king safety rather than chasing pieces with the queen.",
+    "counterexample": "Do not assume ...dxe4 occurred or that Nxe4 is legal. After a different pawn advance or capture, reassess the centre. A knight move that blocks useful development needs a concrete purpose.",
+    "sources": ["https://raw.githubusercontent.com/lichess-org/chess-openings/master/b.tsv"],
+    "opening_examples": [{"name": "Caro-Kann Defense: Classical Variation", "pgn": "1. e4 c6 2. d4 d5 3. Nd2 dxe4 4. Nxe4 Bf5", "source": "https://raw.githubusercontent.com/lichess-org/chess-openings/master/b.tsv"}]
+  },
+  {
+    "id": "opening-queen-pawn",
+    "title": "Develop around a d4/d5 centre",
+    "priority": 74,
+    "stages": ["piece", "move"],
+    "trigger": "opening_queen_pawn",
+    "when": "During the first six moves, White has a pawn on d4 and Black on d5, it is not also an e4/e5 structure, both kings and queens remain home, and you are not in check.",
+    "rule": "A Queen's Gambit Declined example is 1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Nf3 Be7. White uses c4 to challenge d5 and develops knights; Black supports d5 and develops before castling. The pawn break has a purpose: contest the centre while bringing pieces into play.",
+    "counterexample": "If Black captures ...dxc4, the structure has changed; recover or compensate for the pawn with calculation rather than replaying the declined line. Do not force c4 or ...e6 while ignoring a check or an attacked major piece.",
+    "sources": ["https://raw.githubusercontent.com/lichess-org/chess-openings/master/d.tsv"],
+    "opening_examples": [{"name": "Queen's Gambit Declined", "pgn": "1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Nf3 Be7", "source": "https://raw.githubusercontent.com/lichess-org/chess-openings/master/d.tsv"}]
+  }
+]

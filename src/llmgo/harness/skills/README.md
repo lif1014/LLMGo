@@ -1,8 +1,8 @@
 # Chess skills
 
 These cards are original short rules inferred from public game scores, not a
-runtime opening book or engine policy. `skills.py` selects at most three cards
-by stage and board conditions. Only the selected cards enter the prompt; the
+runtime opening book or engine policy. `skills.py` selects at most two cards
+for the single complete-move question, using board conditions. Only the selected cards enter the prompt; the
 web tool library exposes every card, trigger, counterexample and source.
 
 `master_games.pgn` retains the historical game scores (without copied modern
@@ -33,12 +33,16 @@ dataset: https://github.com/lichess-org/chess-openings (b.tsv, c.tsv, d.tsv).
 Each card records its source; `opening_examples` retains testable notation.
 The prompt carries the example as part of its prose rule, never a compulsory move.
 
-These cards enter only piece/move questions, during the first six full moves
+These cards enter only complete-move questions, during the first six full moves
 (initial central-pawn advice only the first three), while both kings and queens
 remain on their home squares and the moving side is not in check. Broad pawn
 structures select the card; Sicilian/Caro-Kann recapture structures are included.
 No TSV, FEN-to-move table, engine, or opening continuation lookup is used at runtime.
-The same three-card limit applies. Check, forcing-reply and capture reminders
+The same two-card limit applies. Check, forcing-reply and capture reminders
 have higher priority; an example line cannot authorize ignoring an actual threat.
 After an unfamiliar reply, use the actual legal options and general development
 principles. The examples cover a small starting repertoire, not all openings.
+
+Candidate observations are computed before retrieval. The defend-mate card is
+triggered only when a candidate actually allows an opponent mate-in-one. Skills
+refer to those automatic observations; they do not ask the model to call tools.

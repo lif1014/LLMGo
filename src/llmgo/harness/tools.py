@@ -5,12 +5,8 @@ import chess
 VALUES = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330, chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
 NAMES = {kind: chess.piece_name(kind) for kind in VALUES}
 TOOL_LIBRARY = [
-    {"letter": "A", "name": "legal", "description": "List legal UCI moves grouped as captures, checks and quiet moves. This does not play a move."},
-    {"letter": "B", "name": "hanging", "description": "Show capture threats, legal recaptures and local material loss. Pinned geometric defenders do not prove safety. This is not a full exchange search."},
-    {"letter": "C", "name": "king", "description": "Report in-check status, castling rights and castling moves legal now. Not in check does not mean safe."},
-    {"letter": "D", "name": "material", "description": "Count pieces and approximate material balance. Material is not a position evaluation."},
-    {"letter": "F", "name": "preview", "description": "Choose a legal candidate to try without playing it. Inspect captures of the moved piece, material consequences, opponent mate-in-one and terminal draws. No engine or best-move recommendation."},
-    {"letter": "E", "name": "piece", "description": "Finish lookups, choose a piece, then choose one of its legal moves."},
+    {"name": "position", "mode": "automatic", "description": "Compute in-check status, castling rights/current legality and material. Full details stay in the trace."},
+    {"name": "candidates", "mode": "automatic", "description": "Enumerate ALL legal moves in fixed piece/source/target order. Preview each for legal captures of the moved piece, one-reply material changes, opponent mate-in-one and terminal outcomes. No engine, ranking or pruning."},
 ]
 
 def _uci_list(moves) -> str:
@@ -78,7 +74,7 @@ def king_line(board: chess.Board) -> list[str]:
     color = board.turn
     rights = [name for name, exists in (("kingside", board.has_kingside_castling_rights(color)), ("queenside", board.has_queenside_castling_rights(color))) if exists]
     castles = [move for move in board.legal_moves if board.is_castling(move)]
-    return [f"king: in_check {'yes' if board.is_check() else 'no'}; this is not a safety assessment", f"king: castling_rights {' '.join(rights) or 'none'}; castling_legal_now {_uci_list(castles)}", "king: future mate threats not checked here; use preview for a candidate"]
+    return [f"king: in_check {'yes' if board.is_check() else 'no'}; this is not a safety assessment", f"king: castling_rights {' '.join(rights) or 'none'}; castling_legal_now {_uci_list(castles)}", "king: candidate observations separately check one opponent reply"]
 
 def material_line(board: chess.Board) -> list[str]:
     def counts(color):
@@ -127,3 +123,37 @@ def movable_pieces(board: chess.Board) -> list[tuple[int, str, list[chess.Move]]
     for move in board.legal_moves:
         grouped.setdefault(move.from_square, []).append(move)
     return [(sq, f"{NAMES[board.piece_type_at(sq)]} {chess.square_name(sq)}", sorted(grouped[sq], key=lambda m: m.uci())) for sq in sorted(grouped)]
+
+
+def prepare_candidates(board: chess.Board) -> tuple[list[dict], list[str]]:
+    """No heuristic filtering: every legal move receives the same rule checks."""
+    order = {kind: index for index, kind in enumerate((chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING, chess.PAWN))}
+    legal = sorted(board.legal_moves, key=lambda move: (order[board.piece_type_at(move.from_square)], move.from_square, move.uci()))
+    candidates, observations = [], []
+    for move in legal:
+        preview = preview_move(board, move)
+        tags = []
+        if board.is_capture(move): tags.append(f"capture {captured_value(board, move) / 100:g}")
+        if board.is_en_passant(move): tags.append('en passant')
+        if preview['gives_check']: tags.append('check')
+        if board.is_castling(move): tags.append('castle')
+        if move.promotion: tags.append('promote ' + NAMES[move.promotion])
+        label = f"{move.uci()} ({preview['san']})" + (' [' + '; '.join(tags) + ']' if tags else '')
+        candidates.append({'uci': move.uci(), 'san': preview['san'], 'piece': NAMES[board.piece_type_at(move.from_square)],
+                           'from': chess.square_name(move.from_square), 'to': chess.square_name(move.to_square),
+                           'label': label, 'tags': tags, 'preview': preview})
+        facts = []
+        if preview['checkmate']:
+            facts.append('delivers checkmate')
+        elif preview['terminal']:
+            facts.append('terminal ' + preview['terminal'])
+        if preview['opponent_mate_in_one']:
+            facts.append('allows opponent mate-in-one: ' + ' '.join(preview['opponent_mate_in_one']))
+        if preview['recaptures']:
+            replies = preview['recaptures']
+            worst = min(reply['material_delta_cp'] for reply in replies) / 100
+            facts.append('opponent can capture moved piece: ' + ' '.join(reply['uci'] for reply in replies)
+                         + f'; worst immediate material delta {worst:+g} (no further recapture counted)')
+        if facts:
+            observations.append(move.uci() + ': ' + '; '.join(facts))
+    return candidates, observations

@@ -74,46 +74,36 @@ def test_castling_rights_and_current_legality_are_distinct():
     assert 'e1g1' in king_line(board)[1] and 'e1c1' in king_line(board)[1]
 
 
-def test_tools_preview_requests_and_budgets_are_logged():
-    count = 0
+def test_automatic_tools_and_one_complete_move_request_are_logged():
     async def ask(prompt, cap):
-        nonlocal count
-        count += 1
-        if '\nTools\n' in prompt:
-            answer = 'F' if count == 1 else 'E'
-        elif '\nPreview candidate\n' in prompt:
-            answer = next(line.split()[0] for line in prompt.splitlines() if 'e2e4 e4' in line)
-        elif '\nPick\n' in prompt:
-            answer = next(line.split()[0] for line in prompt.splitlines() if line.endswith('pawn e2'))
-        else: answer = 'B'
-        return AskResult(answer, 20, 'stop', output='thought\n' + answer, reasoning='thought', usage={'prompt_tokens': 100, 'completion_tokens':20}, raw_response='raw-body')
+        return AskResult('{"move":"e2e4"}', 20, 'stop', output='thought\nfinal', reasoning='thought',
+                         usage={'prompt_tokens':100,'completion_tokens':20}, raw_response='raw-body')
     decision, events = decide(ask)
     assert decision.uci == 'e2e4' and decision.source == 'model'
-    requests = [e for e in events if e['type'] == 'model_request' and e['status'] == 'finished']
-    assert len(requests) == 5 and all(e['raw_response'] == 'raw-body' for e in requests)
-    assert all(e['enable_thinking'] and e['max_tokens'] <= getattr(HarnessConfig(), e['stage'] + '_tokens') for e in requests)
-    result = next(e for e in events if e['type'] == 'tool_call' and e['status'] == 'finished')
-    assert result['tool'] == 'preview' and result['data']['uci'] == 'e2e4'
-    assert decision.tokens == 100 and decision.diagnostics['prompt_tokens'] == 500
-    assert decision.diagnostics['request_count'] == 5
+    requests = [e for e in events if e['type']=='model_request' and e['status']=='finished']
+    assert len(requests)==1 and requests[0]['stage']=='move' and requests[0]['raw_response']=='raw-body'
+    assert requests[0]['enable_thinking'] and requests[0]['max_tokens']==32768
+    tools = [e for e in events if e['type']=='tool_call' and e['status']=='finished']
+    assert [e['tool'] for e in tools]==['position','candidates']
+    assert len(tools[-1]['data']['candidates'])==20
+    assert decision.tokens==20 and decision.diagnostics['prompt_tokens']==100
+    assert not any(e['type']=='route_recovery' or e.get('stage') in ('tool','piece','preview') for e in events)
 
 
-def test_length_without_answer_remains_visible_despite_legal_fallback():
-    async def ask(prompt, cap): return AskResult('', cap, 'length', output='unfinished thinking', reasoning='unfinished thinking')
+def test_length_without_final_is_not_guessed_from_thoughts():
+    async def ask(prompt, cap):
+        return AskResult('<think>I prefer e2e4. {"move":"e2e4"}', cap, 'length')
     decision, events = decide(ask)
-    assert decision.source == 'random'
-    assert decision.diagnostics['length_count'] == 2
-    assert decision.diagnostics['fallback_reason'] == 'length_without_choice'
-    assert any(e['type'] == 'route_recovery' for e in events)
-    assert any(e['type'] == 'fallback' and e['reason'] == 'length_without_choice' for e in events)
+    assert decision.source=='random' and decision.diagnostics['length_count']==1
+    assert decision.diagnostics['fallback_reason']=='length_without_choice'
+    assert any(e['type']=='fallback' for e in events)
 
 
-def test_timeout_and_piece_reserve_are_bounded():
-    async def asleep(prompt, cap): await asyncio.sleep(1); return AskResult('A',1)
-    decision, events = decide(asleep, config=HarnessConfig(request_timeout_sec=.01, turn_timeout_sec=.05))
-    assert decision.source == 'random'
-    assert decision.diagnostics['fallback_reason'] in {'request_timeout', 'turn_timeout'}
-    assert any(e.get('failure_reason') == 'request_timeout' for e in events)
+def test_timeout_is_reported_and_does_not_loop():
+    async def asleep(prompt, cap): await asyncio.sleep(1); return AskResult('{"move":"e2e4"}',1)
+    decision, events = decide(asleep, config=HarnessConfig(request_timeout_sec=.01,turn_timeout_sec=.05))
+    assert decision.source=='random' and decision.diagnostics['fallback_reason']=='request_timeout'
+    assert decision.diagnostics['request_count']==1
 
 
 def test_every_historical_skill_evidence_replays_and_retrieval_is_conditional():
@@ -129,8 +119,8 @@ def test_every_historical_skill_evidence_replays_and_retrieval_is_conditional():
             game = games[evidence['game']]; board = game.board(); moves = list(game.mainline_moves())
             for move in moves[:evidence['before_ply']]: board.push(move)
             assert board.san(moves[evidence['before_ply']]) == evidence['san']
-    opening = select_skills(chess.Board(), 'piece')
-    ending = select_skills(chess.Board('8/8/6k1/8/8/2K5/8/R7 w - - 0 1'), 'piece')
+    opening = select_skills(chess.Board(), 'move')
+    ending = select_skills(chess.Board('8/8/6k1/8/8/2K5/8/R7 w - - 0 1'), 'move')
     assert any(c['id'] == 'development' for c in opening)
     assert any(c['id'] == 'endgame-activity' for c in ending)
     assert all(c['id'] != 'development' for c in ending)
@@ -138,21 +128,25 @@ def test_every_historical_skill_evidence_replays_and_retrieval_is_conditional():
 
 
 def test_opening_examples_are_legal_and_enter_only_relevant_questions():
-    from llmgo.harness.prompt import pick_prompt, render_board
+    from llmgo.harness.prompt import move_prompt
     cards = [card for card in load_cards() if card['id'].startswith('opening-')]
     assert len(cards) == 6
     for card in cards:
-        assert card['stages'] == ['piece', 'move']
+        assert card['stages'] == ['move']
         for example in card.get('opening_examples', []):
             game = chess.pgn.read_game(io.StringIO(example['pgn'] + ' *'))
             assert game is not None and not game.errors and list(game.mainline_moves())
             assert example['pgn'] in card['rule'] and example['source'] in card['sources']
     board = chess.Board()
-    initial = select_skills(board, 'piece')
-    assert [card['id'] for card in initial] == ['opening-white-centre', 'development']
+    initial = select_skills(board, 'move')
+    assert any(card['id']=='opening-white-centre' for card in initial)
     assert select_skills(board, 'tool') == []
     assert all(not card['id'].startswith('opening-') for card in select_skills(board, 'preview'))
-    prompt = pick_prompt('White', render_board(board), [], [], [('A', 'pawn e2')], skills=initial)
+    from llmgo.harness.tools import prepare_candidates
+    candidates, observations = prepare_candidates(board)
+    initial = select_skills(board, 'move', candidates=candidates)
+    assert [card['id'] for card in initial] == ['opening-white-centre', 'development']
+    prompt = move_prompt(board, [], candidates, observations, skills=initial)
     assert '1. e4 e5 2. Nf3' in prompt and 'Counterexample:' in prompt
 
 
@@ -171,25 +165,25 @@ def test_opening_examples_are_legal_and_enter_only_relevant_questions():
 def test_opening_knowledge_follows_actual_structure_including_recaptures(line, expected):
     board = chess.Board()
     for san in line.split(): board.push_san(san)
-    actual = [card['id'] for card in select_skills(board, 'piece') if card['id'].startswith('opening-')]
+    actual = [card['id'] for card in select_skills(board, 'move', limit=20) if card['id'].startswith('opening-')]
     assert actual == [expected]
 
 
 def test_opening_advice_yields_to_check_and_expires_after_early_moves():
     board = chess.Board()
     for san in 'e4 e5 Bc4 d6 Bb5+'.split(): board.push_san(san)
-    cards = select_skills(board, 'piece')
+    cards = select_skills(board, 'move')
     assert cards[0]['id'] == 'answer-check'
     assert not any(card['id'].startswith('opening-') for card in cards)
     # Castling and move horizon each independently end the concrete opening hints.
     board = chess.Board()
     for san in 'e4 e5 Nf3 Nc6 Bc4 Bc5 O-O'.split(): board.push_san(san)
-    assert not any(card['id'].startswith('opening-') for card in select_skills(board, 'piece'))
+    assert not any(card['id'].startswith('opening-') for card in select_skills(board, 'move'))
     board = chess.Board(); board.push_san('e4'); board.push_san('e5'); board.fullmove_number = 7
-    assert not any(card['id'].startswith('opening-') for card in select_skills(board, 'piece'))
+    assert not any(card['id'].startswith('opening-') for card in select_skills(board, 'move'))
     # Against a different centre, do not supply an unrelated Sicilian/Caro/open-game line.
     board = chess.Board(); board.push_san('e4'); board.push_san('e6')
-    assert not any(card['id'].startswith('opening-') for card in select_skills(board, 'piece'))
+    assert not any(card['id'].startswith('opening-') for card in select_skills(board, 'move'))
 
 
 def test_vllm_payload_usage_raw_body_and_http_error():
@@ -207,73 +201,13 @@ def test_vllm_payload_usage_raw_body_and_http_error():
     assert result.http_status == 400 and result.raw_response == 'context too long' and result.error
 
 
-def test_model_and_engine_pipeline_with_mock_transport(tmp_path):
-    from llmgo.runner.harness_loop import HarnessRunner, HarnessSeat, EngineSeat
-    from llmgo.runtime.player import StreamEvent
-    import subprocess
-    from llmgo.store.jsonl import TrajectoryStore
-    # Network is mocked; the actual UCI opponent runs locally on CPU.
-    def handle(request):
-        prompt = json.loads(request.content)['messages'][0]['content']
-        answer = 'E' if '\nTools\n' in prompt else 'A'
-        return httpx.Response(200,json={'choices':[{'finish_reason':'stop','message':{'content':answer,'reasoning_content':'smoke'}}], 'usage':{'prompt_tokens':20,'completion_tokens':3}})
-    asker = VllmAsker('http://local/v1','Qwen3.5-4B',transport=httpx.MockTransport(handle))
-    class NativeOpponent:
-        # Synchronous native UCI transport avoids cross-thread socket wakeups
-        # blocked by the local sandbox; the runner uses its normal EngineSeat.
-        seat = 'black'
-        name = 'native-fairy-smoke'
-        def __init__(self):
-            self.proc = subprocess.Popen([str(ROOT/'engines/fairy-stockfish')], cwd=ROOT/'engines', stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-            self.send('uci'); self.read_until('uciok')
-            self.send('setoption name Skill Level value -9')
-            self.send('isready'); self.read_until('readyok')
-        def send(self, line):
-            self.proc.stdin.write(line + '\n'); self.proc.stdin.flush()
-        def read_until(self, prefix):
-            while True:
-                line = self.proc.stdout.readline().strip()
-                if line.startswith(prefix): return line
-                if not line and self.proc.poll() is not None: raise RuntimeError('UCI engine stopped')
-        async def play(self, obs):
-            self.send('position fen ' + obs.fen)
-            self.send('go depth 5 movetime 50')
-            move = self.read_until('bestmove').split()[1]
-            yield StreamEvent('content', f'<move>{move}</move>')
-            yield StreamEvent('done', finish_reason='stop')
-        def close(self):
-            self.send('quit'); self.proc.wait(timeout=5)
-    engine = NativeOpponent()
-    async def emit(event): pass
-    async def game():
-        try:
-            return await HarnessRunner(HarnessSeat('white',asker),EngineSeat(engine),TrajectoryStore(tmp_path/'game'),max_plies=4).run(emit)
-        finally: engine.close()
-    summary = asyncio.run(game())
-    assert summary['attempts'] == 4 and summary['model_turns'] == 2
-    assert summary['random_moves'] == 0 and summary['request_count'] > 0
-    records = [json.loads(line) for line in (tmp_path/'game/events.jsonl').read_text().splitlines()]
-    assert all(e.get('timestamp') and e.get('sequence') for e in records)
-    assert any(e.get('source') == 'engine' for e in records)
-
-
-def test_stage_allowance_is_shared_across_tool_questions():
-    async def ask(prompt, cap):
-        return AskResult('A', cap if '\nTools\n' in prompt else 1, 'stop')
-    decision, events = decide(ask, config=HarnessConfig(tool_tokens=10,piece_tokens=20,preview_tokens=10,move_tokens=30),budget=100)
-    assert decision.source == 'model'
-    assert decision.diagnostics['stage_tokens']['tool'] == 10
-    assert len([e for e in events if e['type']=='model_request' and e['status']=='finished' and e['stage']=='tool']) == 1
-    assert any(e['type']=='route_recovery' and e['reason']=='stage_budget_exhausted' for e in events)
-
-
 def test_tool_failure_is_not_hidden_by_legal_fallback():
-    async def ask(prompt, cap): return AskResult('A',1,'stop')
-    with patch('llmgo.harness.agent.tool_result',side_effect=ValueError('broken diagnostic tool')):
+    async def ask(prompt, cap): raise AssertionError('must not call the model after a tool failure')
+    with patch('llmgo.harness.agent.prepare_candidates',side_effect=ValueError('broken candidate tool')):
         decision, events = decide(ask)
-    assert decision.source == 'random' and decision.diagnostics['fallback_reason']=='tool_error'
-    failure=next(e for e in events if e['type']=='tool_call' and e['status']=='finished')
-    assert 'broken diagnostic tool' in failure['error'] and failure['call_id']
+    assert decision.source=='random' and decision.diagnostics['fallback_reason']=='tool_error'
+    failure = next(e for e in events if e['type']=='tool_call' and e.get('error'))
+    assert 'broken candidate tool' in failure['error'] and failure['status']=='finished'
 
 
 def test_external_match_incremental_events_keep_partial_writes_out(tmp_path):
@@ -298,7 +232,7 @@ def test_external_match_incremental_events_keep_partial_writes_out(tmp_path):
 
 
 def test_malformed_budget_is_rejected_before_starting_a_game():
-    for data in ({'piece_tokens':'lots'},{'max_lookups':True},{'request_timeout_sec':float('nan')}):
+    for data in ({'move_tokens':'lots'},{'attempts_per_choice':True},{'request_timeout_sec':float('nan')}):
         with pytest.raises(ValueError):HarnessConfig.from_dict(data)
 
 

@@ -79,7 +79,7 @@ def aggregate(summaries: list[dict]) -> dict:
     harness_games = [item for item in summaries if item.get('harness')]
     if harness_games:
         report['harness'] = True
-        for key in ('model_turns', 'model_decisions', 'random_moves', 'request_count', 'completion_tokens', 'request_errors', 'finish_length_count'):
+        for key in ('model_turns', 'model_decisions', 'forced_moves', 'random_moves', 'request_count', 'completion_tokens', 'request_errors', 'finish_length_count'):
             report[key] = sum(item.get(key, 0) or 0 for item in harness_games)
         report['random_rate'] = report['random_moves'] / report['model_turns'] if report['model_turns'] else None
         report['tokens_exact'] = all(item.get('tokens_exact', True) for item in harness_games)

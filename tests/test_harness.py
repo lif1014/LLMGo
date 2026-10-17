@@ -9,7 +9,6 @@ import chess
 from llmgo.harness.agent import AskResult, choose_move
 from llmgo.harness.choices import parse_choice
 from llmgo.harness.tools import hanging_line, king_line, legal_lines, material_line, movable_pieces
-from llmgo.harness.choices import option_labels
 from llmgo.runner.harness_loop import HarnessRunner, HarnessSeat
 from llmgo.store.jsonl import TrajectoryStore
 
@@ -89,109 +88,60 @@ class ToolTests(unittest.TestCase):
 
 
 class PromptTests(unittest.TestCase):
-    def test_first_card_explains_every_tool_without_parentheses(self):
-        board = chess.Board()
-        decision, events = _run(board, Script(["E", "A", "A"]))
-        opening = next(e['prompt'] for e in events if e.get('stage') == 'tool' and e.get('status') == 'asking')
-        self.assertIn("Side\nWhite", opening)
-        self.assertIn("captures means a move that takes an enemy piece, including en passant", opening)
-        self.assertIn("checks means a move that attacks the enemy king", opening)
-        self.assertIn("quiet means any other legal move", opening)
-        self.assertIn("Pinned geometric defenders do not prove safety", opening)
-        self.assertIn("Not in check does not mean safe", opening)
-        self.assertIn("F preview", opening)
-        self.assertIn("you can look up 2 more tools on this turn", opening)
-        self.assertIn("choosing E does not use a lookup", opening)
-        self.assertIn("reply E", opening)
-        self.assertNotIn("(", opening)
-        self.assertNotIn(")", opening)
-        self.assertNotIn("<move>", opening)
-        self.assertNotIn("Result\n", opening)
-        self.assertTrue(decision.uci)
-        self.assertEqual(decision.source, "model")
+    def test_direct_complete_move_has_one_question(self):
+        script = Script(['{"move":"e2e4"}'])
+        decision, events = _run(chess.Board(), script)
+        self.assertEqual((decision.uci, decision.source), ('e2e4', 'model'))
+        self.assertEqual(len(script.prompts), 1)
+        prompt = script.prompts[0]
+        self.assertIn('Legal moves (20 total', prompt)
+        self.assertIn('pawn e2: e2e3 (e3), e2e4 (e4)', prompt)
+        self.assertNotIn('Tools\n', prompt)
+        self.assertNotIn('Pick\n', prompt)
+        self.assertNotIn('Reply\none letter', prompt)
+        choices = [event for event in events if event['type'] == 'choice']
+        self.assertTrue(all(event['stage'] == 'move' for event in choices))
+        self.assertEqual(len(choices[0]['options']), 20)
 
-    def test_blackboard_keeps_both_tools_and_drops_used_letters(self):
-        board = chess.Board()
-        pieces = movable_pieces(board)
-        script = Script(["B", "C", option_labels(len(pieces))[0], "A"])
-        decision, events = _run(board, script)
-        self.assertEqual(decision.source, "model")
-        self.assertEqual(decision.tools, ["hanging", "king"])
-        second = script.prompts[1]
-        self.assertIn("you can look up 1 more tools on this turn", second)
-        self.assertIn("no legal capture threats", second)
-        self.assertNotIn("B hanging", second)
-        self.assertIn("A legal", second)
-        self.assertIn("C king", second)
-        third = script.prompts[2]
-        self.assertIn("no legal capture threats", third)
-        self.assertLess(third.index("hanging:"), third.index("king:"))
-        self.assertNotIn("A legal", third)
-        self.assertNotIn("D material", third)
-        self.assertIn("Pick", third)
-        self.assertTrue(any(e.get('tool') == 'piece' and e.get('source') == 'automatic' for e in events))
-        self.assertNotIn(script.prompts[0], third)
+    def test_invalid_final_retries_with_correction_and_shared_budget(self):
+        script = Script(['A', '{"move":"e2e4"}'], tokens=10)
+        decision, events = _run(chess.Board(), script, budget=100)
+        self.assertEqual(decision.source, 'model')
+        self.assertEqual(script.caps, [100, 90])
+        self.assertIn('Correction\n', script.prompts[1])
+        self.assertNotIn('Correction\n', script.prompts[0])
+        self.assertTrue(any(event.get('failure_reason') == 'invalid_choice' for event in events))
 
-    def test_direct_piece_plays_e2e4(self):
+    def test_bad_answers_use_reported_random_fallback_over_all_legal_moves(self):
         board = chess.Board()
-        pieces = movable_pieces(board)
-        labels = option_labels(len(pieces))
-        piece_index = next(index for index, item in enumerate(pieces) if chess.square_name(item[0]) == "e2")
-        moves = pieces[piece_index][2]
-        move_index = next(index for index, move in enumerate(moves) if move.uci() == "e2e4")
-        script = Script(["E", labels[piece_index], option_labels(len(moves))[move_index]])
-        decision, events = _run(board, script)
-        self.assertEqual((decision.uci, decision.source), ("e2e4", "model"))
-        move_event = next(event for event in events if event.get("stage") == "move" and event.get("status") == "asking")
-        self.assertEqual(move_event["origins"], ["e2"])
-        self.assertIn("e4", move_event["targets"])
-        self.assertIn("e3", move_event["targets"])
-
-    def test_bad_letter_twice_plays_a_random_legal_move(self):
-        board = chess.Board()
-        legal = {move.uci() for move in board.legal_moves}
-        decision, _events = _run(board, Script(["Z", "no"]), rng=random.Random(1))
-        self.assertEqual(decision.source, "random")
-        self.assertIn(decision.uci, legal)
-
-    def test_failed_move_letter_stays_on_that_piece(self):
-        board = chess.Board()
-        pieces = movable_pieces(board)
-        labels = option_labels(len(pieces))
-        piece_index = next(index for index, item in enumerate(pieces) if chess.square_name(item[0]) == "e2")
-        allowed = {move.uci() for move in pieces[piece_index][2]}
-        script = Script(["E", labels[piece_index], "nope", "still no"])
-        decision, _events = _run(board, script, rng=random.Random(2))
-        self.assertEqual(decision.source, "random")
-        self.assertIn(decision.uci, allowed)
+        decision, events = _run(board, Script(['A', 'no']), rng=random.Random(1))
+        self.assertEqual(decision.source, 'random')
+        self.assertIn(chess.Move.from_uci(decision.uci), board.legal_moves)
+        fallback = next(event for event in events if event['type'] == 'fallback')
+        self.assertEqual(fallback['reason'], 'invalid_choice')
+        self.assertEqual(fallback['scope'], 'all_legal_moves')
 
     def test_request_error_and_empty_budget_do_not_ask_forever(self):
-        board = chess.Board()
-        legal = {move.uci() for move in board.legal_moves}
-        broken = Script([], error="down")
-        decision, _events = _run(board, broken, rng=random.Random(3))
-        self.assertEqual(decision.source, "random")
-        self.assertIn(decision.uci, legal)
-        self.assertEqual(len(broken.prompts), 2)
-        silent = Script(["E"])
-        decision, _events = _run(board, silent, budget=0, rng=random.Random(4))
-        self.assertEqual(decision.source, "random")
+        broken = Script([], error='down')
+        decision, _ = _run(chess.Board(), broken)
+        self.assertEqual(decision.source, 'random')
+        self.assertEqual(len(broken.prompts), 1)
+        silent = Script([])
+        decision, _ = _run(chess.Board(), silent, budget=0)
+        self.assertEqual(decision.source, 'random')
         self.assertEqual(silent.prompts, [])
 
-    def test_parse_one_letter(self):
-        allowed = {"A", "B", "C", "D", "E"}
-        self.assertEqual(parse_choice("E", allowed), "E")
-        self.assertEqual(parse_choice("reply A", allowed), "A")
-        self.assertIsNone(parse_choice("A or B", allowed))
-        self.assertIsNone(parse_choice("A\nB", allowed))
+    def test_historical_letters_are_only_read_from_the_final_answer(self):
+        allowed = {'A', 'B', 'G'}
+        self.assertEqual(parse_choice('Discuss A and B. </think>\nG', allowed), 'G')
+        self.assertIsNone(parse_choice('A or B', allowed))
+        self.assertIsNone(parse_choice('<think>G', allowed))
 
 
 class LoopTests(unittest.TestCase):
     def test_two_plies_record_choices(self):
         async def ask(prompt: str, max_tokens: int) -> AskResult:
-            if "\nPick\n" in prompt or "\nMoves\n" in prompt:
-                return AskResult("A", 1)
-            return AskResult("E", 1)
+            return AskResult('{"move":"e2e4"}' if 'You are White.' in prompt else '{"move":"e7e5"}', 1)
 
         async def play():
             with tempfile.TemporaryDirectory() as folder:
@@ -214,7 +164,7 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(summary["result_reason"], "truncated")
         self.assertEqual(summary["first_try_legal"], 2)
         self.assertEqual(summary["random_moves"], 0)
-        self.assertTrue(any(event["type"] == "choice" and event["stage"] == "piece" for event in events))
+        self.assertTrue(any(event["type"] == "choice" and event["stage"] == "move" for event in events))
         self.assertEqual(sum(1 for event in events if event["type"] == "position" and event.get("last_move")), 2)
 
 

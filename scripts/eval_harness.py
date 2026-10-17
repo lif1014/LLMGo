@@ -459,7 +459,7 @@ async def _play_one(job: dict, protocol: dict, base_url: str, engine: Path, runs
         "index": job["index"],
         "random_moves": summary.get("random_moves") or 0,
         "tool_uses": summary.get("tool_uses") or {},
-        "diagnostics": {key: summary.get(key) for key in ("model_turns", "model_decisions", "random_rate", "fallback_reasons", "request_count", "completion_tokens", "prompt_tokens", "tokens_exact", "request_errors", "length_count", "latency_ms")},
+        "diagnostics": {key: summary.get(key) for key in ("model_turns", "model_decisions", "forced_moves", "random_rate", "fallback_reasons", "request_count", "completion_tokens", "prompt_tokens", "tokens_exact", "request_errors", "length_count", "latency_ms")},
     }
 
 
@@ -515,6 +515,8 @@ def collect_metrics(protocol: dict, games: list[dict], model_path: str | None) -
         "harness": True,
         "harness_artifact": protocol.get("harness_artifact"),
         "model_turns": sum((g.get("diagnostics") or {}).get("model_turns", 0) or 0 for g in games),
+        "model_decisions": sum((g.get("diagnostics") or {}).get("model_decisions", 0) or 0 for g in games),
+        "forced_moves": sum((g.get("diagnostics") or {}).get("forced_moves", 0) or 0 for g in games),
         "request_count": sum((g.get("diagnostics") or {}).get("request_count", 0) or 0 for g in games),
         "completion_tokens": sum((g.get("diagnostics") or {}).get("completion_tokens", 0) or 0 for g in games),
         "fallback_reasons": dict(sum((Counter((g.get("diagnostics") or {}).get("fallback_reasons") or {}) for g in games), Counter())),

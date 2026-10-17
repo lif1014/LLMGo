@@ -262,14 +262,14 @@ function choiceTrace(choices, previousStart) {
       continue;
     }
     if (event.source === "random") {
-      lines.push(`没有选出合法字母，随机走 ${event.uci || ""}`);
+      lines.push(`未取得有效最终答案，随机走 ${event.uci || ""}`);
       continue;
     }
     if (event.status !== "answered") continue;
     const stage = { tool: "选工具", piece: "选子", move: "选走法" }[event.stage] || "选择";
-    const option = (event.options || []).find((item) => item.letter === event.letter);
+    const option = (event.options || []).find((item) => event.uci ? item.uci === event.uci : event.letter && item.letter === event.letter);
     const name = option ? option.label : (event.tool || "");
-    lines.push(`${stage} ${event.letter || ""} ${name}`.trim());
+    lines.push(`${stage} ${event.uci || event.letter || ""} ${name}${event.source === "forced" ? "（唯一合法步）" : ""}`.trim());
     const added = (event.blackboard || []).filter((line) => !previous.includes(line));
     previous = event.blackboard || previous;
     if (event.stage === "tool" && added.length) lines.push(added.join("\n"));
@@ -328,7 +328,7 @@ async function loadHarnessLibrary() {
     tools.replaceChildren(); skills.replaceChildren();
     for (const tool of data.tools || []) {
       const item = document.createElement("article");
-      item.textContent = `${tool.letter} ${tool.name} — ${tool.description}`;
+      item.textContent = `${tool.mode === "automatic" ? "自动" : tool.letter || ""} ${tool.name} — ${tool.description}`;
       tools.appendChild(item);
     }
     for (const card of data.skills || []) {
@@ -541,7 +541,7 @@ function renderSummary(node, summary, title, rulesName) {
   bars(node, summary.error_types);
   if (summary.harness) {
     const diagnostic = document.createElement("p");
-    diagnostic.textContent = `选择完成 ${summary.model_decisions || 0}/${summary.model_turns || 0}；随机后备 ${summary.random_moves || 0}（${percent(summary.random_rate)}）；请求 ${summary.request_count || 0}；生成 ${summary.completion_tokens || 0} tokens${summary.tokens_exact === false ? "（含估算）" : ""}；后备原因 ${JSON.stringify(summary.fallback_reasons || {})}。合法率包含程式后备。`;
+    diagnostic.textContent = `模型选择完成 ${summary.model_decisions || 0}/${summary.model_turns || 0}；强制步 ${summary.forced_moves || 0}；随机后备 ${summary.random_moves || 0}（${percent(summary.random_rate)}）；请求 ${summary.request_count || 0}；生成 ${summary.completion_tokens || 0} tokens${summary.tokens_exact === false ? "（含估算）" : ""}；后备原因 ${JSON.stringify(summary.fallback_reasons || {})}。合法率包含程式后备。`;
     node.appendChild(diagnostic);
   }
   if (summary.finish_length_count) {
@@ -641,7 +641,7 @@ function onEvent(event) {
       live.blackboardLines = event.blackboard;
     }
     if (event.status === "answered" || event.source === "random") {
-      live.content = event.letter || (event.source === "random" ? `random ${event.uci || ""}` : live.content);
+      live.content = event.source === "random" ? `random ${event.uci || ""}` : (event.uci || event.letter || live.content);
     }
     setLive(seat);
     const note = document.getElementById("blackboard");
@@ -649,7 +649,7 @@ function onEvent(event) {
     state.choiceMarks = choiceMarks(event);
     renderBoard();
     const stage = { tool: "选工具", piece: "选子", move: "选走法" }[event.stage] || "选择";
-    const picked = event.letter ? `，回了 ${event.letter}` : "";
+    const picked = event.uci ? `，选择 ${event.uci}${event.source === "forced" ? "（唯一合法步）" : ""}` : event.letter ? `，回了 ${event.letter}` : "";
     const random = event.source === "random" ? `，随机 ${event.uci}` : "";
     document.getElementById("status").textContent = `${seatName(seat)}正在${stage}${picked}${random}`;
     return;

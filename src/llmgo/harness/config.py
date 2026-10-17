@@ -1,4 +1,4 @@
-"""Budgets apply to generation on the local vLLM server, including thinking."""
+"""One complete-move question, with a shared generation budget including thinking."""
 from dataclasses import asdict, dataclass, fields
 import json
 import math
@@ -6,31 +6,26 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class HarnessConfig:
-    tool_tokens: int = 4096
-    piece_tokens: int = 8192
-    preview_tokens: int = 4096
-    move_tokens: int = 16384
-    max_lookups: int = 2
+    move_tokens: int = 32768
     attempts_per_choice: int = 2
     request_timeout_sec: float = 540.0
     turn_timeout_sec: float = 1800.0
-    skills_limit: int = 3
+    skills_limit: int = 2
     history_plies: int = 12
 
     def __post_init__(self):
-        for name in ('tool_tokens', 'piece_tokens', 'preview_tokens', 'move_tokens', 'max_lookups', 'attempts_per_choice', 'skills_limit', 'history_plies'):
-            if not isinstance(getattr(self, name), int) or isinstance(getattr(self, name), bool):
+        for name in ('move_tokens', 'attempts_per_choice', 'skills_limit', 'history_plies'):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool):
                 raise ValueError(f'{name} must be an integer')
-        for name in ('tool_tokens', 'piece_tokens', 'preview_tokens', 'move_tokens', 'attempts_per_choice'):
-            if getattr(self, name) < 1:
-                raise ValueError(f'{name} must be positive')
-        if not 0 <= self.max_lookups <= 2:
-            raise ValueError('max_lookups must be between 0 and 2')
-        if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
-               for value in (self.request_timeout_sec, self.turn_timeout_sec)):
-            raise ValueError('timeouts must be positive')
-        if not 0 <= self.skills_limit <= 3 or self.history_plies < 0:
-            raise ValueError('skills_limit must be 0..3; history_plies must be nonnegative')
+        if self.move_tokens < 1 or self.attempts_per_choice < 1:
+            raise ValueError('move_tokens and attempts_per_choice must be positive')
+        for name in ('request_timeout_sec', 'turn_timeout_sec'):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError('timeouts must be positive and finite')
+        if not 0 <= self.skills_limit <= 2 or self.history_plies < 0:
+            raise ValueError('skills_limit must be 0..2; history_plies must be nonnegative')
 
     @classmethod
     def from_dict(cls, data=None):

@@ -99,7 +99,7 @@ class HarnessRunner:
         attempts: list[dict] = []
         result = None
         reason = None
-        tool_uses = {"legal": 0, "hanging": 0, "king": 0, "material": 0, "preview": 0}
+        tool_uses = {"position": 0, "candidates": 0}
         diagnostics = []
         random_moves = 0
         await self._emit(emit, {"type": "position", **self._position_payload(pos, None)})
@@ -153,7 +153,8 @@ class HarnessRunner:
         final["tool_uses"] = tool_uses
         final["harness"] = True
         final["model_turns"] = len(diagnostics)
-        final["model_decisions"] = len(diagnostics) - random_moves
+        final["forced_moves"] = sum(item.get("source") == "forced" for item in attempts)
+        final["model_decisions"] = sum(item.get("source") == "model" and item.get("ok") for item in attempts)
         final["random_rate"] = random_moves / len(diagnostics) if diagnostics else None
         final["fallback_reasons"] = dict(Counter(d["fallback_reason"] for d in diagnostics if d.get("fallback_reason")))
         for key in ("request_count", "completion_tokens", "prompt_tokens", "request_errors", "length_count", "latency_ms"):

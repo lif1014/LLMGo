@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import httpx
 from llmgo.harness.agent import AskResult
+from llmgo.harness.choices import split_thinking
 
 class VllmAsker:
     def __init__(self, base_url, model, temperature=0.9, top_p=0.95, top_k=20,
@@ -36,11 +37,13 @@ class VllmAsker:
             content = str(message.get('content') or '').strip()
             reasoning = str(message.get('reasoning_content') or message.get('reasoning') or '').strip()
             output = '\n\n'.join(part for part in (reasoning, content) if part)
+            content, reasoning, normalization_error = split_thinking(content, reasoning)
             usage = data.get('usage') or {}
             exact = isinstance(usage.get('completion_tokens'), int)
             tokens = int(usage['completion_tokens']) if exact else max(1, len(output.encode('utf-8')))
             return AskResult(content, tokens, finish_reason=choice.get('finish_reason'), output=output,
                              reasoning=reasoning, usage=usage, tokens_exact=exact,
+                             normalization_error=normalization_error,
                              raw_response=raw, request_payload=payload, http_status=response.status_code,
                              latency_ms=(time.monotonic() - started) * 1000)
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:

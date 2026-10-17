@@ -9,7 +9,7 @@ from llmgo.harness.tools import material_value
 def load_cards() -> tuple[dict, ...]:
     cards = json.loads((Path(__file__).with_name('skills') / 'cards.json').read_text(encoding='utf-8'))
     seen = set()
-    triggers = {'in_check', 'checks_available', 'captures_available', 'opening', 'inactive_rook', 'endgame', 'opponent_forcing_material',
+    triggers = {'in_check', 'checks_available', 'captures_available', 'opening', 'inactive_rook', 'endgame', 'candidate_allows_mate',
                 'opening_white_centre', 'opening_black_reply', 'opening_open_game',
                 'opening_sicilian', 'opening_caro_kann', 'opening_queen_pawn'}
     for card in cards:
@@ -48,7 +48,7 @@ def _opening_signals(board: chess.Board) -> dict[str, bool]:
             and not (white_e4 and black_e5),
     }
 
-def select_skills(board: chess.Board, stage: str, limit: int = 3) -> list[dict]:
+def select_skills(board: chess.Board, stage: str = 'move', limit: int = 2, *, candidates=None) -> list[dict]:
     legal = list(board.legal_moves)
     opening = board.fullmove_number <= 12
     endgame = not board.queens and sum(material_value(board, c) - 100 * len(board.pieces(chess.PAWN, c)) for c in chess.COLORS) <= 2000
@@ -57,8 +57,10 @@ def select_skills(board: chess.Board, stage: str, limit: int = 3) -> list[dict]:
                'captures_available': any(board.is_capture(m) for m in legal),
                'opening': opening and bool((board.knights | board.bishops) & board.occupied_co[board.turn] & back),
                'inactive_rook': not opening and not endgame and bool(board.pieces_mask(chess.ROOK, board.turn) & back), 'endgame': endgame,
-               'opponent_forcing_material': bool((board.queens | board.rooks) & board.occupied_co[not board.turn]),
+               'candidate_allows_mate': False,
                **_opening_signals(board)}
+    if candidates is not None:
+        signals['candidate_allows_mate'] = any(item['preview']['opponent_mate_in_one'] for item in candidates)
     cards = [card for card in load_cards() if stage in card['stages'] and signals[card['trigger']]]
     return sorted(cards, key=lambda card: (-card['priority'], card['id']))[:limit]
 

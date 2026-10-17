@@ -1,7 +1,8 @@
 # LLMGo! 國際象棋 Harness
 
 目前國際象棋的驗收玩家是選擇題框架：本地 vLLM 上的 Qwen3.5-4B 始終開啟
-`enable_thinking=True`，先選工具，再選棋子，最後選該子的合法著。規則由
+`enable_thinking=True`，每手只回答一道完整走法選擇題。Harness 自動檢查局面，
+列出全部合法 UCI 走法，模型直接回答 `{"move":"e2e4"}`。規則由
 python-chess 執行；對手為 Fairy-Stockfish，預設第 1 檔（skill -9、depth 5、
 每步 0.05 秒）。最多 **200 半步**，即 100 回合。中國象棋及五子棋保留相容入口。
 
@@ -40,8 +41,8 @@ vLLM。未給 URL 時，每張選定 GPU 啟動一個模型服務。`--gpus 1` �
 - `model_request started/finished`：實際 prompt、請求參數、完整 reasoning/content、
   原始 HTTP 回應、usage、延遲、finish_reason、解析結果與重試序號。
 - `tool_call started/finished`：工具名稱、參數、完整回傳與計算時間。
-- `choice`：工具／試走候選／棋子／走法的選項和選擇。
-- `route_recovery`、`fallback`：路由恢復或隨機走子的原因、階段、範圍及剩餘預算。
+- `choice`：全部完整合法步與最終選擇，唯一合法步記為 `forced`。
+- `fallback`：隨機後備的原因、範圍及剩餘預算；舊日誌的 `route_recovery` 仍可回放。
 - `attempt`、`position`、`game_finished`：實際走子、局面與結果。
 
 每筆有時間戳及 sequence。網頁可逐手回放完整請求與工具結果，並展示工具庫、
@@ -53,31 +54,58 @@ vLLM。未給 URL 時，每張選定 GPU 啟動一個模型服務。`--gpus 1` �
 
 ## 工具、預算與 skills
 
-工具庫包含 legal、hanging、king、material、preview。`preview` 由模型選候選步，
-以棋規試走後列出合法回吃、子力變化、對手一步將殺及終局；不調用外部引擎、
-開局 oracle 或殘局庫，也不替模型推薦最佳著。
+每手由 Harness 自動執行兩項檢查：`position` 記錄將軍、易位權利／當前合法易位
+及子力；`candidates` 列舉**全部**合法步，對每一步試走，檢查合法回吃、立即子力
+變化、對手一步將殺及終局。工具不調用外部引擎、開局 oracle 或殘局庫，不排序
+推薦著，也不刪除看起來差的合法步。完整結果保存於工具事件；prompt 只附簡短
+候選觀察。局部回吃估算不代表完整交換搜尋或安全保證。
 
-king 分開顯示 in_check、易位權利及當前合法易位；hanging 使用合法回吃而非
-幾何保護者，並明示局部交換估算的限制。
+合法步以棋子種類、起點及 UCI 固定分組，例如：
 
-`src/llmgo/harness/settings.json` 控制本地 vLLM 生成：工具階段 4096、選子 8192、
-試走候選 4096、選步 16384；整手仍共用 32768，並為後續階段保留額度。這些是
-各階段額度，不是每階段都可另用整手預算。唯一選項自動前進。思考始終開啟。
-單次模型請求逾時為 540 秒（9 分鐘），整手逾時為 1800 秒（30 分鐘）。
+```text
+knight b1: b1a3 (Na3), b1c3 (Nc3)
+knight g1: g1f3 (Nf3), g1h3 (Nh3)
+pawn e2: e2e3 (e3), e2e4 (e4)
+```
 
-`skills/cards.json` 保留觸發條件、規則、反例、來源和棋譜證據；每次最多按條件
-載入三張。`skills/master_games.pgn` 是研究及測試素材，執行時不查表套棋譜。
-另有六張前幾步的開局知識卡，涵蓋中央起手、黑方應對、雙王兵、西西里、卡羅－康
-及后兵開局；在選子／選步時提供典型短線與目的。它們只在開局結構符合時載入，
-被將軍時停用，優先級低於戰術提醒；模型仍需依實際合法選項決定走法。
+這是同一道題的分組；模型直接選完整 UCI，不需選工具或先選棋子。棋盤以具名棋子
+座標表示，FEN 保留於日誌。回答可以是 JSON 或單獨的合法 UCI，程式只解析最終
+答案。兼容 vLLM 的分離 reasoning 欄位，以及混在 content 中、以 `</think>` 結束的
+思考；截斷／未完成的思考不會被當作答案。原始 HTTP 回應完整保留。
+
+`src/llmgo/harness/settings.json` 的 `move_tokens` 預設為 32768；整手生成與格式
+重試共用這個額度，thinking 始終開啟。最多兩次請求，第二次附格式修正提示。
+單次請求逾時 540 秒，整手逾時 1800 秒。唯一合法步不呼叫模型，單獨統計
+`forced_moves`；模型成功選擇與 `random` 後備也分開統計。
+舊版的 `tool_tokens`、`piece_tokens`、`preview_tokens`、`max_lookups` 設定已移除；
+若協議中有自行覆蓋這些欄位，請改用 `move_tokens`。
+
+`skills/cards.json` 的 13 張卡保留觸發條件、規則、反例、來源與棋譜證據；每題最多
+按條件載入兩張。六張開局卡涵蓋中央起手、黑方應對、雙王兵、西西里、卡羅－康
+及后兵開局。防一步殺卡只在預計算確實發現候選允許一步殺時載入。
+`skills/master_games.pgn` 是研究及測試素材，執行時不查表套棋譜。
 
 ## RSI 與測試
 
 PostTrainBench 使用同一個選擇題 runner；Meta-Agent 可改該輪的 `harness/` 及
 skills，亦可選擇後訓練。提交與 seal 打包方式見 `../PostTrainBench/README.md`。
 
+伺服器更新 LLMGo! 後，也要同步 PostTrainBench 的 Meta-Agent 任務與 baseline。
+本倉庫附有針對上一版 chess harness 整合的文字更新 patch：
+
 ```bash
-PYTHONPATH=src python3 -m pytest tests/test_harness.py tests/test_harness_v2.py tests/test_arena.py tests/test_games.py
+cd ../PostTrainBench
+git apply --unidiff-zero --check '../LLMGo!/integrations/posttrainbench-single-choice.patch'
+git apply --unidiff-zero '../LLMGo!/integrations/posttrainbench-single-choice.patch'
+python3 package_seal.py --llmgo '../LLMGo!'
+```
+
+若已套用，無需重複 apply；每次更新 baseline 後重新執行 packager 即可。請在 RSI
+輪次之間打包，原有模型／引擎路徑保持不變。
+
+```bash
+PYTHONPATH=src python3 -m pytest -q tests
+node tests/test_harness_ui.js
 node --check src/llmgo/server/static/app.js
 ```
 

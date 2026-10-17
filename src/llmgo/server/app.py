@@ -65,7 +65,7 @@ async def harness_library():
     from llmgo.harness.skills import load_cards
     from llmgo.harness.tools import TOOL_LIBRARY
     protocol = chess_protocol()
-    return {"tools": TOOL_LIBRARY, "skills": load_cards(), "enable_thinking": True,
+    return {"tools": TOOL_LIBRARY, "skills": load_cards(), "enable_thinking": True, "decision_mode": "single_choice",
             "max_plies": 200, "config": HarnessConfig.from_dict(protocol.get("harness")).as_dict()}
 
 

@@ -1,55 +1,56 @@
-"""字母選單。字母固定，查過的工具整段拿掉。"""
-
+"""Read explicit final answers without treating thoughts as choices."""
 from __future__ import annotations
-
+import json
 import re
 
-TOOL_ORDER = ("legal", "hanging", "king", "material", "preview", "piece")
-TOOL_LETTER = {
-    "legal": "A",
-    "hanging": "B",
-    "king": "C",
-    "material": "D",
-    "piece": "E",
-    "preview": "F",
-}
-LETTER_TOOL = {letter: name for name, letter in TOOL_LETTER.items()}
 
-_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+def split_thinking(content: str, reasoning: str = '') -> tuple[str, str, str | None]:
+    """Handle both server-separated reasoning and Qwen's closing-tag-only output."""
+    if '</think>' in content:
+        thoughts, final = content.rsplit('</think>', 1)
+        thoughts = thoughts.removeprefix('<think>').strip()
+        if thoughts and thoughts != reasoning:
+            reasoning = '\n\n'.join(part for part in (reasoning, thoughts) if part)
+        # A fresh unclosed block in the final portion is not a final answer.
+        if '<think>' in final:
+            return '', reasoning + '\n' + final, 'incomplete_thinking'
+        return final.strip(), reasoning, None
+    if '<think>' in content:
+        return '', '\n\n'.join(part for part in (reasoning, content) if part), 'incomplete_thinking'
+    return content.strip(), reasoning, None
 
 
-def option_labels(count: int) -> list[str]:
-    """一題裡的選項字母。超過 26 個時接著用 1、2。"""
-    if count <= len(_ALPHABET):
-        return list(_ALPHABET[:count])
-    extra = [str(index) for index in range(1, count - len(_ALPHABET) + 1)]
-    return list(_ALPHABET) + extra
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Duplicate answer key')
+        result[key] = value
+    return result
+
+
+def parse_move(text: str, allowed: set[str]) -> str | None:
+    final, _, error = split_thinking(text)
+    if error or not final:
+        return None
+    if final.startswith('```'):
+        match = re.fullmatch(r'```(?:json)?\s*\n(.*?)\n```', final, re.DOTALL)
+        if not match:
+            return None
+        final = match.group(1).strip()
+    try:
+        answer = json.loads(final, object_pairs_hook=_unique_object)
+    except (ValueError, TypeError):
+        answer = final  # A bare UCI final answer is unambiguous too.
+    if isinstance(answer, dict) and set(answer) == {'move'}:
+        answer = answer['move']
+    return answer if isinstance(answer, str) and answer in allowed else None
 
 
 def parse_choice(text: str, allowed: set[str]) -> str | None:
-    """從模型回覆取出一個允許的字母。幾個都出現時視為沒選。"""
-    if not text or not allowed:
+    """Historical letter logs only; live decisions use parse_move."""
+    final, _, error = split_thinking(text)
+    if error:
         return None
-    by_key = {item.upper(): item for item in allowed}
-    found = []
-    for item in allowed:
-        if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", text, re.IGNORECASE):
-            found.append(item)
-    unique = {item.upper() for item in found}
-    if len(unique) == 1:
-        return by_key[next(iter(unique))]
-    return None
-
-
-def available_tools(used: set[str]) -> list[str]:
-    """查過的工具消失。寫進便籤滿兩次後，只留 piece。"""
-    if len(used) >= 2:
-        return ["piece"]
-    return [name for name in TOOL_ORDER if name == "piece" or name not in used]
-
-
-def blackboard(notes: dict[str, list[str]]) -> list[str]:
-    lines: list[str] = []
-    for name in ("legal", "hanging", "king", "material", "preview"):
-        lines.extend(notes.get(name, []))
-    return lines
+    match = re.fullmatch(r'(?:(?:reply|answer)\s+)?([A-Za-z]|[0-9]+)', final, re.IGNORECASE)
+    return next((value for value in allowed if match and value.upper() == match[1].upper()), None)

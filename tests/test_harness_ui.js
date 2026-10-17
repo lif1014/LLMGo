@@ -67,4 +67,16 @@ vm.runInContext(`
 assert.match(node('red-trace').textContent, /raw replay/);
 assert.match(node('red-trace').textContent, /length_without_choice/);
 assert.equal(node('blackboard').textContent, 'preview exact result');
+// The new protocol uses UCI choices and automatic tools; old letter replay above remains supported.
+vm.runInContext(`
+  onEvent({type:'turn_started',seat:'white',framework:'single_choice',tool_library:[]});
+  onEvent({type:'tool_call',status:'finished',seat:'white',tool:'candidates',result:['e2e4: example observation'],blackboard:['e2e4: example observation'],data:{legal_count:20}});
+  onEvent({type:'choice',stage:'move',status:'asking',seat:'white',turn_id:'0:white',prompt:'all legal UCI options',options:[{uci:'e2e3',label:'e2e3 (e3)'},{uci:'e2e4',label:'e2e4 (e4)'}],blackboard:[]});
+  onEvent({type:'choice',stage:'move',status:'answered',seat:'white',uci:'e2e4',source:'model',options:[{uci:'e2e3',label:'e2e3 (e3)'},{uci:'e2e4',label:'e2e4 (e4)'}],blackboard:[]});
+  if (choiceTrace([{type:'choice',stage:'move',status:'answered',uci:'e2e4',options:[{uci:'e2e3',label:'e2e3 (e3)'},{uci:'e2e4',label:'e2e4 (e4)'}]}]).includes('e2e3')) throw new Error('selected the wrong UCI label');
+`, context);
+assert.equal(node('red-content').textContent, 'e2e4');
+assert.match(node('red-tools').textContent, /candidates/);
+vm.runInContext(`onEvent({type:'choice',stage:'move',status:'answered',seat:'white',uci:'h8h7',source:'forced',blackboard:[]});`, context);
+assert.match(node('status').textContent, /唯一合法步/);
 console.log('Harness UI trace, archive, replay and initial board: passed');

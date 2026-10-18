@@ -1,0 +1,208 @@
+{
+  "baseline_commit": "a9b3355",
+  "scope": "Replay of recorded SSE; no new generation, match result or Elo claim",
+  "tokenizer": {
+    "file": "tokenizer.json",
+    "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+  },
+  "runs": [
+    {
+      "game_id": "20261018-153738-eaa2",
+      "raw_sha256": "ac3e6a9f6e245b848b035581d9e9396c06689e9d7f7e41a0acf41a92b89afdc7",
+      "observed_summary": {
+        "game_id": "20261018-153738-eaa2",
+        "game": "chess",
+        "result": null,
+        "result_reason": "unfinished_snapshot",
+        "attempts": 4,
+        "first_try_total": 4,
+        "first_try_legal": 4,
+        "first_try_legal_rate": 1.0,
+        "error_types": {},
+        "by_seat": {
+          "white": {
+            "first_try_total": 2,
+            "first_try_legal": 2,
+            "error_types": {}
+          },
+          "black": {
+            "first_try_total": 2,
+            "first_try_legal": 2,
+            "error_types": {}
+          }
+        },
+        "finish_length_count": 0,
+        "harness": true,
+        "provisional": true,
+        "model_turns": 2,
+        "model_decisions": 0,
+        "forced_moves": 0,
+        "random_moves": 2,
+        "request_count": 6,
+        "completed_requests": 5,
+        "pending_requests": 1,
+        "completion_tokens": 32034,
+        "tokens_exact": true,
+        "token_scope": "completed_requests",
+        "fallback_reasons": {
+          "incomplete_thinking": 2
+        },
+        "request_errors": 0,
+        "model_choices": 2,
+        "model_choice_rate": 0.0,
+        "random_rate": 1.0
+      }
+    },
+    {
+      "game_id": "20261018-153740-0a3b",
+      "raw_sha256": "c6a2051e1d253561f21ae473e33b2c4dcf4407e8056f2016f8e7f33ba4414887",
+      "observed_summary": {
+        "game_id": "20261018-153740-0a3b",
+        "game": "chess",
+        "result": null,
+        "result_reason": "unfinished_snapshot",
+        "attempts": 6,
+        "first_try_total": 6,
+        "first_try_legal": 6,
+        "first_try_legal_rate": 1.0,
+        "error_types": {},
+        "by_seat": {
+          "white": {
+            "first_try_total": 3,
+            "first_try_legal": 3,
+            "error_types": {}
+          },
+          "black": {
+            "first_try_total": 3,
+            "first_try_legal": 3,
+            "error_types": {}
+          }
+        },
+        "finish_length_count": 0,
+        "harness": true,
+        "provisional": true,
+        "model_turns": 3,
+        "model_decisions": 0,
+        "forced_moves": 0,
+        "random_moves": 3,
+        "request_count": 7,
+        "completed_requests": 6,
+        "pending_requests": 1,
+        "completion_tokens": 39945,
+        "tokens_exact": true,
+        "token_scope": "completed_requests",
+        "fallback_reasons": {
+          "incomplete_thinking": 2,
+          "request_timeout": 1
+        },
+        "request_errors": 1,
+        "model_choices": 3,
+        "model_choice_rate": 0.0,
+        "random_rate": 1.0
+      }
+    }
+  ],
+  "replay": [
+    {
+      "run": "20261018-153738-eaa2",
+      "request": "0:white:1",
+      "old": "incomplete_thinking",
+      "new": "e2e4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153738-eaa2",
+      "request": "0:white:2",
+      "old": "incomplete_thinking",
+      "new": "e2e4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153738-eaa2",
+      "request": "2:white:1",
+      "old": "incomplete_thinking",
+      "new": "d2d4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153738-eaa2",
+      "request": "2:white:2",
+      "old": "incomplete_thinking",
+      "new": "d2d4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153738-eaa2",
+      "request": "4:white:1",
+      "old": "incomplete_thinking",
+      "new": "d2d3",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153740-0a3b",
+      "request": "0:white:1",
+      "old": "incomplete_thinking",
+      "new": "e2e4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153740-0a3b",
+      "request": "0:white:2",
+      "old": "incomplete_thinking",
+      "new": "e2e4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153740-0a3b",
+      "request": "2:white:1",
+      "old": "incomplete_thinking",
+      "new": "d2d4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153740-0a3b",
+      "request": "2:white:2",
+      "old": "incomplete_thinking",
+      "new": "d2d4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153740-0a3b",
+      "request": "4:white:1",
+      "old": "incomplete_thinking",
+      "new": "e2e4",
+      "boundary": "token_ids",
+      "error": null,
+      "normalization_error": null
+    },
+    {
+      "run": "20261018-153740-0a3b",
+      "request": "4:white:2",
+      "old": "request_timeout",
+      "new": null,
+      "boundary": "standalone_or_missing",
+      "error": "incomplete_stream: no final finish_reason",
+      "normalization_error": "incomplete_thinking"
+    }
+  ],
+  "completed_responses_recovered": 10,
+  "unfinished_or_failed_responses_rejected": 1
+}

@@ -75,6 +75,8 @@ function initialChessPieces() {
 
 const state = {
   id: null,
+  selectedId: null,
+  summaryLoad: 0,
   socket: null,
   pieces: initialChessPieces(),
   last: null,
@@ -522,16 +524,18 @@ function schedulePaint(seat, channel) {
 async function watchLive(gameId) {
   if (state.socket && state.id === gameId && state.socket.readyState <= 1) return;
   const loadId = ++replayLoad;
+  beginSelection(gameId);
   stopPlayback();
   state.id = gameId;
   document.getElementById("start").disabled = true;
   document.getElementById("stop").disabled = false;
   document.getElementById("status").textContent = "正在接上进行中的对局…";
-  if (state.socket) state.socket.close();
+  if (state.socket) { const old = state.socket; state.socket = null; old.close(); }
   if (state.externalTimer) clearInterval(state.externalTimer);
   state.externalTimer = null;
   const info = await (await fetch(`/api/games/${gameId}`)).json();
   if (loadId !== replayLoad) return;
+  renderSelectedSummary(info.summary, gameId);
   state.modelSeat = info.model_seat || null;
   state.modelName = info.model || "Qwen3.5-4B";
   markSeats();
@@ -569,6 +573,34 @@ function percent(rate) {
   return `${Math.round(rate * 1000) / 10}%`;
 }
 
+function beginSelection(gameId) {
+  state.selectedId = gameId;
+  state.summaryLoad = (state.summaryLoad || 0) + 1;
+  document.getElementById('game-report').textContent = `正在载入 ${gameId} 的统计…`;
+}
+
+function renderSelectedSummary(summary, gameId = state.selectedId) {
+  if (gameId !== state.selectedId) return;
+  state.summaryLoad = (state.summaryLoad || 0) + 1;
+  if (!summary) {
+    document.getElementById('game-report').textContent = `所选对局 ${gameId || ''} 尚无可用统计。`;
+    return;
+  }
+  renderSummary(document.getElementById('game-report'), summary, `选中对局 ${gameId || ''}`);
+}
+
+async function refreshSelectedSummary() {
+  const gameId = state.selectedId;
+  if (!gameId) return;
+  const version = ++state.summaryLoad;
+  try {
+    const response = await fetch(`/api/games/${gameId}`);
+    if (!response.ok) return;
+    const info = await response.json();
+    if (version === state.summaryLoad && gameId === state.selectedId) renderSelectedSummary(info.summary, gameId);
+  } catch (error) { /* Keep the selected game's last observed snapshot. */ }
+}
+
 function bars(target, errors) {
   const entries = Object.entries(errors || {});
   if (!entries.length) {
@@ -591,7 +623,7 @@ function renderSummary(node, summary, title, rulesName) {
     return;
   }
   const head = document.createElement("div");
-  head.innerHTML = `<div>${title}</div><div class="rate">${percent(summary.first_try_legal_rate)}</div><div>首步合法 ${summary.first_try_legal || 0} / ${summary.first_try_total || 0}</div>`;
+  head.innerHTML = `<div>${title}</div><div class="rate">${percent(summary.first_try_legal_rate)}</div><div>${summary.harness ? '棋盘合法' : '首步合法'} ${summary.first_try_legal || 0} / ${summary.first_try_total || 0}</div>`;
   if (summary.result) head.insertAdjacentHTML("beforeend", `<div>结果：${summary.result}（${summary.result_reason || ""}）</div>`);
   node.appendChild(head);
   for (const seat of Object.keys(summary.by_seat || {})) {
@@ -608,6 +640,11 @@ function renderSummary(node, summary, title, rulesName) {
     const choices = summary.model_choices ?? Math.max(0, (summary.model_turns || 0) - (summary.forced_moves || 0));
     diagnostic.textContent = `模型选择完成 ${summary.model_decisions || 0}/${choices}（${percent(choices ? summary.model_decisions / choices : null)}）；强制步 ${summary.forced_moves || 0}；随机后备 ${summary.random_moves || 0}（${percent(summary.random_rate)}）；请求 ${summary.request_count || 0}；生成 ${summary.completion_tokens || 0} tokens${summary.tokens_exact === false ? "（含估算）" : ""}；后备原因 ${JSON.stringify(summary.fallback_reasons || {})}。棋盘合法率包含程式后备。`;
     node.appendChild(diagnostic);
+  }
+  if (summary.provisional) {
+    const progress = document.createElement('p');
+    progress.textContent = `未完对局／日志快照：走子统计只包含已落子的手数；已结束请求 ${summary.completed_requests || 0}，未结束请求 ${summary.pending_requests || 0}。生成 token 只计已结束请求，尚无胜负结果。`;
+    node.appendChild(progress);
   }
   if (summary.finish_length_count) {
     const note = document.createElement("p");
@@ -669,6 +706,7 @@ function onEvent(event) {
     }
     if (event.type === "fallback") live.content = `random ${event.uci} · ${event.reason}`;
     setLive(event.seat);
+    if (event.type === 'model_request') refreshSelectedSummary();
     return;
   }
   if (event.type === "token") {
@@ -690,6 +728,7 @@ function onEvent(event) {
     live.content = event.content || live.content;
     setLive(event.seat);
     addMove(event);
+    refreshSelectedSummary();
     return;
   }
   if (event.type === "choice") {
@@ -735,14 +774,14 @@ function onEvent(event) {
     return;
   }
   if (event.type === "summary") {
-    renderSummary(document.getElementById("game-report"), event.game, "本局首步合法率");
+    renderSelectedSummary(event.game);
     return;
   }
   if (event.type === "game_finished") {
     document.getElementById("status").textContent = `对局结束：${event.result || ""} ${event.result_reason || ""}`;
     document.getElementById("start").disabled = false;
     document.getElementById("stop").disabled = true;
-    if (event.summary) renderSummary(document.getElementById("game-report"), event.summary, "本局首步合法率");
+    if (event.summary) renderSelectedSummary(event.summary);
     loadReports();
   }
 }
@@ -850,10 +889,14 @@ function buildFrames(events) {
 
 async function openReplay(gameId, options) {
   const loadId = ++replayLoad;
+  beginSelection(gameId);
+  const infoPromise = fetch(`/api/games/${gameId}`).then(response => response.ok ? response.json() : null).catch(() => null);
   if (state.socket) { state.socket.close(); state.socket = null; }
   if (state.externalTimer) clearInterval(state.externalTimer);
   state.externalTimer = null;
   state.id = null;
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
   document.getElementById('status').textContent = '正在载入精简回放…';
   if (replay.timer) {
     clearInterval(replay.timer);
@@ -869,8 +912,9 @@ async function openReplay(gameId, options) {
       if (loadId !== replayLoad) return;
       resetView();
       replay.frames = []; replay.id = gameId;
-      const info = await (await fetch(`/api/games/${gameId}`)).json();
-      if (info.summary) renderSummary(document.getElementById('game-report'), info.summary, '本局结果');
+      const info = await infoPromise;
+      if (loadId !== replayLoad) return;
+      renderSelectedSummary(info?.summary || null, gameId);
       document.getElementById('status').textContent = '此局没有可回放的事件记录；可查看结果与启动日志。';
       return;
     }
@@ -881,6 +925,8 @@ async function openReplay(gameId, options) {
     if (!page.more || page.cursor === cursor) break;
     cursor = page.cursor;
   } while (true);
+  const info = await infoPromise;
+  if (loadId !== replayLoad) return;
   const opening = (data.events || []).find((event) => event.type === "position");
   if (opening) setGame(opening.game || "xiangqi", opening.files, opening.ranks);
   replay.id = gameId;
@@ -893,8 +939,8 @@ async function openReplay(gameId, options) {
     if (event.type === "attempt") addMove(event);
   }
   const summary = [...(data.events || [])].reverse().find((event) => event.type === "summary" || event.type === "game_finished");
-  const report = summary && (summary.game || summary.summary);
-  if (report) renderSummary(document.getElementById("game-report"), report, "本局首步合法率");
+  const report = summary ? (summary.game || summary.summary) : info?.summary;
+  renderSelectedSummary(report || null, gameId);
   showFrame(options && options.fromStart ? 0 : Math.max(0, replay.frames.length - 1));
   for (const button of document.querySelectorAll(".game-list button")) {
     button.classList.toggle("active", button.dataset.id === gameId);
@@ -912,6 +958,9 @@ function pageName() {
 }
 
 function showPage(name) {
+  replayLoad += 1;
+  state.selectedId = null;
+  state.summaryLoad = (state.summaryLoad || 0) + 1;
   if (state.externalTimer) clearInterval(state.externalTimer);
   state.externalTimer = null;
   stopPlayback();
@@ -951,7 +1000,11 @@ async function loadReports() {
   root.innerHTML = "";
   const report = document.createElement("div");
   report.className = "report";
-  renderSummary(report, bucket.aggregate || emptyAggregate(), `共 ${(bucket.aggregate || {}).games || 0} 局`, name);
+  renderSummary(report, bucket.aggregate || emptyAggregate(), `全部对局统计（共 ${(bucket.aggregate || {}).games || 0} 局，非选中单局）`, name);
+  const aggregateBox = document.createElement('details');
+  const aggregateTitle = document.createElement('summary');
+  aggregateTitle.textContent = '查看全部对局汇总（与当前选中单局分开）';
+  aggregateBox.append(aggregateTitle, report);
   const list = document.createElement("div");
   list.className = "game-list";
   const rows = await Promise.all((bucket.games || []).map(async (game) => {
@@ -992,10 +1045,10 @@ async function loadReports() {
     });
     list.appendChild(button);
   }
-  root.append(report, list);
-  if (liveId && !state.socket && !state.externalTimer && state.id !== liveId) watchLive(liveId);
+  root.append(aggregateBox, list);
+  if (liveId && !state.selectedId && !state.socket && !state.externalTimer && state.id !== liveId) watchLive(liveId);
   for (const button of document.querySelectorAll(".game-list button")) {
-    button.classList.toggle("active", button.dataset.id === state.id);
+    button.classList.toggle("active", button.dataset.id === state.selectedId);
   }
 }
 

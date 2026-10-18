@@ -122,6 +122,17 @@ pawn e2: e2e3 e2e4
 `incomplete_thinking`，不從思考中的候選 JSON 猜答案。這些請求欄位依據既有
 [vLLM 0.20.1 協議](https://github.com/vllm-project/vllm/blob/v0.20.1/vllm/entrypoints/openai/chat_completion/protocol.py)。
 
+若服務仍以空文字 delta 回傳思考結束 token，Harness 現在依**既有模型 tokenizer**
+與原始生成 IDs 恢復分隔；打包的回應需先驗證重新解碼文字與收到的文字吻合。
+`boundary_source`、`boundary_error`、`tokenizer_info` 記錄分隔來源與 tokenizer 指紋。
+僅用 `--base-url` 時，也請附既有 `--model-path` 或設定 `LLMGO_TOKENIZER`；Arena
+同樣可用 `--model-path`。服務沒有傳 IDs／明確分隔，或 tokenizer 不吻合時仍會拒收。
+這是客戶端修正，重啟評測與網頁程序後即可使用，既有 vLLM 服務可繼續重用。
+
+網頁「目前選中對局」顯示 game ID；未完成的棋局從該局事件產生暫時統計，分別
+列出已結束／未結束請求，token 合計只計已結束請求。全部對局匯總位於獨立折疊區，
+切換對局不沿用其他局的統計。[最新兩局的完整分析與重播結果](docs/2026-10-18-latest-runs.md)。
+
 `src/llmgo/harness/settings.json` 的 `move_tokens` 預設為 32768；整手生成與格式
 重試共用這個額度，thinking 始終開啟。最多兩次請求，第二次附格式修正提示。
 單次請求逾時 540 秒，整手逾時 1800 秒。唯一合法步不呼叫模型，單獨統計
@@ -132,6 +143,7 @@ pawn e2: e2e3 e2e4
 `skills/cards.json` 的 13 張卡保留觸發條件、規則、反例、來源與棋譜證據；每題最多
 按條件載入兩張。六張開局卡涵蓋中央起手、黑方應對、雙王兵、西西里、卡羅－康
 及后兵開局。防一步殺卡只在預計算確實發現候選允許一步殺時載入。
+特定開局卡觸發時不再重複載入通用 development 卡，戰術卡仍保留條件觸發。
 `skills/master_games.pgn` 是研究及測試素材，執行時不查表套棋譜。
 
 ## RSI 與測試

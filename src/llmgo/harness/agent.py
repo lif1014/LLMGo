@@ -31,6 +31,9 @@ class AskResult:
     stream_chunks: int = 0
     first_token_ms: float | None = None
     token_ids: list[int] = field(default_factory=list)
+    boundary_source: str | None = None
+    boundary_error: str | None = None
+    tokenizer_info: dict | None = None
 
 @dataclass
 class Decision:
@@ -177,6 +180,8 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
                   'finish_reason': result.finish_reason, 'error': result.error, 'normalization_error': normalization_error,
                   'streamed': result.streamed, 'stream_chunks': result.stream_chunks, 'first_token_ms': result.first_token_ms,
                   'generated_token_ids': result.token_ids,
+                  'boundary_source': result.boundary_source, 'boundary_error': result.boundary_error,
+                  'tokenizer_info': result.tokenizer_info,
                   'uci': uci, 'accepted': uci is not None, 'failure_reason': reason, 'budget_spent': spent}
         requests.append(record)
         await send(record)

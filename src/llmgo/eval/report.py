@@ -52,6 +52,55 @@ def summarize_attempts(
     }
 
 
+def summarize_harness_events(game_id: str, events, game: str = 'chess') -> dict:
+    """Observed progress only: do not invent a result or overwrite stored metrics."""
+    attempts, finished, started = [], {}, set()
+    for event in events:
+        kind = event.get('type')
+        if kind == 'attempt':
+            attempts.append(event)
+        elif kind == 'model_request':
+            key = event.get('request_id')
+            if event.get('status') == 'started':
+                started.add(key)
+            elif event.get('status') == 'finished':
+                finished[key] = event
+    report = summarize_attempts(game_id, attempts, None, 'unfinished_snapshot', ('white', 'black'), game)
+    turns = [event for event in attempts if event.get('source') in {'model', 'random', 'forced'}]
+    report.update(harness=True, provisional=True, model_turns=len(turns),
+                  model_decisions=sum(bool(e.get('ok')) and e.get('source') == 'model' for e in turns),
+                  forced_moves=sum(e.get('source') == 'forced' for e in turns),
+                  random_moves=sum(e.get('source') == 'random' for e in turns),
+                  request_count=len(started | finished.keys()), completed_requests=len(finished),
+                  pending_requests=len(started - finished.keys()),
+                  completion_tokens=sum(e.get('completion_tokens', 0) or 0 for e in finished.values()),
+                  tokens_exact=all(e.get('tokens_exact', False) for e in finished.values()),
+                  token_scope='completed_requests',
+                  fallback_reasons=dict(Counter(e['fallback_reason'] for e in turns if e.get('fallback_reason'))),
+                  request_errors=sum(bool(e.get('error')) for e in finished.values()),
+                  finish_length_count=sum(e.get('finish_reason') == 'length' for e in finished.values()))
+    report['model_choices'] = report['model_turns'] - report['forced_moves']
+    report['model_choice_rate'] = report['model_decisions'] / report['model_choices'] if report['model_choices'] else None
+    report['random_rate'] = report['random_moves'] / report['model_turns'] if report['model_turns'] else None
+    return report
+
+
+def observed_summary(folder: Path) -> dict | None:
+    path = folder / 'short_events.jsonl'
+    if not path.is_file():
+        return None
+    if _rules_name(folder) != 'chess':
+        return None
+    def records():
+        with path.open(encoding='utf-8') as handle:
+            for line in handle:
+                if not line.endswith('\n'):
+                    break
+                if line.strip():
+                    yield json.loads(line)
+    return summarize_harness_events(folder.name, records())
+
+
 def aggregate(summaries: list[dict]) -> dict:
     errors: Counter[str] = Counter()
     by_seat: dict[str, dict] = {}
@@ -100,7 +149,7 @@ def _rules_name(folder: Path) -> str:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return "xiangqi"
-    return ((data.get("request") or {}).get("game")) or "xiangqi"
+    return data.get('game') or ((data.get("request") or {}).get("game")) or "xiangqi"
 
 
 def _config_fields(folder: Path) -> dict:
@@ -151,7 +200,7 @@ def load_runs(runs_dir: Path) -> list[dict]:
         if game_id in seen or (events.parent / "summary.json").exists():
             continue
         seen.add(game_id)
-        item = {"game_id": game_id, "game": "chess", "result": None, "result_reason": "playing"}
+        item = observed_summary(events.parent) or {"game_id": game_id, "game": "chess", "result": None, "result_reason": "playing"}
         item.update(_config_fields(events.parent))
         found.append(item)
     return found

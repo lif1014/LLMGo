@@ -7,6 +7,7 @@ import httpx
 from llmgo.harness.agent import AskResult
 from llmgo.harness.choices import split_thinking
 from llmgo.harness.streaming import SSEDecoder, StreamCancelled, StreamingText
+from llmgo.harness.boundary import TokenBoundary
 
 
 def _token_ids(value):
@@ -19,10 +20,11 @@ def _token_ids(value):
 
 class VllmAsker:
     def __init__(self, base_url, model, temperature=0.9, top_p=0.95, top_k=20,
-                 presence_penalty=0.0, timeout_sec=540.0, transport=None):
+                 presence_penalty=0.0, timeout_sec=540.0, transport=None, tokenizer_path=None):
         self.base_url = base_url.rstrip('/')
         self.model, self.temperature, self.top_p, self.top_k = model, temperature, top_p, top_k
         self.presence_penalty, self.timeout_sec, self.transport = presence_penalty, timeout_sec, transport
+        self.boundary = TokenBoundary(tokenizer_path)
 
     def build_payload(self, prompt: str, max_tokens: int) -> dict:
         return {'model': self.model, 'messages': [{'role': 'user', 'content': prompt}],
@@ -49,10 +51,14 @@ class VllmAsker:
             message = choice.get('message') or {}
             content = str(message.get('content') or '').strip()
             reasoning = str(message.get('reasoning_content') or message.get('reasoning') or '').strip()
+            token_ids = _token_ids(choice.get('token_ids'))
+            restored, boundary_error = self.boundary.restore(content, reasoning, token_ids)
+            boundary_source = 'token_ids' if restored is not None else 'native_reasoning' if reasoning else 'content_tag' if '</think>' in content else 'standalone_or_missing'
+            if restored is not None:
+                content = restored
             output = '\n\n'.join(part for part in (reasoning, content) if part)
             content, reasoning, normalization_error = split_thinking(content, reasoning)
             usage = data.get('usage') or {}
-            token_ids = _token_ids(choice.get('token_ids'))
             has_usage = isinstance(usage.get('completion_tokens'), int)
             exact = has_usage or bool(token_ids)
             tokens = int(usage['completion_tokens']) if has_usage else len(token_ids) if token_ids else max(1, len(output.encode('utf-8')))
@@ -60,6 +66,8 @@ class VllmAsker:
                              reasoning=reasoning, usage=usage, tokens_exact=exact,
                              normalization_error=normalization_error,
                              token_ids=token_ids,
+                             boundary_source=boundary_source, boundary_error=boundary_error,
+                             tokenizer_info=self.boundary.windows.source,
                              raw_response=raw, request_payload=payload, http_status=response.status_code,
                              latency_ms=(time.monotonic() - started) * 1000)
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
@@ -80,13 +88,18 @@ class VllmAsker:
         chunks, first_token_ms = 0, None
         is_sse = False
         received_done, received_choice = False, False
+        recovered_boundary = False
 
         def result(failure=None):
-            content, reasoning, normalization_error = split_thinking(text.content, text.reasoning)
-            if not text.reasoning and '</think>' not in text.content and text.shown['reasoning']:
-                content, reasoning = '', text.content.removeprefix('<think>')
+            restored, boundary_error = self.boundary.restore(text.content, text.reasoning, token_ids)
+            raw_content = restored if restored is not None else text.content
+            source = ('token_ids' if recovered_boundary or restored is not None else 'native_reasoning' if text.reasoning
+                      else 'content_tag' if '</think>' in raw_content else 'standalone_or_missing')
+            content, reasoning, normalization_error = split_thinking(raw_content, text.reasoning)
+            if not text.reasoning and '</think>' not in raw_content and text.shown['reasoning']:
+                content, reasoning = '', raw_content.removeprefix('<think>')
                 normalization_error = 'incomplete_thinking'
-            output = '\n\n'.join(part for part in (text.reasoning, text.content) if part)
+            output = '\n\n'.join(part for part in (text.reasoning, raw_content) if part)
             has_usage = isinstance(usage.get('completion_tokens'), int)
             exact = has_usage or bool(token_ids)
             tokens = int(usage['completion_tokens']) if has_usage else len(token_ids) if token_ids else len(output.encode('utf-8'))
@@ -96,10 +109,11 @@ class VllmAsker:
                              request_payload=payload, latency_ms=(time.monotonic() - started) * 1000,
                              http_status=status, normalization_error=normalization_error,
                              streamed=is_sse, stream_chunks=chunks, first_token_ms=first_token_ms,
-                             token_ids=list(token_ids))
+                             token_ids=list(token_ids), boundary_source=source, boundary_error=boundary_error,
+                             tokenizer_info=self.boundary.windows.source)
 
         async def dispatch(event):
-            nonlocal usage, finish, chunks, first_token_ms, received_done, received_choice
+            nonlocal usage, finish, chunks, first_token_ms, received_done, received_choice, recovered_boundary
             if event.strip() == '[DONE]':
                 received_done = True
                 return
@@ -116,11 +130,22 @@ class VllmAsker:
                 if choice.get('index', 0) != 0:
                     continue
                 received_choice = True
-                token_ids.extend(_token_ids(choice.get('token_ids')))
+                ids = _token_ids(choice.get('token_ids'))
+                token_ids.extend(ids)
                 if choice.get('finish_reason') is not None:
                     finish = choice['finish_reason']
                 delta = choice.get('delta') or {}
                 if not isinstance(delta, dict): raise ValueError('Invalid stream delta')
+                native = text.reasoning or delta.get('reasoning') or delta.get('reasoning_content')
+                if self.boundary.hidden_end(delta, ids, native) and '</think>' not in text.content:
+                    delta = {**delta, 'content': '</think>'}
+                    recovered_boundary = True
+                elif not native and self.boundary.end_id in ids and '</think>' not in text.content + (delta.get('content') or ''):
+                    restored, _ = self.boundary.restore(text.content + (delta.get('content') or ''), '', token_ids)
+                    if restored is not None:
+                        text.content = restored
+                        delta = {**delta, 'content': ''}
+                        recovered_boundary = True
                 for change in text.add(delta):
                     if first_token_ms is None and change['text']:
                         first_token_ms = (time.monotonic() - started) * 1000

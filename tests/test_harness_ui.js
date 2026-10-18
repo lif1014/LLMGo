@@ -140,4 +140,51 @@ vm.runInContext(`
   for (let i=0;i<20;i++) onEvent({type:'turn_started',seat:'white',prompt:'turn '+i,tool_library:[]});
 `, context);
 assert.equal(node('red-archive').children.length, 6);
-console.log('Harness UI trace, archive, replay and initial board: passed');
+async function selectionTests() {
+  // Let initial page bootstrap finish before installing controlled HTTP replies.
+  await new Promise(resolve => setImmediate(resolve));
+  const opening = {type:'position',game:'chess',pieces:[],side:'white',last_move:null};
+  const progress = id => ({game_id:id,game:'chess',harness:true,provisional:true,
+    model_turns:2,model_decisions:0,forced_moves:0,random_moves:2,random_rate:1,
+    request_count:6,completed_requests:5,pending_requests:1,completion_tokens:32034,
+    fallback_reasons:{incomplete_thinking:2}});
+  const response = value => ({ok:true,json:async()=>value});
+  let releaseOld;
+  const oldInfo = new Promise(resolve => releaseOld=resolve);
+  context.fetch = async url => {
+    if (url.includes('/events?')) return response({events:[opening],cursor:10,more:false});
+    if (url==='/api/games/slow-old') return oldInfo;
+    return response({id:url.split('/').pop(),summary:progress(url.split('/').pop()),live:false});
+  };
+  vm.runInContext(`beginSelection('old');renderSelectedSummary({harness:true,model_decisions:31,model_turns:69,forced_moves:2,random_moves:36});`,context);
+  assert.match(node('game-report').textContent,/31\/67/);
+  const old = vm.runInContext(`openReplay('slow-old')`,context);
+  assert.doesNotMatch(node('game-report').textContent,/31\/67/);
+  await vm.runInContext(`openReplay('selected-new')`,context);
+  assert.match(node('game-report').textContent,/选中对局 selected-new/);
+  assert.match(node('game-report').textContent,/模型选择完成 0\/2/);
+  assert.match(node('game-report').textContent,/未结束请求 1/);
+  releaseOld(response({id:'slow-old',summary:{harness:true,model_decisions:31,model_turns:69,forced_moves:2}}));
+  await old;
+  assert.doesNotMatch(node('game-report').textContent,/31\/67|slow-old/);
+  // A late progress response cannot overwrite a newer final summary of the same game.
+  let releaseProgress;
+  context.fetch = () => new Promise(resolve => releaseProgress=resolve);
+  const pending = vm.runInContext('refreshSelectedSummary()',context);
+  vm.runInContext(`renderSelectedSummary({result:'draw',result_reason:'truncated',harness:true,model_turns:2,model_decisions:2})`,context);
+  releaseProgress(response({summary:progress('selected-new')}));
+  await pending;
+  assert.match(node('game-report').textContent,/模型选择完成 2\/2/);
+  assert.doesNotMatch(node('game-report').textContent,/未完对局/);
+  // List refreshes keep explicit selection and put global statistics in a closed, labelled section.
+  context.fetch = async url => response(url==='/api/reports' ? {by_game:{chess:{games:[],aggregate:{harness:true,model_turns:69,model_decisions:31,forced_moves:2}}}} : {});
+  await vm.runInContext('loadReports()',context);
+  const aggregate = node('game-lists').children[0];
+  assert.equal(aggregate.tagName,'details');
+  assert.ok(!aggregate.open);
+  assert.match(aggregate.textContent,/全部对局|非选中单局/);
+  assert.match(node('game-report').textContent,/selected-new/);
+  assert.match(node('game-report').textContent,/模型选择完成 2\/2/);
+  console.log('Harness UI streaming, bounded rendering, per-game summaries and selection races: passed');
+}
+selectionTests().catch(error => { console.error(error); process.exitCode=1; });

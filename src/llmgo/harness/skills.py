@@ -62,6 +62,8 @@ def select_skills(board: chess.Board, stage: str = 'move', limit: int = 2, *, ca
     if candidates is not None:
         signals['candidate_allows_mate'] = any(item['preview']['opponent_mate_in_one'] for item in candidates)
     cards = [card for card in load_cards() if stage in card['stages'] and signals[card['trigger']]]
+    if any(card['id'].startswith('opening-') for card in cards):
+        cards = [card for card in cards if card['id'] != 'development']
     return sorted(cards, key=lambda card: (-card['priority'], card['id']))[:limit]
 
 def skill_lines(cards: list[dict]) -> list[str]:

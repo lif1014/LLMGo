@@ -412,6 +412,7 @@ async def _play_one(job: dict, protocol: dict, base_url: str, engine: Path, runs
     asker = VllmAsker(
         base_url,
         str(protocol["model_name"]),
+        tokenizer_path=protocol.get('model_path'),
         temperature=float(protocol["temperature"]),
         top_p=float(protocol["top_p"]),
         top_k=int(protocol["top_k"]),

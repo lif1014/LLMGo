@@ -141,7 +141,7 @@ class PromptTests(unittest.TestCase):
 class LoopTests(unittest.TestCase):
     def test_two_plies_record_choices(self):
         async def ask(prompt: str, max_tokens: int) -> AskResult:
-            return AskResult('e2e4' if 'You play White.' in prompt else 'e7e5', 1)
+            return AskResult('e2e4' if 'You play White ' in prompt else 'e7e5', 1)
 
         async def play():
             with tempfile.TemporaryDirectory() as folder:

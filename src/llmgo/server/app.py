@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from llmgo.env.games import get_game as load_rules
 from llmgo.env.xiangqi import Position
-from llmgo.eval.report import aggregate, load_runs, summarize_attempts
+from llmgo.eval.report import aggregate, load_runs, summarize_attempts, observed_summary
 from llmgo.render.frames import draw_attempt
 from llmgo.render.video import write_gif
 from llmgo.runner.loop import GameRunner
@@ -343,13 +343,15 @@ async def get_game(game_id: str):
         if summary_path is None or not summary_path.is_file():
             if folder is None:
                 raise HTTPException(404, "没有这局")
-            return {"id": game_id, "summary": None, "live": (folder / 'events.jsonl').exists(), "external": True, **_saved_meta(folder)}
-        return {"id": game_id, "summary": json.loads(summary_path.read_text(encoding="utf-8")), "live": False}
+            await _short_path(folder)
+            progress = await asyncio.to_thread(observed_summary, folder)
+            return {"id": game_id, "summary": progress, "live": (folder / 'events.jsonl').exists(), "external": True, **_saved_meta(folder)}
+        return {"id": game_id, "summary": json.loads(summary_path.read_text(encoding="utf-8")), "live": False, **_saved_meta(folder)}
     return {
         "id": game.id,
         "live": game.task is not None and not game.task.done(),
         "finished": game.finished,
-        "summary": game.summary,
+        "summary": game.summary or (await asyncio.to_thread(observed_summary, game.store.root) if game.rules.name == 'chess' else None),
         "model_seat": game.request.model_seat if game.request.game == "chess" and game.request.opponent == "engine" else None,
         "model": game.config.get("model_name"),
         "video": str(game.store.root / "game.gif") if (game.store.root / "game.gif").exists() else None,
@@ -577,6 +579,7 @@ async def _drive(game: GameSession) -> None:
         sampling = dict(
             base_url=base_url,
             model=config["model_name"],
+            tokenizer_path=config.get('model_path'),
             top_p=config["top_p"],
             top_k=config["top_k"],
             presence_penalty=config["presence_penalty"],
@@ -605,7 +608,8 @@ async def _drive(game: GameSession) -> None:
     except asyncio.CancelledError:
         if not game.finished:
             attempts = [event for event in game.events if event['type'] == 'attempt']
-            summary = summarize_attempts(game.id, attempts, 'aborted', 'stopped', rules.seats, rules.name)
+            summary = (observed_summary(game.store.root) if body.backend == 'harness' else None) or summarize_attempts(game.id, attempts, 'aborted', 'stopped', rules.seats, rules.name)
+            summary.update(result='aborted', result_reason='stopped', provisional=False)
             game.store.write_summary(summary)
             done = {"type": "game_finished", "result": "aborted", "result_reason": "stopped", "summary": summary}
             game.store.append(done)

@@ -59,6 +59,7 @@ async def _play_one(job: dict, args, batch_id: str, level: dict) -> dict:
             "depth": level["depth"],
             "model_seat": model_seat,
             "model": args.model,
+            "model_path": getattr(args, 'model_path', None),
             "vllm_base_url": job["url"],
             "temperature": args.temperature,
             "max_tokens": args.max_tokens,
@@ -67,6 +68,7 @@ async def _play_one(job: dict, args, batch_id: str, level: dict) -> dict:
         }
     )
     sampling = dict(
+        tokenizer_path=getattr(args, 'model_path', None),
         base_url=job["url"],
         model=args.model,
         temperature=args.temperature,
@@ -195,6 +197,7 @@ def main() -> None:
     parser.add_argument("--batch")
     parser.add_argument("--report-batch")
     parser.add_argument("--model", default="Qwen3.5-4B")
+    parser.add_argument('--model-path', help='Existing model directory used to decode reasoning boundary token IDs')
     parser.add_argument("--temperature", type=float, default=0.9)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--top-k", type=int, default=20)

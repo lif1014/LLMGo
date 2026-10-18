@@ -121,7 +121,10 @@ def test_every_historical_skill_evidence_replays_and_retrieval_is_conditional():
             assert board.san(moves[evidence['before_ply']]) == evidence['san']
     opening = select_skills(chess.Board(), 'move')
     ending = select_skills(chess.Board('8/8/6k1/8/8/2K5/8/R7 w - - 0 1'), 'move')
-    assert any(c['id'] == 'development' for c in opening)
+    assert any(c['id'] == 'opening-white-centre' for c in opening)
+    assert all(c['id'] != 'development' for c in opening)
+    later = chess.Board(); later.fullmove_number = 7
+    assert any(c['id'] == 'development' for c in select_skills(later, 'move'))
     assert any(c['id'] == 'endgame-activity' for c in ending)
     assert all(c['id'] != 'development' for c in ending)
     assert len(opening) <= 3 and select_skills(chess.Board(), 'tool') == []
@@ -145,7 +148,7 @@ def test_opening_examples_are_legal_and_enter_only_relevant_questions():
     from llmgo.harness.tools import prepare_candidates
     candidates, observations = prepare_candidates(board)
     initial = select_skills(board, 'move', candidates=candidates)
-    assert [card['id'] for card in initial] == ['opening-white-centre', 'development']
+    assert [card['id'] for card in initial] == ['opening-white-centre']
     prompt = move_prompt(board, [], candidates, observations, skills=initial)
     assert '1. e4 e5 2. Nf3' in prompt and 'Counterexample:' in prompt
 

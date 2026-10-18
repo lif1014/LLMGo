@@ -521,6 +521,8 @@ function schedulePaint(seat, channel) {
 
 async function watchLive(gameId) {
   if (state.socket && state.id === gameId && state.socket.readyState <= 1) return;
+  const loadId = ++replayLoad;
+  stopPlayback();
   state.id = gameId;
   document.getElementById("start").disabled = true;
   document.getElementById("stop").disabled = false;
@@ -529,6 +531,7 @@ async function watchLive(gameId) {
   if (state.externalTimer) clearInterval(state.externalTimer);
   state.externalTimer = null;
   const info = await (await fetch(`/api/games/${gameId}`)).json();
+  if (loadId !== replayLoad) return;
   state.modelSeat = info.model_seat || null;
   state.modelName = info.model || "Qwen3.5-4B";
   markSeats();
@@ -543,7 +546,7 @@ async function watchLive(gameId) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${location.host}/ws/games/${gameId}`);
   state.socket = socket;
-  socket.onmessage = (message) => onEvent(JSON.parse(message.data));
+  socket.onmessage = (message) => { if (state.socket === socket) onEvent(JSON.parse(message.data)); };
   for (const button of document.querySelectorAll(".game-list button")) {
     button.classList.toggle("active", button.dataset.id === gameId);
   }
@@ -851,6 +854,7 @@ async function openReplay(gameId, options) {
   if (state.externalTimer) clearInterval(state.externalTimer);
   state.externalTimer = null;
   state.id = null;
+  document.getElementById('status').textContent = '正在载入精简回放…';
   if (replay.timer) {
     clearInterval(replay.timer);
     replay.timer = null;
@@ -861,7 +865,15 @@ async function openReplay(gameId, options) {
   let cursor = 0;
   do {
     const response = await fetch(`/api/games/${gameId}/events?view=compact&limit=512&after=${cursor}`);
-    if (!response.ok) throw new Error(`无法载入对局：${response.status}`);
+    if (!response.ok) {
+      if (loadId !== replayLoad) return;
+      resetView();
+      replay.frames = []; replay.id = gameId;
+      const info = await (await fetch(`/api/games/${gameId}`)).json();
+      if (info.summary) renderSummary(document.getElementById('game-report'), info.summary, '本局结果');
+      document.getElementById('status').textContent = '此局没有可回放的事件记录；可查看结果与启动日志。';
+      return;
+    }
     const page = await response.json();
     if (loadId !== replayLoad) return;
     data.events.push(...page.events);

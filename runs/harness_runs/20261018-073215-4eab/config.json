@@ -1,0 +1,79 @@
+{
+  "id": "20261018-073215-4eab",
+  "eval": "harness",
+  "game": "chess",
+  "model_seat": "white",
+  "model": "Qwen3.5-4B",
+  "vllm_base_url": "http://127.0.0.1:8002/v1",
+  "batch_id": "20261017-191803-86c90d",
+  "protocol": {
+    "game": "chess",
+    "llmgo_root": "/home/test/test06/lyh/LLMGo!",
+    "engine": "/home/test/test06/lyh/LLMGo!/engines/fairy-stockfish",
+    "level": 1,
+    "anchor_elo": 800,
+    "skill": -9,
+    "movetime_sec": 0.05,
+    "depth": 5,
+    "games": 10,
+    "white": 5,
+    "black": 5,
+    "temperature": 0.9,
+    "top_p": 0.95,
+    "top_k": 20,
+    "presence_penalty": 0.0,
+    "max_tokens": 32768,
+    "max_plies": 200,
+    "model_name": "Qwen3.5-4B",
+    "framework": "harness",
+    "enable_thinking": true,
+    "seed": 0,
+    "harness": {},
+    "batch_id": "20261017-191803-86c90d",
+    "harness_artifact": {
+      "sha256": "55afadec6d14f6366b3bc3cd24794c8addf648316c71a5a47129ba95b3cdae28",
+      "files": {
+        "__init__.py": "d4c9d5a4fd0e638faa1d8e5d476fd3f717edb397ee1394c4114bf74bc34291e7",
+        "agent.py": "662bc6ef306ea8d73c80bcdd727596be9132538a0a8d36bd8387dc6aa064ed5a",
+        "choices.py": "d801fd32d77a42ab71dd1ade70067b2a4430bdd1ffe3c8aeb1605971e2b6a674",
+        "config.py": "992af66f99229e077a5097b6825bee5d22620e177d5ca92ae2e10db62faf718e",
+        "player.py": "cc7eeea278c7c47e0ddfc7de98ac1b26238651c036ceb4cff5f151d4ca672eb4",
+        "prompt.py": "cb225e9935a911f8d8f40e0c61b826af6d06127de68c1fff1922b895fbc7fc81",
+        "settings.json": "188212c844de51af62ccf79849ef16ce65cc4df7eed9f4ddf451d814e8d5e7cc",
+        "skills/README.md": "7b30199b071214be772042e3fefd28a9b87d5f3fa677491a5a0705218844bfe1",
+        "skills/cards.json": "adacd1350b408fef0dcb8559da00b32e720a3c1a34c785df9ede207d127d8169",
+        "skills/master_games.pgn": "2cffde552c955bc60c7298d5b1422e3c8876b0b901ca7935bd94252dceedf6c6",
+        "skills.py": "0263eaa214b26a154196a949d3954771ba56e9cbc81397507a191a1b571fc618",
+        "streaming.py": "c0111f25fb8b51e3875147666cb0a6dc15ca90102ebd833a3307b5ca8955f997",
+        "tools.py": "9be1c2ee4e178c0996317f849f0b9fb873ecc347e09a5ffadcc8aaa417f57603"
+      }
+    }
+  },
+  "seed": 2,
+  "harness_artifact": {
+    "sha256": "55afadec6d14f6366b3bc3cd24794c8addf648316c71a5a47129ba95b3cdae28",
+    "files": {
+      "__init__.py": "d4c9d5a4fd0e638faa1d8e5d476fd3f717edb397ee1394c4114bf74bc34291e7",
+      "agent.py": "662bc6ef306ea8d73c80bcdd727596be9132538a0a8d36bd8387dc6aa064ed5a",
+      "choices.py": "d801fd32d77a42ab71dd1ade70067b2a4430bdd1ffe3c8aeb1605971e2b6a674",
+      "config.py": "992af66f99229e077a5097b6825bee5d22620e177d5ca92ae2e10db62faf718e",
+      "player.py": "cc7eeea278c7c47e0ddfc7de98ac1b26238651c036ceb4cff5f151d4ca672eb4",
+      "prompt.py": "cb225e9935a911f8d8f40e0c61b826af6d06127de68c1fff1922b895fbc7fc81",
+      "settings.json": "188212c844de51af62ccf79849ef16ce65cc4df7eed9f4ddf451d814e8d5e7cc",
+      "skills/README.md": "7b30199b071214be772042e3fefd28a9b87d5f3fa677491a5a0705218844bfe1",
+      "skills/cards.json": "adacd1350b408fef0dcb8559da00b32e720a3c1a34c785df9ede207d127d8169",
+      "skills/master_games.pgn": "2cffde552c955bc60c7298d5b1422e3c8876b0b901ca7935bd94252dceedf6c6",
+      "skills.py": "0263eaa214b26a154196a949d3954771ba56e9cbc81397507a191a1b571fc618",
+      "streaming.py": "c0111f25fb8b51e3875147666cb0a6dc15ca90102ebd833a3307b5ca8955f997",
+      "tools.py": "9be1c2ee4e178c0996317f849f0b9fb873ecc347e09a5ffadcc8aaa417f57603"
+    }
+  },
+  "harness_config": {
+    "move_tokens": 32768,
+    "attempts_per_choice": 2,
+    "request_timeout_sec": 540.0,
+    "turn_timeout_sec": 1800.0,
+    "skills_limit": 2,
+    "history_plies": 12
+  }
+}

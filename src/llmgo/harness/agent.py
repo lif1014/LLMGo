@@ -30,6 +30,7 @@ class AskResult:
     streamed: bool = False
     stream_chunks: int = 0
     first_token_ms: float | None = None
+    token_ids: list[int] = field(default_factory=list)
 
 @dataclass
 class Decision:
@@ -175,6 +176,7 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
                   'tokens_exact': result.tokens_exact, 'latency_ms': (time.monotonic() - tick) * 1000,
                   'finish_reason': result.finish_reason, 'error': result.error, 'normalization_error': normalization_error,
                   'streamed': result.streamed, 'stream_chunks': result.stream_chunks, 'first_token_ms': result.first_token_ms,
+                  'generated_token_ids': result.token_ids,
                   'uci': uci, 'accepted': uci is not None, 'failure_reason': reason, 'budget_spent': spent}
         requests.append(record)
         await send(record)
@@ -189,5 +191,5 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
         if result.error or result.finish_reason == 'length':
             return await fallback(reason)
         correction = ('The previous final answer was not accepted (' + reason + '). '
-                      'Output exactly one UCI from Legal moves, such as e2e4. No explanation or JSON.')
+                      'Output exactly one UCI from Legal moves. No explanation or JSON.')
     return await fallback(reason)

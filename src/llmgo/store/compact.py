@@ -38,9 +38,10 @@ class TokenWindows:
                 self.tokenizer = None
                 self.error = f'{type(exc).__name__}: {exc}'
 
-    def clip(self, text: str) -> dict:
+    def clip(self, text: str, token_ids: list[int] | None = None) -> dict:
         text = str(text or '')
-        ids = self.tokenizer.encode(text, add_special_tokens=False).ids if self.tokenizer else None
+        generated = bool(token_ids) and isinstance(token_ids, list) and all(type(value) is int and value >= 0 for value in token_ids)
+        ids = (token_ids if generated else self.tokenizer.encode(text, add_special_tokens=False).ids) if self.tokenizer else None
         total = len(ids) if ids is not None else len(text)
         head_count = min(total, WINDOW)
         tail_count = min(max(total - head_count, 0), WINDOW)
@@ -50,11 +51,19 @@ class TokenWindows:
             tail = self.tokenizer.decode(ids[-tail_count:], skip_special_tokens=False) if tail_count else ''
         else:
             head, tail = text[:head_count], text[-tail_count:] if tail_count else ''
-        return {'head': head, 'tail': tail, 'head_count': head_count, 'tail_count': tail_count,
+        excerpt = {'head': head, 'tail': tail, 'head_count': head_count, 'tail_count': tail_count,
                 'omitted': omitted, 'total': total, 'window': WINDOW,
                 'unit': 'tokens' if ids is not None else 'characters', 'exact': ids is not None,
-                'scope': 'retokenized visible model output; generation usage is separate',
+                'scope': ('generated tokens' if generated else 'retokenized visible model output; generation usage is separate')
+                         if ids is not None else 'character preview; generated IDs, if available, are preserved separately',
                 'tokenizer': self.source, 'warning': self.error}
+        if generated:
+            first = min(len(token_ids), WINDOW)
+            last = min(max(0, len(token_ids) - first), WINDOW)
+            excerpt['generated_tokens'] = {'head_ids': token_ids[:first],
+                'tail_ids': token_ids[-last:] if last else [], 'total': len(token_ids),
+                'omitted': max(0, len(token_ids) - first - last)}
+        return excerpt
 
 
 def excerpt_text(excerpt: dict) -> str:
@@ -73,7 +82,7 @@ def compact_event(event: dict, windows: TokenWindows, raw_ref=None) -> dict | No
         return None  # One bounded excerpt per completed request, never duplicate stream chunks.
     shown = {key: value for key, value in event.items() if key not in {
         'prompt', 'llm_input', 'reasoning', 'output', 'raw_response', 'request_payload',
-        'data', 'tool_library', 'allowed_choices', 'blackboard', 'skills', 'options'}}
+        'data', 'tool_library', 'allowed_choices', 'blackboard', 'skills', 'options', 'generated_token_ids'}}
     shown['trace_format'] = 'short-v1'
     for key in ('error', 'error_detail'):
         if isinstance(shown.get(key), str) and len(shown[key]) > 2000:
@@ -86,7 +95,7 @@ def compact_event(event: dict, windows: TokenWindows, raw_ref=None) -> dict | No
             shown['request_payload'] = {k: v for k, v in event.get('request_payload', {}).items() if k != 'messages'}
         else:
             output = event.get('output') or '\n\n'.join(filter(None, (event.get('reasoning'), event.get('text'))))
-            shown['output_excerpt'] = windows.clip(output)
+            shown['output_excerpt'] = windows.clip(output, event.get('generated_token_ids'))
             # Final answers are normally a few characters. Bound malformed prose too.
             final = event.get('text', '')
             shown['text'] = final if len(final) <= 2000 else final[:1000] + '\n[… final text truncated …]\n' + final[-1000:]

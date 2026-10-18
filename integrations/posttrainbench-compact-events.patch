@@ -14,7 +14,7 @@
  IDs, prompts, raw responses, thinking/content, exact-or-estimated usage,
  latency, finish reason, choice validation, tool parameters/results and fallback
 -reasons. Per-batch metrics are also retained in `harness_batches/`.
-+reasons. `short_events.jsonl` records a single first/last-1000-token excerpt per model request, with usage, timing and failure diagnostics. The model tokenizer comes from the existing `--model-path`; unavailable tokenizers are explicitly marked as character windows. Raw events remain local; the web UI uses compact replay and loads raw details on demand. Per-batch metrics are also retained in `harness_batches/`.
++reasons. `short_events.jsonl` records a single first/last-1000-token excerpt per model request, with usage, timing and failure diagnostics. New vLLM requests preserve reasoning markers and return original token IDs; these IDs determine excerpt boundaries when available. Older responses are explicitly marked as retokenized visible output. The model tokenizer comes from the existing `--model-path`; unavailable tokenizers are explicitly marked as character windows. Raw events remain local; the web UI uses compact replay and loads raw details on demand. Per-batch metrics are also retained in `harness_batches/`.
  
  No live chess engine, opening oracle or tablebase is available to the submitted
  baseline tools. `preview` uses legal chess moves and exactly one opponent reply.

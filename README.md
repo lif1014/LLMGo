@@ -53,9 +53,12 @@ vLLM。未給 URL 時，每張選定 GPU 啟動一個模型服務。`--gpus 1` �
 事件仍保留。截取使用現有 `--model-path` 下的 `tokenizer.json`，也可用
 `LLMGO_TOKENIZER` 指定既有 tokenizer 檔案或模型目錄；網頁啟動使用既有 YAML 中
 的 `model_path`。執行 Python 環境需要 `tokenizers`（評測腳本會自動補裝）。
-這是對可見模型輸出的重新分詞，生成 token 用量仍以原始 usage 為準。
+新請求會要求 vLLM 回傳原始 token IDs，優先依生成 IDs 截取，再以模型 tokenizer
+解碼為文字，並保留頭尾 IDs。舊紀錄或服務不提供 IDs 時，對可見輸出重新分詞，
+`scope` 會標示來源；生成 token 用量仍以原始 usage 為準。
 若 tokenizer 無法載入，會明確記為 `unit=characters, exact=false`，不能視作
-精確的 1000-token 窗口；可在模型所在的伺服器重新產生精簡紀錄。
+精確的文字 token 窗口；若服務提供生成 IDs，頭尾各 1000 個 IDs 仍會保存。
+可在模型所在的伺服器重新產生可讀的精簡紀錄。
 
 完整 `events.jsonl` 保存在本機並已加入 `.gitignore`，GitHub 追蹤精簡紀錄、設定
 與結果。已有的原文不會從磁碟刪除。舊對局可在**停止寫入後**一次轉換：
@@ -114,6 +117,10 @@ pawn e2: e2e3 e2e4
 舊 JSON 回答，只解析最終
 答案。兼容 vLLM 的分離 reasoning 欄位，以及混在 content 中、以 `</think>` 結束的
 思考；截斷／未完成的思考不會被當作答案。原始 HTTP 回應完整保留。
+請求同時設定 `include_reasoning=True`、`skip_special_tokens=False`，避免服務在沒有
+分離 reasoning 欄位時又剝除思考標記。若仍然沒有明確答案邊界，會記錄
+`incomplete_thinking`，不從思考中的候選 JSON 猜答案。這些請求欄位依據既有
+[vLLM 0.20.1 協議](https://github.com/vllm-project/vllm/blob/v0.20.1/vllm/entrypoints/openai/chat_completion/protocol.py)。
 
 `src/llmgo/harness/settings.json` 的 `move_tokens` 預設為 32768；整手生成與格式
 重試共用這個額度，thinking 始終開啟。最多兩次請求，第二次附格式修正提示。

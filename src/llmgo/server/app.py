@@ -456,7 +456,7 @@ async def _watch_saved(socket: WebSocket, folder: Path):
                         break
                     if line.strip():
                         raw = json.loads(line)
-                        shown = raw if raw.get('type') == 'token' else compact_event(raw, windows)
+                        shown = raw if raw.get('type') == 'token' else compact_event(raw, windows, {'offset': offset, 'length': len(line)})
                         event = _public_event(shown)
                         if event is not None: batch.append(event)
                 for event in _coalesce_tokens(batch):

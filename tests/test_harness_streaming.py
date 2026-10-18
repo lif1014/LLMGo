@@ -62,6 +62,7 @@ def test_sse_text_arrives_before_completion_and_is_not_duplicated(field):
         assert result.first_token_ms is not None and result.latency_ms>=result.first_token_ms
         assert payloads[0]['stream'] and payloads[0]['stream_options']['include_usage']
         assert payloads[0]['chat_template_kwargs']['enable_thinking'] is True
+        assert payloads[0]['skip_special_tokens'] is False and payloads[0]['return_token_ids'] is True
         shown={'reasoning':'','content':''}
         for change in changes:
             key=change['channel'];shown[key]=change['text'] if change['replace'] else shown[key]+change['text']
@@ -76,6 +77,36 @@ def test_sse_decoder_handles_utf8_byte_boundaries_comments_and_multiline_data():
     for byte in raw: events.extend(decoder.feed(bytes([byte])))
     assert len(events)==1 and json.loads(events[0])=={'text':'思考'}
     assert decoder.feed(b'data: {"partial":',final=True)==[]
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+def test_original_generated_ids_and_chatml_end_marker_survive_transport(mixed):
+    async def probe():
+        chunks = [
+            {'choices':[{'delta':{'content':'<think>compare</think>e2e4' if mixed else 'e2e4'},'token_ids':[1,2], 'finish_reason':None}]},
+            {'choices':[{'delta':{'content':'<|im_end|>'},'token_ids':[3], 'finish_reason':'stop'}]},
+        ]
+        body = [('data: '+json.dumps(chunk)+'\n\n').encode() for chunk in chunks] + [b'data: [DONE]\n\n']
+        asker = VllmAsker('http://model/v1','Qwen',transport=httpx.MockTransport(
+            lambda request: httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Fragments(body))))
+        changes = []
+        async def emit(event): changes.append(event)
+        result = await asker.stream('choose',100,emit)
+        assert result.token_ids == [1,2,3] and result.tokens == 3 and result.tokens_exact
+        assert result.text == 'e2e4' and result.normalization_error is None
+    asyncio.run(probe())
+
+
+def test_stop_without_reasoning_boundary_does_not_turn_candidate_json_into_answer():
+    async def probe():
+        chunks = [event({'content':'Consider {"move":"e2e4"}. Another possibility is d2d4.\n\n{"move":"d2d4"}'}),
+                  event(finish='stop'),b'data: [DONE]\n\n']
+        asker = VllmAsker('http://model/v1','Qwen',transport=httpx.MockTransport(
+            lambda request: httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Fragments(chunks))))
+        async def emit(event): pass
+        result = await asker.stream('choose',100,emit)
+        assert result.text == '' and result.normalization_error == 'incomplete_thinking'
+    asyncio.run(probe())
 
 
 @pytest.mark.parametrize('failure', ['timeout','disconnect','malformed','missing_finish','length','cancel'])
@@ -127,11 +158,13 @@ def test_sse_http_error_and_nonstreaming_json_compatibility():
         bad=await asker.stream('test',20,emit)
         assert bad.http_status==400 and bad.raw_response=='bad request' and bad.error and bad.tokens==0
         asker=VllmAsker('http://model/v1','model',transport=httpx.MockTransport(lambda request:httpx.Response(200,json={
-            'choices':[{'message':{'content':'thought</think>{"move":"e2e4"}'},'finish_reason':'stop'}],
+            'choices':[{'message':{'content':'thought</think>{"move":"e2e4"}'},'finish_reason':'stop','token_ids':[1,2,3]}],
             'usage':{'completion_tokens':10}})))
         good=await asker.stream('test',20,emit)
         assert good.text=='{"move":"e2e4"}' and good.reasoning=='thought'
-        assert not good.streamed and good.tokens==10
+        assert not good.streamed and good.tokens==10 and good.token_ids==[1,2,3]
+        nonstream = await asker('test',20)
+        assert nonstream.token_ids==[1,2,3] and nonstream.text=='{"move":"e2e4"}'
     asyncio.run(probe())
 
 

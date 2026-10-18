@@ -39,6 +39,19 @@ def test_missing_tokenizer_is_explicit_not_a_false_token_claim(tmp_path):
     assert not excerpt['exact'] and excerpt['unit'] == 'characters' and excerpt['warning']
 
 
+def test_generated_token_windows_use_original_ids_rather_than_retokenizing(model, tmp_path):
+    ids = list(range(5000, 0, -1))
+    excerpt = TokenWindows(model).clip('visible text is intentionally different', ids)
+    assert excerpt['scope'] == 'generated tokens' and excerpt['exact'] and excerpt['total'] == 5000
+    assert excerpt['head'].split() == [f't{i}' for i in range(4999, 3999, -1)]
+    assert excerpt['tail'].split() == [f't{i}' for i in range(999, -1, -1)]
+    assert excerpt['generated_tokens']['head_ids'] == ids[:1000]
+    assert excerpt['generated_tokens']['tail_ids'] == ids[-1000:]
+    offline = TokenWindows(tmp_path / 'missing').clip('字元預覽', ids)
+    assert not offline['exact'] and offline['unit'] == 'characters'
+    assert offline['generated_tokens'] == excerpt['generated_tokens']
+
+
 def make_store(tmp_path, model):
     store = TrajectoryStore(tmp_path / 'harness_runs' / 'portable')
     store.write_config({'game': 'chess', 'model_path': str(model), 'model_seat': 'white'})

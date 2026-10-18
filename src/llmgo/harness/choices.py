@@ -6,6 +6,7 @@ import re
 
 def split_thinking(content: str, reasoning: str = '') -> tuple[str, str, str | None]:
     """Handle both server-separated reasoning and Qwen's closing-tag-only output."""
+    content = content.strip().removesuffix('<|im_end|>').removesuffix('<|endoftext|>').strip()
     if '</think>' in content:
         thoughts, final = content.rsplit('</think>', 1)
         thoughts = thoughts.removeprefix('<think>').strip()

@@ -22,3 +22,8 @@ start 20261018-022801-bf1b model=white
 Loop <_UnixSelectorEventLoop running=False closed=True debug=False> that handles pid 4192152 is closed
 done 20261018-022537-dcf9 result=aborted reason=engine_error random=0 seconds=147
 start 20261018-022804-2e07 model=white
+20261018-022804-2e07 white e2e4
+Loop <_UnixSelectorEventLoop running=False closed=True debug=False> that handles pid 40287 is closed
+done 20261018-022804-2e07 result=aborted reason=engine_error random=0 seconds=186
+start 20261018-023110-fb18 model=white
+20261018-022801-bf1b white e2e4

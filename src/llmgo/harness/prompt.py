@@ -29,7 +29,7 @@ def move_prompt(board: chess.Board, history: list[dict], candidates: list[dict],
     side = side_name(board.turn)
     parts = [f'You play {side}. Choose one legal move to win. Check threats and the opponent reply, then decide. '
              'Compare a few promising moves; do not analyze every option exhaustively. '
-             'Use UCI: source square + target square, with q/r/b/n for promotion (e7e8q).',
+             'UCI = source square + target square (+ q/r/b/n for promotion).',
              'Position\n' + render_board(board)]
     played = played_lines(history, history_plies)
     if played:
@@ -46,5 +46,5 @@ def move_prompt(board: chess.Board, history: list[dict], candidates: list[dict],
     parts.append(f'Legal moves ({len(candidates)} total)\n' + '\n'.join(lines))
     if correction:
         parts.append('Correction\n' + correction)
-    parts.append('Final answer: output exactly one UCI from Legal moves, such as e2e4. No explanation or JSON.')
+    parts.append('Final answer: output exactly one UCI from Legal moves. No explanation or JSON.')
     return '\n\n'.join(parts)

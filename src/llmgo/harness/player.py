@@ -8,6 +8,15 @@ from llmgo.harness.agent import AskResult
 from llmgo.harness.choices import split_thinking
 from llmgo.harness.streaming import SSEDecoder, StreamCancelled, StreamingText
 
+
+def _token_ids(value):
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(type(item) is not int or item < 0 for item in value):
+        raise ValueError('Invalid generated token IDs')
+    return value
+
+
 class VllmAsker:
     def __init__(self, base_url, model, temperature=0.9, top_p=0.95, top_k=20,
                  presence_penalty=0.0, timeout_sec=540.0, transport=None):
@@ -19,6 +28,7 @@ class VllmAsker:
         return {'model': self.model, 'messages': [{'role': 'user', 'content': prompt}],
                    'temperature': self.temperature, 'top_p': self.top_p, 'max_tokens': max_tokens,
                    'presence_penalty': self.presence_penalty, 'top_k': self.top_k,
+                   'skip_special_tokens': False, 'return_token_ids': True, 'include_reasoning': True,
                    'chat_template_kwargs': {'enable_thinking': True}}
 
     async def __call__(self, prompt: str, max_tokens: int) -> AskResult:
@@ -42,11 +52,14 @@ class VllmAsker:
             output = '\n\n'.join(part for part in (reasoning, content) if part)
             content, reasoning, normalization_error = split_thinking(content, reasoning)
             usage = data.get('usage') or {}
-            exact = isinstance(usage.get('completion_tokens'), int)
-            tokens = int(usage['completion_tokens']) if exact else max(1, len(output.encode('utf-8')))
+            token_ids = _token_ids(choice.get('token_ids'))
+            has_usage = isinstance(usage.get('completion_tokens'), int)
+            exact = has_usage or bool(token_ids)
+            tokens = int(usage['completion_tokens']) if has_usage else len(token_ids) if token_ids else max(1, len(output.encode('utf-8')))
             return AskResult(content, tokens, finish_reason=choice.get('finish_reason'), output=output,
                              reasoning=reasoning, usage=usage, tokens_exact=exact,
                              normalization_error=normalization_error,
+                             token_ids=token_ids,
                              raw_response=raw, request_payload=payload, http_status=response.status_code,
                              latency_ms=(time.monotonic() - started) * 1000)
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
@@ -62,7 +75,7 @@ class VllmAsker:
         payload = self.build_stream_payload(prompt, max_tokens)
         started = time.monotonic()
         text, frames = StreamingText(), SSEDecoder()
-        raw_parts, usage = [], {}
+        raw_parts, usage, token_ids = [], {}, []
         status, finish, error = None, None, None
         chunks, first_token_ms = 0, None
         is_sse = False
@@ -74,14 +87,16 @@ class VllmAsker:
                 content, reasoning = '', text.content.removeprefix('<think>')
                 normalization_error = 'incomplete_thinking'
             output = '\n\n'.join(part for part in (text.reasoning, text.content) if part)
-            exact = isinstance(usage.get('completion_tokens'), int)
-            tokens = int(usage['completion_tokens']) if exact else len(output.encode('utf-8'))
+            has_usage = isinstance(usage.get('completion_tokens'), int)
+            exact = has_usage or bool(token_ids)
+            tokens = int(usage['completion_tokens']) if has_usage else len(token_ids) if token_ids else len(output.encode('utf-8'))
             return AskResult(content, tokens, finish_reason=finish, error=failure,
                              output=output, reasoning=reasoning, usage=usage, tokens_exact=exact,
                              raw_response=b''.join(raw_parts).decode('utf-8', errors='replace'),
                              request_payload=payload, latency_ms=(time.monotonic() - started) * 1000,
                              http_status=status, normalization_error=normalization_error,
-                             streamed=is_sse, stream_chunks=chunks, first_token_ms=first_token_ms)
+                             streamed=is_sse, stream_chunks=chunks, first_token_ms=first_token_ms,
+                             token_ids=list(token_ids))
 
         async def dispatch(event):
             nonlocal usage, finish, chunks, first_token_ms, received_done, received_choice
@@ -101,6 +116,7 @@ class VllmAsker:
                 if choice.get('index', 0) != 0:
                     continue
                 received_choice = True
+                token_ids.extend(_token_ids(choice.get('token_ids')))
                 if choice.get('finish_reason') is not None:
                     finish = choice['finish_reason']
                 delta = choice.get('delta') or {}
@@ -132,6 +148,7 @@ class VllmAsker:
                             text.reasoning = str(message.get('reasoning_content') or message.get('reasoning') or '')
                             usage = data.get('usage') or {}
                             finish = choice.get('finish_reason')
+                            token_ids.extend(_token_ids(choice.get('token_ids')))
                             answer = result()
                             answer.streamed = False
                             return answer

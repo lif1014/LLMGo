@@ -48,7 +48,7 @@ class StreamingText:
             final, thought, _ = split_thinking(self.content, self.reasoning)
         elif self.reasoning:
             thought, final = self.reasoning, self.content
-        elif self.content.lstrip().startswith(('{', '```')) or re.fullmatch(r'[a-h](?:[1-8](?:[a-h](?:[1-8][qrbn]?)?)?)?', self.content.strip()):
+        elif self.content.lstrip().startswith(('{', '```')) or re.fullmatch(r'[a-h](?:[1-8](?:[a-h](?:[1-8][qrbn]?)?)?)?', split_thinking(self.content)[0]):
             thought, final = '', self.content
         else:
             thought, final = self.content.removeprefix('<think>'), ''

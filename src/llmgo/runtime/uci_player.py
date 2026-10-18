@@ -44,6 +44,7 @@ class UciPlayer:
         engine = chess.engine.SimpleEngine.popen_uci(
             self.engine_path,
             cwd=str(Path(self.engine_path).resolve().parent),
+            timeout=120.0,
         )
         option = engine.options.get("Skill Level")
         if option is None or option.min is None or option.max is None:

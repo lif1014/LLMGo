@@ -1,0 +1,34 @@
+log=/home/test/test06/lyh/LLMGo!/runs/eval-harness-20261017-185725-352475.log
+==== eval harness ====
+time=2026-10-17T18:57:25.355761+00:00
+host=g26
+cwd=/home/test/test06/lyh/LLMGo!
+python=/home/test1267/test-6/miniconda3/bin/python3
+version=3.12.2
+argv=scripts/eval_harness.py --model-path /home/test/testdata/models/Qwen3.5-4B --output /home/test/test06/lyh/LLMGo!/runs/harness-metrics.json --protocol /home/test/test06/lyh/LLMGo!/runs/protocol-g26.json --base-url http://127.0.0.1:8002/v1 --base-url http://127.0.0.1:8003/v1
+cuda_visible_devices=
+http_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+https_proxy=http://whitelist-proxy.cybertron.svc.cluster.local:7891
+no_proxy=.paratera.com,.thuwayinfo.com,.modelbest.co,127.0.0.1,localhost
+deps=already-installed python-chess httpx
+servers=2 games=10
+start 20261018-025726-c41c model=white
+start 20261018-025727-29f9 model=white
+20261018-025727-29f9 random white b2b3
+20261018-025727-29f9 white b2b3
+20261018-025727-29f9 black d7d5
+20261018-025726-c41c random white f2f3
+20261018-025726-c41c white f2f3
+done 20261018-025726-c41c result=aborted reason=engine_error random=1 seconds=342
+start 20261018-030307-2d97 model=white
+20261018-030307-2d97 random white a2a4
+20261018-030307-2d97 white a2a4
+Loop <_UnixSelectorEventLoop running=False closed=True debug=False> that handles pid 515915 is closed
+done 20261018-030307-2d97 result=aborted reason=engine_error random=1 seconds=311
+start 20261018-030820-c3d4 model=white
+20261018-030820-c3d4 random white c2c4
+20261018-030820-c3d4 white c2c4
+20261018-030820-c3d4 black c7c5
+20261018-025727-29f9 random white g2g4
+20261018-025727-29f9 white g2g4
+20261018-025727-29f9 black b8c6

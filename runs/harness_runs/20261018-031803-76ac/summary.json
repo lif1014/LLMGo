@@ -1,0 +1,44 @@
+{
+  "game_id": "20261018-031803-76ac",
+  "game": "chess",
+  "result": "black_win",
+  "result_reason": "checkmate",
+  "attempts": 70,
+  "first_try_total": 70,
+  "first_try_legal": 70,
+  "first_try_legal_rate": 1.0,
+  "error_types": {},
+  "by_seat": {
+    "white": {
+      "first_try_total": 35,
+      "first_try_legal": 35,
+      "error_types": {}
+    },
+    "black": {
+      "first_try_total": 35,
+      "first_try_legal": 35,
+      "error_types": {}
+    }
+  },
+  "finish_length_count": 0,
+  "random_moves": 20,
+  "tool_uses": {
+    "position": 35,
+    "candidates": 35
+  },
+  "harness": true,
+  "model_turns": 35,
+  "forced_moves": 2,
+  "model_decisions": 13,
+  "random_rate": 0.5714285714285714,
+  "fallback_reasons": {
+    "request_timeout": 20
+  },
+  "request_count": 33,
+  "completion_tokens": 923831,
+  "prompt_tokens": 14216,
+  "request_errors": 20,
+  "length_count": 0,
+  "latency_ms": 15206704.432118218,
+  "tokens_exact": false
+}

@@ -45,8 +45,9 @@ def test_all_legal_moves_are_kept_in_fixed_groups_with_no_position_mutation():
     assert (board.fen(), board.move_stack) == (before, stack)
     assert prepare_candidates(board) == (candidates, observations)
     prompt = move_prompt(board, [], candidates, observations)
-    assert 'pawn e2: e2e3 (e3), e2e4 (e4)' in prompt
-    assert all(len(re.findall(r'\b' + item['uci'] + r' \(', prompt)) == 1 for item in candidates)
+    assert 'pawn e2: e2e3 e2e4' in prompt
+    legal_section = prompt.split('Legal moves (', 1)[1].split('\n\nFinal answer:', 1)[0]
+    assert {m for m in re.findall(r'\b[a-h][1-8][a-h][1-8][qrbn]?\b', legal_section)} == {m.uci() for m in board.legal_moves}
     assert not any(text in prompt for text in ('Tools\n', 'Pick\n', 'one letter', 'FEN ', '8 r n b'))
 
 
@@ -175,14 +176,14 @@ def test_eval_cli_runs_real_fairy_stockfish_against_local_http_model(tmp_path):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             payloads.append(body)
             prompt = body['messages'][0]['content']
-            options = re.findall(r'\b([a-h][1-8][a-h][1-8][qrbn]?) \(', prompt.split('Legal moves (',1)[1])
+            options = re.findall(r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b', prompt.split('Legal moves (',1)[1].split('\n\nFinal answer:',1)[0])
             assert options and 'Tools\n' not in prompt and 'Pick\n' not in prompt
             assert body['chat_template_kwargs']['enable_thinking'] is True
             assert body['stream'] and body['stream_options']['include_usage']
             self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
             chunks = [
                 {'choices':[{'delta':{'content':'I compared candidate alternatives.'},'finish_reason':None}]},
-                {'choices':[{'delta':{'content':'\n</think>\n' + json.dumps({'move':options[0]})},'finish_reason':None}]},
+                {'choices':[{'delta':{'content':'\n</think>\n' + options[0]},'finish_reason':None}]},
                 {'choices':[{'delta':{},'finish_reason':'stop'}]},
                 {'choices':[],'usage':{'prompt_tokens':500,'completion_tokens':50}},
             ]
@@ -232,6 +233,9 @@ def test_eval_cli_runs_real_fairy_stockfish_against_local_http_model(tmp_path):
         assert any(e['type']=='token' and e['channel']=='reasoning' for e in records)
         assert all(e['streamed'] for e in records if e['type']=='model_request' and e['status']=='finished')
         assert json.loads((folder/'config.json').read_text())['harness_config']['request_timeout_sec']==540
+        short = [json.loads(line) for line in (folder/'short_events.jsonl').read_text().splitlines()]
+        assert not any(e['type'] == 'token' for e in short)
+        assert len([e for e in short if e['type'] == 'model_request' and e['status'] == 'finished']) == 3
     probe_metrics=json.loads(probe_output.read_text())
     assert probe_metrics['request_count']==3 and probe_metrics['random_moves']==0
     assert all(payload['max_tokens']==1024 for payload in payloads[6:])

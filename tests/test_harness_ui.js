@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 class Element {
-  constructor(tag = 'div') { this.tagName = tag; this.children = []; this.style = {}; this.dataset = {}; this.value = 'chess'; this.classList = { toggle() {} }; this._text = ''; }
+  constructor(tag = 'div') { this.tagName = tag; this.children = []; this.style = {}; this.dataset = {}; this.value = 'chess'; this.classList = { toggle() {} }; this._text = ''; this.listeners = {}; }
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map(c => c.textContent).join(''); }
   set innerHTML(value) { this._text = String(value); this.children = []; }
@@ -23,7 +23,9 @@ class Element {
     return selector === 'details[data-request-id]' ? all.filter(n => n.tagName === 'details' && n.dataset.requestId) : all;
   }
   setAttribute() {}
-  addEventListener() {}
+  addEventListener(type, fn) { this.listeners[type] = fn; }
+  dispatch(type) { return this.listeners[type]?.(); }
+  remove() { if (this.parentNode) this.parentNode.children.splice(this.parentNode.children.indexOf(this), 1); }
   insertAdjacentHTML(_, html) { this._text += html; }
 }
 const nodes = new Map();
@@ -43,6 +45,10 @@ vm.runInContext(`
 const trace = node('red-trace');
 assert.equal(trace.querySelectorAll('details[data-request-id]').length, 1);
 assert.match(trace.textContent, /23 tokens/);
+assert.doesNotMatch(trace.textContent, /raw response body/);
+const requestRow = trace.querySelectorAll('details[data-request-id]')[0];
+assert.equal(requestRow.querySelector('pre').textContent, '');
+requestRow.open = true; requestRow.dispatch('toggle');
 assert.match(trace.textContent, /raw response body/);
 assert.match(trace.textContent, /<script>literal text<\/script>/);
 vm.runInContext(`onEvent({type:'turn_started',seat:'white',prompt:'next',tool_library:[]});`, context);
@@ -64,7 +70,11 @@ vm.runInContext(`
   if (modelOutput(replay.frames[1].choices) !== 'full thinking') throw new Error('duplicate output');
   showFrame(1);
 `, context);
+const replayRow = node('red-trace').querySelectorAll('details[data-request-id]')[0];
+replayRow.open = true; replayRow.dispatch('toggle');
 assert.match(node('red-trace').textContent, /raw replay/);
+replayRow.open = false; replayRow.dispatch('toggle');
+assert.equal(replayRow.querySelector('pre').textContent, '');
 assert.match(node('red-trace').textContent, /length_without_choice/);
 assert.equal(node('blackboard').textContent, 'preview exact result');
 // The new protocol uses UCI choices and automatic tools; old letter replay above remains supported.
@@ -116,4 +126,18 @@ vm.runInContext(`
 `, context);
 assert.equal(node('red-reasoning').textContent, 'Preserved partial thinking');
 assert.equal(node('red-prompt').textContent, 'unfinished prompt');
+// Long streams and archived turns remain bounded even when raw logging is complete.
+vm.runInContext(`
+  onEvent({type:'turn_started',seat:'white',tool_library:[]});
+  onEvent({type:'model_request',status:'started',seat:'white',request_id:'bounded',prompt:'keep this prompt'});
+  onEvent({type:'token',seat:'white',request_id:'bounded',channel:'reasoning',text:'x'.repeat(300000)});
+  if (state.live.white.reasoning.length > 20100) throw new Error('unbounded live text');
+  onEvent({type:'model_request',status:'finished',seat:'white',request_id:'bounded',text:'e2e4',
+    output_excerpt:{head:'first window',tail:'last window',omitted:9000,unit:'tokens',exact:true}});
+  onEvent({type:'choice',stage:'move',status:'answered',seat:'white',uci:'e2e4',source:'model'});
+  if (!state.live.white.reasoning.includes('first window') || !state.live.white.reasoning.includes('last window')) throw new Error('lost compact excerpt');
+  if (state.live.white.prompt !== 'keep this prompt') throw new Error('choice cleared request prompt');
+  for (let i=0;i<20;i++) onEvent({type:'turn_started',seat:'white',prompt:'turn '+i,tool_library:[]});
+`, context);
+assert.equal(node('red-archive').children.length, 6);
 console.log('Harness UI trace, archive, replay and initial board: passed');

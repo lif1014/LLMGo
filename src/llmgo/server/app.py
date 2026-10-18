@@ -27,6 +27,7 @@ from llmgo.runtime.prompt import llm_input_text
 from llmgo.runtime.scripted import ScriptedPlayer
 from llmgo.runtime.vllm_player import VllmPlayer
 from llmgo.store.jsonl import TrajectoryStore
+from llmgo.store.compact import backfill, compact_event, from_config
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -76,6 +77,7 @@ class GameSession:
         self.request = request
         self.store = TrajectoryStore(RUNS / game_id)
         self.events: list[dict] = []
+        self.pending_tokens: dict[tuple, dict] = {}
         self.sockets: set[WebSocket] = set()
         self.lock = asyncio.Lock()
         self.task: asyncio.Task | None = None
@@ -103,12 +105,27 @@ class GameSession:
             self.summary = event.get("summary")
             self._finish_video()
         async with self.lock:
-            self.events.append(event)
+            if event['type'] == 'token':
+                key = (event.get('request_id'), event.get('channel'))
+                previous = self.pending_tokens.get(key, {}).get('text', '')
+                text = event.get('text', '') if event.get('replace') else previous + event.get('text', '')
+                self.pending_tokens[key] = {**event, 'text': text[-20000:], 'replace': True,
+                                           'display_tail_only': len(text) > 20000}
+                shown = event
+            else:
+                shown = self.store.latest_short
+                if shown is None or shown.get('sequence') != event.get('sequence'):
+                    shown = compact_event(event, self.store.windows)
+                self.events.append(shown)
+                if event['type'] == 'model_request' and event.get('status') == 'finished':
+                    for key in list(self.pending_tokens):
+                        if key[0] == event.get('request_id'):
+                            del self.pending_tokens[key]
             sockets = list(self.sockets)
         dead = []
         for socket in sockets:
             try:
-                await socket.send_json(event)
+                await socket.send_json(shown)
             except Exception:
                 dead.append(socket)
         if dead:
@@ -179,7 +196,7 @@ async def vllm_health():
     config = load_config()
     url = config["vllm_base_url"].rstrip("/") + "/models"
     try:
-        async with httpx.AsyncClient(timeout=3) as client:
+        async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
             response = await client.get(url)
         return {"ok": response.status_code < 400, "status": response.status_code, "url": url}
     except Exception as exc:
@@ -203,7 +220,7 @@ def _saved_game_dir(game_id: str) -> Path | None:
     if "/" in game_id or game_id in {"", ".", ".."}:
         return None
     for folder in (RUNS / game_id, RUNS / "harness_runs" / game_id):
-        if (folder / "events.jsonl").is_file() or (folder / "summary.json").is_file():
+        if any((folder / name).is_file() for name in ('events.jsonl', 'short_events.jsonl', 'summary.json')):
             return folder
     return None
 
@@ -218,15 +235,55 @@ def _public_event(event: dict) -> dict | None:
     return shown
 
 
+_short_locks: dict[Path, asyncio.Lock] = {}
+
+
+async def _short_path(folder: Path) -> Path:
+    path = folder / 'short_events.jsonl'
+    if not path.exists():
+        if not (folder / 'events.jsonl').is_file():
+            raise HTTPException(404, '没有这局的事件记录')
+        async with _short_locks.setdefault(folder, asyncio.Lock()):
+            if not path.exists():
+                await asyncio.to_thread(backfill, folder)
+    return path
+
+
 @app.get("/api/games/{game_id}/events")
-async def game_events(game_id: str, after: int = 0):
+async def game_events(game_id: str, after: int = 0, view: str = 'full', limit: int = 512):
     if after < 0:
         raise HTTPException(400, "after 必須非負")
+    if view not in {'full', 'compact'} or not 1 <= limit <= 2048:
+        raise HTTPException(400, 'view must be full/compact; limit must be 1..2048')
     game = hub.games.get(game_id)
-    if game is not None:
-        events = [item for event in game.events[after:] if (item := _public_event(event)) is not None]
-        return {"id": game_id, "live": bool(game.task and not game.task.done()), "events": events, "cursor": len(game.events)}
-    folder = _saved_game_dir(game_id)
+    folder = game.store.root if game is not None else _saved_game_dir(game_id)
+    if folder is None:
+        raise HTTPException(404, '没有这局')
+    if view == 'compact':
+        path = await _short_path(folder)
+        def read_page():
+            events = []
+            with path.open('rb') as handle:
+                if after > 0:
+                    handle.seek(after - 1)
+                    if handle.read(1) != b'\n':
+                        raise HTTPException(400, 'cursor is not a record boundary')
+                handle.seek(after)
+                while len(events) < limit:
+                    offset = handle.tell()
+                    line = handle.readline()
+                    if not line.endswith(b'\n'):
+                        handle.seek(offset)
+                        break
+                    if line.strip() and (item := _public_event(json.loads(line))) is not None:
+                        events.append(item)
+                cursor = handle.tell()
+                more = bool(handle.read(1))
+            return events, cursor, more
+        events, cursor, more = await asyncio.to_thread(read_page)
+        return {'id': game_id, 'events': events, 'cursor': cursor, 'more': more, 'view': 'compact',
+                'live': bool(game.task and not game.task.done()) if game else (folder / 'events.jsonl').exists() and not (folder / 'summary.json').exists(),
+                **_saved_meta(folder)}
     path = folder / "events.jsonl" if folder is not None else None
     if path is None or not path.is_file():
         raise HTTPException(404, "没有这局")
@@ -247,6 +304,36 @@ async def game_events(game_id: str, after: int = 0):
             "events": events, "cursor": cursor, **meta}
 
 
+@app.get('/api/games/{game_id}/event')
+async def raw_event(game_id: str, offset: int):
+    folder = _saved_game_dir(game_id)
+    path = folder / 'events.jsonl' if folder else None
+    if path is None or not path.is_file():
+        raise HTTPException(404, '完整事件只保留在产生对局的机器上')
+    def read():
+        with path.open('rb') as handle:
+            if offset < 0 or offset >= path.stat().st_size:
+                raise HTTPException(400, 'Invalid raw event offset')
+            if offset:
+                handle.seek(offset - 1)
+                if handle.read(1) != b'\n':
+                    raise HTTPException(400, 'Offset is not a record boundary')
+            handle.seek(offset)
+            line = handle.readline()
+            if not line.endswith(b'\n'):
+                raise HTTPException(409, '事件仍在写入')
+            return json.loads(line)
+    return await asyncio.to_thread(read)
+
+
+@app.get('/api/games/{game_id}/raw')
+async def raw_download(game_id: str):
+    folder = _saved_game_dir(game_id)
+    if folder is None or not (folder / 'events.jsonl').is_file():
+        raise HTTPException(404, '完整事件只保留在产生对局的机器上')
+    return FileResponse(folder / 'events.jsonl', filename=f'{game_id}-events.jsonl')
+
+
 @app.get("/api/games/{game_id}")
 async def get_game(game_id: str):
     game = hub.games.get(game_id)
@@ -256,7 +343,7 @@ async def get_game(game_id: str):
         if summary_path is None or not summary_path.is_file():
             if folder is None:
                 raise HTTPException(404, "没有这局")
-            return {"id": game_id, "summary": None, "live": True, "external": True, **_saved_meta(folder)}
+            return {"id": game_id, "summary": None, "live": (folder / 'events.jsonl').exists(), "external": True, **_saved_meta(folder)}
         return {"id": game_id, "summary": json.loads(summary_path.read_text(encoding="utf-8")), "live": False}
     return {
         "id": game.id,
@@ -339,7 +426,24 @@ async def _watch_saved(socket: WebSocket, folder: Path):
     await socket.send_json({'type': 'replay_begin'})
 
     async def publish():
+        compact_path = await _short_path(folder)
+        config_path = folder / 'config.json'
+        windows = from_config(json.loads(config_path.read_text()) if config_path.is_file() else {})
+        raw_cursor = 0
+        with compact_path.open(encoding='utf-8') as compact:
+            for line in compact:
+                if not line.endswith('\n'):
+                    break
+                item = json.loads(line)
+                ref = item.get('raw_ref') or {}
+                raw_cursor = max(raw_cursor, ref.get('offset', 0) + ref.get('length', 0))
+                if (event := _public_event(item)) is not None:
+                    await socket.send_json(event)
+                    if event['type'] == 'game_finished':
+                        await socket.close(code=1000)
+                        return
         with (folder / 'events.jsonl').open('rb') as handle:
+            handle.seek(raw_cursor)
             while True:
                 batch = []
                 at_end = False
@@ -351,7 +455,9 @@ async def _watch_saved(socket: WebSocket, folder: Path):
                         at_end = True
                         break
                     if line.strip():
-                        event = _public_event(json.loads(line))
+                        raw = json.loads(line)
+                        shown = raw if raw.get('type') == 'token' else compact_event(raw, windows)
+                        event = _public_event(shown)
                         if event is not None: batch.append(event)
                 for event in _coalesce_tokens(batch):
                     await socket.send_json(event)
@@ -404,6 +510,8 @@ async def watch(socket: WebSocket, game_id: str):
     async with game.lock:
         await socket.send_json({"type": "replay_begin"})
         for event in _coalesce_tokens(game.events):
+            await socket.send_json(event)
+        for event in game.pending_tokens.values():
             await socket.send_json(event)
         game.sockets.add(socket)
     try:

@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+runs/**/events.jsonl
+runs/**/events.json
+runs/**/.short_events.*.tmp

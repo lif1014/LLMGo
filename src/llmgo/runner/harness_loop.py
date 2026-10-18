@@ -155,6 +155,8 @@ class HarnessRunner:
         final["model_turns"] = len(diagnostics)
         final["forced_moves"] = sum(item.get("source") == "forced" for item in attempts)
         final["model_decisions"] = sum(item.get("source") == "model" and item.get("ok") for item in attempts)
+        final['model_choices'] = final['model_turns'] - final['forced_moves']
+        final['model_choice_rate'] = final['model_decisions'] / final['model_choices'] if final['model_choices'] else None
         final["random_rate"] = random_moves / len(diagnostics) if diagnostics else None
         final["fallback_reasons"] = dict(Counter(d["fallback_reason"] for d in diagnostics if d.get("fallback_reason")))
         for key in ("request_count", "completion_tokens", "prompt_tokens", "request_errors", "length_count", "latency_ms"):

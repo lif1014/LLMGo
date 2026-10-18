@@ -148,12 +148,12 @@ def prepare_candidates(board: chess.Board) -> tuple[list[dict], list[str]]:
         elif preview['terminal']:
             facts.append('terminal ' + preview['terminal'])
         if preview['opponent_mate_in_one']:
-            facts.append('allows opponent mate-in-one: ' + ' '.join(preview['opponent_mate_in_one']))
+            facts.append('opponent mate-in-one: ' + ' '.join(preview['opponent_mate_in_one']))
         if preview['recaptures']:
             replies = preview['recaptures']
             worst = min(reply['material_delta_cp'] for reply in replies) / 100
             facts.append('opponent can capture moved piece: ' + ' '.join(reply['uci'] for reply in replies)
-                         + f'; worst immediate material delta {worst:+g} (no further recapture counted)')
+                         + f'; immediate delta {worst:+g}')
         if facts:
             observations.append(move.uci() + ': ' + '; '.join(facts))
     return candidates, observations

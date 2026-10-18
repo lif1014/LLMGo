@@ -82,6 +82,8 @@ def aggregate(summaries: list[dict]) -> dict:
         for key in ('model_turns', 'model_decisions', 'forced_moves', 'random_moves', 'request_count', 'completion_tokens', 'request_errors', 'finish_length_count'):
             report[key] = sum(item.get(key, 0) or 0 for item in harness_games)
         report['random_rate'] = report['random_moves'] / report['model_turns'] if report['model_turns'] else None
+        report['model_choices'] = report['model_turns'] - report['forced_moves']
+        report['model_choice_rate'] = report['model_decisions'] / report['model_choices'] if report['model_choices'] else None
         report['tokens_exact'] = all(item.get('tokens_exact', True) for item in harness_games)
         counts = Counter()
         for item in harness_games:
@@ -143,7 +145,8 @@ def load_runs(runs_dir: Path) -> list[dict]:
             continue
         seen.add(game_id)
         found.append(item)
-    for events in sorted(runs_dir.glob("harness_runs/*/events.jsonl")):
+    event_paths = sorted(set(runs_dir.glob('harness_runs/*/events.jsonl')) | set(runs_dir.glob('harness_runs/*/short_events.jsonl')))
+    for events in event_paths:
         game_id = events.parent.name
         if game_id in seen or (events.parent / "summary.json").exists():
             continue

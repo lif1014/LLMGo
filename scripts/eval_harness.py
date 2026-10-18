@@ -114,7 +114,7 @@ def _ensure_proxy() -> None:
 
 def _missing_packages() -> list[str]:
     missing = []
-    for package, module in (("python-chess", "chess"), ("httpx", "httpx")):
+    for package, module in (("python-chess", "chess"), ("httpx", "httpx"), ("tokenizers", "tokenizers")):
         try:
             __import__(module)
         except ModuleNotFoundError:
@@ -125,7 +125,7 @@ def _missing_packages() -> list[str]:
 def _ensure_packages() -> None:
     missing = _missing_packages()
     if not missing:
-        print("deps=already-installed python-chess httpx", flush=True)
+        print("deps=already-installed python-chess httpx tokenizers", flush=True)
         return
     command = [
         sys.executable,
@@ -400,6 +400,7 @@ async def _play_one(job: dict, protocol: dict, base_url: str, engine: Path, runs
             "game": "chess",
             "model_seat": model_seat,
             "model": protocol["model_name"],
+            "model_path": protocol.get("model_path"),
             "vllm_base_url": base_url,
             "batch_id": protocol["batch_id"],
             "protocol": protocol,
@@ -459,7 +460,7 @@ async def _play_one(job: dict, protocol: dict, base_url: str, engine: Path, runs
         "index": job["index"],
         "random_moves": summary.get("random_moves") or 0,
         "tool_uses": summary.get("tool_uses") or {},
-        "diagnostics": {key: summary.get(key) for key in ("model_turns", "model_decisions", "forced_moves", "random_rate", "fallback_reasons", "request_count", "completion_tokens", "prompt_tokens", "tokens_exact", "request_errors", "length_count", "latency_ms")},
+        "diagnostics": {key: summary.get(key) for key in ("model_turns", "model_decisions", "model_choices", "model_choice_rate", "forced_moves", "random_rate", "fallback_reasons", "request_count", "completion_tokens", "prompt_tokens", "tokens_exact", "request_errors", "length_count", "latency_ms")},
     }
 
 
@@ -557,6 +558,8 @@ def main() -> int:
     if not protocol_path.is_file():
         return _fail(f"找不到對局條件：{protocol_path}")
     protocol = load_protocol(protocol_path)
+    if args.model_path:
+        protocol['model_path'] = str(Path(args.model_path).resolve())
     HarnessConfig.from_dict(protocol.get("harness"))
     protocol["batch_id"] = args.batch or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     protocol["harness_artifact"] = harness_manifest()
@@ -605,6 +608,8 @@ def main() -> int:
             print(f"servers={len(base_urls)} games={white + black}", flush=True)
         games = asyncio.run(_run_games(protocol, base_urls, engine, runs, white, black))
         metrics = collect_metrics(protocol, games, model_for_metrics)
+        metrics['model_choices'] = metrics['model_turns'] - metrics['forced_moves']
+        metrics['model_choice_rate'] = metrics['model_decisions'] / metrics['model_choices'] if metrics['model_choices'] else None
         metrics["random_rate"] = metrics["random_moves"] / metrics["model_turns"] if metrics["model_turns"] else None
         metrics["gpus"] = len(base_urls)
         output.parent.mkdir(parents=True, exist_ok=True)

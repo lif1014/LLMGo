@@ -277,6 +277,17 @@ function choiceTrace(choices, previousStart) {
   return lines.join("\n\n");
 }
 
+function displayText(text) {
+  return text.length <= 20000 ? text : text.slice(0, 4000) + "\n\n[… 网页省略中段，完整原文保存在本机 events.jsonl …]\n\n" + text.slice(-12000);
+}
+
+function excerptText(excerpt) {
+  if (!excerpt) return "";
+  const gap = excerpt.omitted ? `\n\n[… 省略 ${excerpt.omitted} ${excerpt.unit} …]\n\n` : "";
+  const warning = excerpt.exact ? "" : `\n[字元截取，非精确 token：${excerpt.warning || "缺少 tokenizer"}]`;
+  return excerpt.head + gap + excerpt.tail + warning;
+}
+
 function updateRequest(live, event) {
   if (!event.request_id) return false;
   if (!live.requests) live.requests = new Map();
@@ -287,12 +298,12 @@ function updateRequest(live, event) {
   }
   if (event.type === "token") {
     if (request.finished || !["reasoning", "content"].includes(event.channel)) return false;
-    request[event.channel] = event.replace ? event.text : request[event.channel] + event.text;
-  } else if (event.status === "finished") {
+    request[event.channel] = displayText(event.replace ? event.text : request[event.channel] + event.text);
+  } else if (["finished", "streaming"].includes(event.status)) {
     // Replace streamed/provisional text with the authoritative complete response.
-    request.reasoning = event.reasoning || (!event.text ? event.output || "" : "");
-    request.content = event.text || event.failure_reason || "";
-    request.finished = true;
+    request.reasoning = displayText(excerptText(event.output_excerpt) || event.reasoning || (!event.text ? event.output || "" : ""));
+    request.content = displayText(event.text || event.failure_reason || "");
+    request.finished = event.status === "finished";
   }
   const requests = [...live.requests.values()];
   live.reasoning = requests.map(item => item.reasoning).filter(Boolean).join("\n\n");
@@ -310,7 +321,7 @@ function requestView(choices) {
     for (const event of tokens) {
       if (["reasoning", "content"].includes(event.channel)) live[event.channel] = event.replace ? event.text : live[event.channel] + event.text;
     }
-    if (!tokens.length) live.reasoning = (choices || []).map(event => event.output || "").filter(Boolean).join("\n\n");
+    if (!tokens.length) live.reasoning = (choices || []).map(event => excerptText(event.output_excerpt) || event.output || "").filter(Boolean).join("\n\n");
   }
   return live;
 }
@@ -335,21 +346,50 @@ function appendTrace(seat, event) {
     box.appendChild(document.createElement("summary"));
     box.appendChild(document.createElement("pre"));
     root.appendChild(box);
+    // Formatting and raw HTTP loading happen only after the user opens this row.
+    box.addEventListener("toggle", () => {
+      const pre = box.querySelector("pre");
+      if (!box.open) { pre.textContent = ""; return; }
+      pre.textContent = traceText(box.traceEvent);
+    });
   }
+  box.traceEvent = event;
   const tokens = event.usage && event.usage.completion_tokens !== undefined ? event.usage.completion_tokens : event.completion_tokens;
   const time = event.latency_ms !== undefined ? ` ${(event.latency_ms / 1000).toFixed(2)}s` : "";
   const name = request ? `模型请求 ${event.request_id} · ${event.stage}` : event.type === "tool_call" ? `工具 ${event.tool}` : event.type === "choice" ? `选项 ${event.stage}` : event.type;
   box.querySelector("summary").textContent = `${name} · ${event.status || event.reason || ""}${time}${tokens !== undefined ? ` · ${tokens} tokens${event.tokens_exact === false ? "（估算）" : ""}` : ""}${event.finish_reason ? ` · ${event.finish_reason}` : ""}${event.failure_reason ? ` · ${event.failure_reason}` : ""}`;
+  if (event.raw_ref && !box.rawButton) {
+    const button = document.createElement("button");
+    button.textContent = "按需载入本机完整事件";
+    const gameId = state.id || replay.id;
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      const pre = box.querySelector("pre");
+      try {
+        const response = await fetch(`/api/games/${gameId}/event?offset=${box.traceEvent.raw_ref.offset}`);
+        if (!response.ok) throw new Error("此机器没有完整原文；GitHub 仅保存精简记录");
+        pre.textContent = traceText(await response.json());
+      } catch (error) { pre.textContent = String(error); }
+      finally { button.disabled = false; }
+    });
+    box.appendChild(button);
+    box.rawButton = button;
+  }
+  if (box.open) box.querySelector("pre").textContent = traceText(event);
+}
+
+function traceText(event) {
   const meta = { ...event };
-  for (const key of ["prompt", "text", "reasoning", "output", "raw_response", "request_payload"]) delete meta[key];
+  for (const key of ["prompt", "text", "reasoning", "output", "raw_response", "request_payload", "output_excerpt"]) delete meta[key];
   const parts = [JSON.stringify(meta, null, 2)];
   if (event.prompt) parts.push(`实际提示\n${event.prompt}`);
+  if (event.output_excerpt) parts.push(`输出头尾（${event.output_excerpt.unit}）\n${excerptText(event.output_excerpt)}`);
   if (event.reasoning) parts.push(`思考全文\n${event.reasoning}`);
   else if (event.output) parts.push(`模型原始输出\n${event.output}`);
   if (event.text) parts.push(`正式回答\n${event.text}`);
   if (event.request_payload) parts.push(`请求参数\n${JSON.stringify(event.request_payload, null, 2)}`);
   if (event.raw_response) parts.push(`原始 HTTP 响应\n${event.raw_response}`);
-  box.querySelector("pre").textContent = parts.join("\n\n");
+  return parts.join("\n\n");
 }
 
 async function loadHarnessLibrary() {
@@ -431,10 +471,15 @@ function archive(seat) {
   const title = document.createElement("summary");
   title.textContent = `${seatName(seat)}先前一手的提示和输出`;
   const pre = document.createElement("pre");
-  pre.textContent = `送给模型的提示\n${live.prompt}\n\n思考\n${live.reasoning}\n\n工具\n${live.tools || ""}\n\n正式输出\n${live.content}`;
+  const saved = {prompt: live.prompt, reasoning: live.reasoning, tools: live.tools, content: live.content};
+  box.addEventListener("toggle", () => {
+    pre.textContent = box.open ? `送给模型的提示\n${saved.prompt}\n\n思考\n${saved.reasoning}\n\n工具\n${saved.tools || ""}\n\n正式输出\n${saved.content}` : "";
+  });
   box.append(title, pre);
   if (trace) while (trace.firstChild) box.appendChild(trace.firstChild);
-  document.getElementById(`${column(seat)}-archive`).prepend(box);
+  const archiveRoot = document.getElementById(`${column(seat)}-archive`);
+  archiveRoot.prepend(box);
+  while (archiveRoot.children.length > 6) archiveRoot.children[archiveRoot.children.length - 1].remove();
   live.prompt = "";
   live.reasoning = "";
   live.tools = "";
@@ -466,8 +511,9 @@ function schedulePaint(seat, channel) {
     for (const key of dirtyChannels) {
       const [paintedSeat, paintedChannel] = key.split(":");
       const node = document.getElementById(`${column(paintedSeat)}-${paintedChannel}`);
-      node.textContent = state.live[paintedSeat]?.[paintedChannel] || "";
-      node.scrollTop = node.scrollHeight;
+      const follow = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+      node.textContent = displayText(state.live[paintedSeat]?.[paintedChannel] || "");
+      if (follow) node.scrollTop = node.scrollHeight;
     }
     dirtyChannels.clear();
   });
@@ -550,18 +596,19 @@ function renderSummary(node, summary, title, rulesName) {
     if (!item) continue;
     const line = document.createElement("p");
     const rate = item.first_try_total ? item.first_try_legal / item.first_try_total : null;
-    line.textContent = `${seatName(seat, rulesName)}首步合法率 ${percent(rate)}（${item.first_try_legal}/${item.first_try_total}）`;
+    line.textContent = `${seatName(seat, rulesName)}${summary.harness ? "棋盘合法率" : "首步合法率"} ${percent(rate)}（${item.first_try_legal}/${item.first_try_total}）`;
     node.appendChild(line);
   }
   bars(node, summary.error_types);
   if (summary.harness) {
     const diagnostic = document.createElement("p");
-    diagnostic.textContent = `模型选择完成 ${summary.model_decisions || 0}/${summary.model_turns || 0}；强制步 ${summary.forced_moves || 0}；随机后备 ${summary.random_moves || 0}（${percent(summary.random_rate)}）；请求 ${summary.request_count || 0}；生成 ${summary.completion_tokens || 0} tokens${summary.tokens_exact === false ? "（含估算）" : ""}；后备原因 ${JSON.stringify(summary.fallback_reasons || {})}。合法率包含程式后备。`;
+    const choices = summary.model_choices ?? Math.max(0, (summary.model_turns || 0) - (summary.forced_moves || 0));
+    diagnostic.textContent = `模型选择完成 ${summary.model_decisions || 0}/${choices}（${percent(choices ? summary.model_decisions / choices : null)}）；强制步 ${summary.forced_moves || 0}；随机后备 ${summary.random_moves || 0}（${percent(summary.random_rate)}）；请求 ${summary.request_count || 0}；生成 ${summary.completion_tokens || 0} tokens${summary.tokens_exact === false ? "（含估算）" : ""}；后备原因 ${JSON.stringify(summary.fallback_reasons || {})}。棋盘合法率包含程式后备。`;
     node.appendChild(diagnostic);
   }
   if (summary.finish_length_count) {
     const note = document.createElement("p");
-    note.textContent = `有 ${summary.finish_length_count} 手碰到模型长度上限。页面和记录里的文字没有再被裁短。`;
+    note.textContent = `有 ${summary.finish_length_count} 次碰到模型长度上限。网页使用精简输出；完整原文保存在本机 events.jsonl。`;
     node.appendChild(note);
   }
 }
@@ -625,7 +672,7 @@ function onEvent(event) {
     if (!["reasoning", "content"].includes(event.channel)) return;
     const live = ensureLive(event.seat);
     if (event.request_id) updateRequest(live, event);
-    else live[event.channel] = event.replace ? event.text : live[event.channel] + event.text;
+    else live[event.channel] = displayText(event.replace ? event.text : live[event.channel] + event.text);
     schedulePaint(event.seat, "reasoning");
     schedulePaint(event.seat, "content");
     return;
@@ -648,9 +695,10 @@ function onEvent(event) {
     const freshPly = event.stage === "tool" && event.status === "asking" && !(event.blackboard || []).length;
     if (freshPly && !event.turn_id) archive(seat);
     if (event.skills && event.skills.length && event.status === "asking") appendTrace(seat, event);
-    live.prompt = event.prompt || "";
-    if (event.output) {
-      live.reasoning = live.reasoning ? `${live.reasoning}\n\n${event.output}` : event.output;
+    live.prompt = event.prompt || live.prompt;
+    if (event.output || event.output_excerpt) {
+      const output = excerptText(event.output_excerpt) || event.output;
+      live.reasoning = displayText(live.reasoning ? `${live.reasoning}\n\n${output}` : output);
     }
     if (event.stage === "tool" && (event.status === "answered" || event.source === "random")) {
       const piece = choiceTrace([event], live.blackboardLines || []);
@@ -697,6 +745,7 @@ function onEvent(event) {
 }
 
 const replay = { frames: [], index: 0, timer: null, id: null };
+let replayLoad = 0;
 
 function showAttempt(attempt) {
   if (!attempt) return;
@@ -733,7 +782,7 @@ function showFrame(index) {
     if (!attempt) continue;
     const engine = attempt.source === "engine" ? "这一步是 Fairy-Stockfish，不是模型。" : "";
     state.live[attempt.seat] = {
-      prompt: inputText(attempt),
+      prompt: inputText(attempt) || pendingPrompt?.prompt || "",
       reasoning: modelOutput(past.choices) || attempt.reasoning || engine,
       tools: toolTrace(past.choices),
       content: attempt.content || "",
@@ -797,6 +846,8 @@ function buildFrames(events) {
 }
 
 async function openReplay(gameId, options) {
+  const loadId = ++replayLoad;
+  if (state.socket) { state.socket.close(); state.socket = null; }
   if (state.externalTimer) clearInterval(state.externalTimer);
   state.externalTimer = null;
   state.id = null;
@@ -805,8 +856,19 @@ async function openReplay(gameId, options) {
     replay.timer = null;
     document.getElementById("replay-play").textContent = "播放";
   }
-  const response = await fetch(`/api/games/${gameId}/events`);
-  const data = await response.json();
+  // Byte cursors avoid rescanning raw token history. Yield between bounded pages.
+  const data = {events: []};
+  let cursor = 0;
+  do {
+    const response = await fetch(`/api/games/${gameId}/events?view=compact&limit=512&after=${cursor}`);
+    if (!response.ok) throw new Error(`无法载入对局：${response.status}`);
+    const page = await response.json();
+    if (loadId !== replayLoad) return;
+    data.events.push(...page.events);
+    Object.assign(data, {model_seat: page.model_seat, model: page.model});
+    if (!page.more || page.cursor === cursor) break;
+    cursor = page.cursor;
+  } while (true);
   const opening = (data.events || []).find((event) => event.type === "position");
   if (opening) setGame(opening.game || "xiangqi", opening.files, opening.ranks);
   replay.id = gameId;
@@ -880,8 +942,7 @@ async function loadReports() {
   renderSummary(report, bucket.aggregate || emptyAggregate(), `共 ${(bucket.aggregate || {}).games || 0} 局`, name);
   const list = document.createElement("div");
   list.className = "game-list";
-  const rows = [];
-  for (const game of bucket.games || []) {
+  const rows = await Promise.all((bucket.games || []).map(async (game) => {
     let stateLabel = game.result || "已中断";
     let live = false;
     if (!game.result) {
@@ -893,8 +954,8 @@ async function loadReports() {
         stateLabel = "已中断";
       }
     }
-    rows.push({ game, stateLabel, live });
-  }
+    return { game, stateLabel, live };
+  }));
   rows.sort((a, b) => Number(b.live) - Number(a.live) || (a.game.game_id < b.game.game_id ? 1 : -1));
   if (!rows.length) {
     const empty = document.createElement("p");
@@ -907,9 +968,12 @@ async function loadReports() {
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.id = row.game.game_id;
-    const rate = percent(row.game.first_try_legal_rate);
+    const choices = Math.max(0, (row.game.model_turns || 0) - (row.game.forced_moves || 0));
+    const rate = row.game.harness && typeof row.game.model_decisions === "number"
+      ? `模型作答 ${percent(choices ? row.game.model_decisions / choices : null)}`
+      : `棋盘合法率 ${percent(row.game.first_try_legal_rate)}`;
     const side = row.game.model_seat === "white" ? "模型执白" : row.game.model_seat === "black" ? "模型执黑" : "";
-    button.textContent = `${row.game.game_id}  ${side}  ${row.stateLabel}  首步合法率 ${rate}`.replace(/ +/g, " ");
+    button.textContent = `${row.game.game_id}  ${side}  ${row.stateLabel}  ${rate}`.replace(/ +/g, " ");
     button.addEventListener("click", () => {
       if (row.live) watchLive(row.game.game_id);
       else openReplay(row.game.game_id);

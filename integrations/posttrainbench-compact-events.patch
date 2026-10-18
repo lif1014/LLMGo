@@ -1,0 +1,41 @@
+--- a/README.md
++++ b/README.md
+@@ -9,7 +9,7 @@
+ harness computes candidate observations automatically; the model does not choose
+ tools or select a piece in a separate request. Thinking remains enabled, and
+ final answers are parsed separately from reasoning, including mixed-content
+-responses ending in `</think>` and a JSON move. All retries share 32768 tokens
++responses ending in `</think>` and a bare UCI (legacy JSON moves remain accepted). All retries share 32768 tokens
+ per turn; timeouts remain 540 seconds per request and 1800 seconds per turn.
+ 
+ The server paths and cluster defaults retain their existing locations. Submit
+@@ -65,7 +65,7 @@
+ Complete events live in `harness_runs/<game>/events.jsonl`: timestamps, request
+ IDs, prompts, raw responses, thinking/content, exact-or-estimated usage,
+ latency, finish reason, choice validation, tool parameters/results and fallback
+-reasons. Per-batch metrics are also retained in `harness_batches/`.
++reasons. `short_events.jsonl` records a single first/last-1000-token excerpt per model request, with usage, timing and failure diagnostics. The model tokenizer comes from the existing `--model-path`; unavailable tokenizers are explicitly marked as character windows. Raw events remain local; the web UI uses compact replay and loads raw details on demand. Per-batch metrics are also retained in `harness_batches/`.
+ 
+ No live chess engine, opening oracle or tablebase is available to the submitted
+ baseline tools. `preview` uses legal chess moves and exactly one opponent reply.
+--- a/prompt.txt
++++ b/prompt.txt
+@@ -4,7 +4,7 @@
+ 
+ Editable code is harness/ in this working directory: a copy of the llmgo.harness Python package including settings.json and skills/. Improve that package directly, or submit a complete final_harness/ package with the same interface. The framework snapshots final_harness/ if present, otherwise harness/, into a fresh sealed chess runtime. Changes to the shared LLMGo! checkout are not your submission.
+ 
+-Keep choose_move(board, history, ask, emit, *, seat, budget, rng, config) compatible with HarnessSeat and return a Decision with uci, source, tools, tokens, prompt, reasoning and diagnostics. Keep HarnessConfig.from_dict/as_dict and VllmAsker interfaces compatible. Preserve complete request/tool/fallback diagnostics. The opponent, rules, result adjudication, 200-ply limit, total per-turn generation allowance and enable_thinking=True are fixed by the scoring protocol. Keep a single complete-move multiple-choice question over ALL legal UCI moves, grouped in a fixed order by piece and source square. There is no model-selected tool menu or separate piece question. The harness automatically computes compact candidate observations and logs the full rule checks. Parse only the final answer, including responses where reasoning and the final answer share content separated by </think>; never infer a move from unfinished reasoning. Return a final JSON object with the key move and one listed UCI, or accept an unambiguous bare listed UCI. Unique legal moves are recorded as forced without calling the model. Invalid-answer retries share the per-turn allowance; keep the full log of each request. Use at most two conditional skills per question. Tools may compute legal moves, candidate previews, recaptures and mate-in-one from chess rules. Do not use a separate chess engine, tablebase, online move oracle, hard-coded recorded match continuations or the opponent process to pick your moves. Human game scores may inform general conditional skills and training data.
++Keep choose_move(board, history, ask, emit, *, seat, budget, rng, config) compatible with HarnessSeat and return a Decision with uci, source, tools, tokens, prompt, reasoning and diagnostics. Keep HarnessConfig.from_dict/as_dict and VllmAsker interfaces compatible. Preserve complete request/tool/fallback diagnostics. The opponent, rules, result adjudication, 200-ply limit, total per-turn generation allowance and enable_thinking=True are fixed by the scoring protocol. Keep a single complete-move multiple-choice question over ALL legal UCI moves, grouped in a fixed order by piece and source square. There is no model-selected tool menu or separate piece question. The harness automatically computes compact candidate observations and logs the full rule checks. Parse only the final answer, including responses where reasoning and the final answer share content separated by </think>; never infer a move from unfinished reasoning. Request exactly one bare listed UCI as the final answer (e.g. e2e4); retain compatibility with unambiguous JSON move answers. Keep the input compact and avoid repeated board encodings. Unique legal moves are recorded as forced without calling the model. Invalid-answer retries share the per-turn allowance; keep the full log of each request. Use at most two conditional skills per question. Tools may compute legal moves, candidate previews, recaptures and mate-in-one from chess rules. Do not use a separate chess engine, tablebase, online move oracle, hard-coded recorded match continuations or the opponent process to pick your moves. Human game scores may inform general conditional skills and training data.
+ 
+ Use the remaining time for diagnosis, useful changes, skill extraction and held-out validation. Internet is available on the server. Do not assume precomputed training data. Each skill needs a trigger, action, counterexample and provenance; do not put the entire skill library into every prompt.
+ 
+--- a/scorer_seal.py
++++ b/scorer_seal.py
+@@ -225,6 +225,7 @@
+             pip_index,
+             "python-chess",
+             "httpx",
++            "tokenizers",
+         ]
+     )
+     output.parent.mkdir(parents=True, exist_ok=True)

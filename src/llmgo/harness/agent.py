@@ -189,5 +189,5 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
         if result.error or result.finish_reason == 'length':
             return await fallback(reason)
         correction = ('The previous final answer was not accepted (' + reason + '). '
-                      'Return only {"move":"<one exact UCI from Legal moves>"}; do not return a piece, option letter, or several moves.')
+                      'Output exactly one UCI from Legal moves, such as e2e4. No explanation or JSON.')
     return await fallback(reason)

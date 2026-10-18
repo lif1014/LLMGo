@@ -95,7 +95,7 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(len(script.prompts), 1)
         prompt = script.prompts[0]
         self.assertIn('Legal moves (20 total', prompt)
-        self.assertIn('pawn e2: e2e3 (e3), e2e4 (e4)', prompt)
+        self.assertIn('pawn e2: e2e3 e2e4', prompt)
         self.assertNotIn('Tools\n', prompt)
         self.assertNotIn('Pick\n', prompt)
         self.assertNotIn('Reply\none letter', prompt)
@@ -141,7 +141,7 @@ class PromptTests(unittest.TestCase):
 class LoopTests(unittest.TestCase):
     def test_two_plies_record_choices(self):
         async def ask(prompt: str, max_tokens: int) -> AskResult:
-            return AskResult('{"move":"e2e4"}' if 'You are White.' in prompt else '{"move":"e7e5"}', 1)
+            return AskResult('e2e4' if 'You play White.' in prompt else 'e7e5', 1)
 
         async def play():
             with tempfile.TemporaryDirectory() as folder:

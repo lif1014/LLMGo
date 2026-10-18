@@ -26,7 +26,7 @@ class VllmAsker:
         started = time.monotonic()
         response = None
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_sec, connect=min(10, self.timeout_sec)), transport=self.transport) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_sec, connect=min(10, self.timeout_sec)), transport=self.transport, trust_env=False) as client:
                 response = await client.post(self.base_url + '/chat/completions', json=payload)
             raw = response.text
             if response.status_code >= 400:
@@ -115,7 +115,7 @@ class VllmAsker:
         try:
             # This deadline includes the entire response, not only gaps between chunks.
             async with asyncio.timeout(timeout_sec if timeout_sec is not None else self.timeout_sec):
-                async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_sec, connect=min(10, self.timeout_sec)), transport=self.transport) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_sec, connect=min(10, self.timeout_sec)), transport=self.transport, trust_env=False) as client:
                     async with client.stream('POST', self.base_url + '/chat/completions', json=payload) as response:
                         status = response.status_code
                         is_sse = 'text/event-stream' in response.headers.get('content-type', '').lower()

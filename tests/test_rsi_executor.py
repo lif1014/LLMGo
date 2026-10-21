@@ -84,7 +84,7 @@ def result_for(c, job):
     games = [{"game_id": f"{pair}-{side}", "model_seat": side, "pair_id": pair, "result": "draw"}
              for pair in range(10) for side in ("white", "black")]
     from llmgo.rsi.ladder import batch_stats
-    metrics = {"games": games, "candidate_id": payload["candidate_id"], "skills_sha256": payload["skills_sha256"],
+    metrics = {"track":payload["track"],"candidate_source_identity":payload["candidate_source"]["sha256"],"games": games, "candidate_id": payload["candidate_id"], "skills_sha256": payload["skills_sha256"],
                "source_identity": payload["source"]["sha256"], "comparison_id": payload["comparison_id"],
                "protocol_identity": digest(payload["protocol"]), "opponent_identity": digest(payload["engine_identity"]),
                "seed_schedule": payload["seed_schedule"], "model_identity": {"sha256": "fixture-model"}}
@@ -148,7 +148,7 @@ print(json.dumps({"status":report["status"], "pid":os.getpid(), "creates":transp
     # Simulate Controller dying before collection and restarting after Executor finished.
     restored = Controller(c.root, executor=transport, engine_probe=c.engine_probe)
     assert restored.step()["status"] == "collected"
-    assert restored.state["phase"] == "LEVEL_CHECK"
+    assert restored.state["phase"] == "BASELINE"
     assert transport.creates == transport.gets == 0  # no platform call from read-only Controller process
     assert restored.state["jobs"][job["id"]]["worker_wall_seconds"] == 99
     assert restored.memory.context()["executor"]["latest"]["artifact"]["path"].endswith("metrics.json")
@@ -186,7 +186,7 @@ def test_poll_backoff_persists_without_requerying_or_doubling_submissions(prepar
 def test_failed_job_logs_are_collected_once_and_not_forwarded_to_meta(prepared):
     c, job, transport, clock = prepared
     transport.status = "OOMKilled"
-    assert c.step()["status"] == "failed"
+    assert c.step()["status"] == "needs_input"
     report = c.lifecycle.report(job)
     assert Path(report["evidence"]["platform_log"]).read_text() == RAW
     for _ in range(3):
@@ -194,7 +194,7 @@ def test_failed_job_logs_are_collected_once_and_not_forwarded_to_meta(prepared):
     assert transport.gets == transport.log_reads == 1
     assert RAW not in json.dumps(c.memory.context())
     assert RAW not in c.memory.events.read_text()
-    assert c.state["phase"] == "FAILED"
+    assert c.state["phase"] == "NEEDS_INPUT"
 
 
 def test_succeeded_platform_waits_for_artifact_and_rejects_mismatched_receipt(prepared):

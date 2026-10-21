@@ -14,7 +14,7 @@ from .controller import Controller
 from .memory import MemoryStore
 
 
-def doctor(site, *, worker=False, platform=False, codex_auth=False):
+def doctor(site, *, worker=False, platform=False, codex_auth=False, ppo=False):
     checks = []
     def check(name, ok, detail):
         checks.append({"name": name, "ok": bool(ok), "detail": str(detail)})
@@ -25,8 +25,9 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
     if worker:
         for name in ("torch", "transformers", "peft", "vllm", "chess", "httpx", "tokenizers"):
             check(name, importlib.util.find_spec(name) is not None, "Worker Python dependency")
-        check("lc0", os.access(site["lc0_bin"], os.X_OK), site["lc0_bin"])
-        check("reward_network", Path(site["reward_weights"]).is_file(), site["reward_weights"])
+        if ppo:
+            check("lc0", os.access(site["lc0_bin"], os.X_OK), site["lc0_bin"])
+            check("reward_network", Path(site["reward_weights"]).is_file(), site["reward_weights"])
         if importlib.util.find_spec("torch"):
             import torch
             check("gpu", torch.cuda.is_available(), f"{torch.cuda.device_count()} visible devices")
@@ -58,11 +59,12 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
 
 
 def parser():
-    p = argparse.ArgumentParser(description="Chess RSI: devspace controller, RL and skills only")
+    p = argparse.ArgumentParser(description="Chess autonomous research with fixed multi-level evaluation")
     p.add_argument("--site", default=str(REPO / "configs/rsi/site.beijing.json"))
     sub = p.add_subparsers(dest="command", required=True)
     d = sub.add_parser("doctor")
     d.add_argument("--worker", action="store_true")
+    d.add_argument("--ppo", action="store_true", help="Also check optional Lc0 PPO assets")
     d.add_argument("--platform", action="store_true")
     d.add_argument("--codex-auth", action="store_true", help="Check configured Codex CLI login status, without inference")
     init = sub.add_parser("init")
@@ -114,7 +116,7 @@ def main(argv=None):
     else:
         site = load_site(args.site)
         if args.command == "doctor":
-            result = doctor(site, worker=args.worker, platform=args.platform, codex_auth=args.codex_auth)
+            result = doctor(site, worker=args.worker, platform=args.platform, codex_auth=args.codex_auth, ppo=args.ppo)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["ok"] else 1
         from .contracts import identifier
@@ -189,7 +191,8 @@ def main(argv=None):
                     elif args.command == "resume":
                         if controller.state["phase"] != "NEEDS_INPUT":
                             raise ValueError("resume only clears an explicitly resolved NEEDS_INPUT state")
-                        controller.state.update(phase=controller.state.get("resume_phase") or ("PLANNING" if controller.state["baselines"] else "BASELINE"),
+                        controller.state["active_job"] = None
+                        controller.state.update(phase=controller.state.get("resume_phase", "PLANNING"),
                                                 needs_input=None, meta_stalls=0)
                         controller.save()
                         result = {"phase": controller.state["phase"]}

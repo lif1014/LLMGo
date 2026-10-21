@@ -24,3 +24,5 @@ svg { width:100%; background:#fafcf9; } dialog { max-width:90vw; width:1000px; }
 @media(max-width:1100px) { .status-grid { grid-template-columns:1fr 1fr; } }
 @media(max-width:900px) { main { grid-template-columns:1fr; } body { padding:12px; } .square { font-size:34px; } }
 @media(max-width:550px) { .status-grid { grid-template-columns:1fr; } }
+
+.matrix{overflow:auto;max-width:100%}.matrix table{border-collapse:collapse;min-width:650px;width:100%;font-size:.85rem}.matrix td,.matrix th{padding:8px;border-bottom:1px solid #d4dfd7;text-align:center}.matrix td:first-child{text-align:left;max-width:160px;overflow-wrap:anywhere}

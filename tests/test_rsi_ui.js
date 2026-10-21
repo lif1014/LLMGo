@@ -60,6 +60,11 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   const student=el('student-events').children.at(-1);student.open=true;student.ontoggle();assert.match(student.textContent,/tool_library/);
   assert.match(el('executor-state').textContent,/4170/);assert.match(el('worker-state').textContent,/training/);
   assert.match(el('results').textContent,/75.0%/);
+  assert.match(el('matrix').textContent,/部分测试 1\/8/);
+  run('results(Array.from({length:8},(_,i)=>({candidate_id:"complete",track:"player",level:i+1,statistics:{score:.5,wins:5,draws:10,losses:5}})).concat([{candidate_id:"complete",track:"model",level:1,statistics:{score:1}}]))');
+  assert.match(el('matrix').textContent,/50.0%/);assert.match(el('matrix').textContent,/模型对照/);
+  assert.match(el('matrix').textContent,/部分测试 1\/8/);
+  assert.doesNotMatch(el('overview').textContent,/当前L|已通关/);
   assert.equal(requests.filter(r=>r.includes('/executor-events?')||r.includes('/events?')).length,0,'automatic refresh never consumes raw research logs');
   assert.doesNotMatch(el('coach').textContent,/isolated cluster/);
   el('coach-filter').value='tool';el('coach-filter').onchange();assert(el('coach').children.every(n=>n.hidden));

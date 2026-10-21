@@ -103,31 +103,3 @@ def test_backfill_keeps_partial_unicode_thinking_and_ignores_incomplete_json(tmp
     last = json.loads(store.short_events_path.read_text().splitlines()[-1])
     assert last['status'] == 'streaming' and last['output_excerpt']['head'] == '思考 思考'
     assert hashlib.sha256(store.events_path.read_bytes()).hexdigest() == digest
-
-
-def test_compact_api_paging_raw_lazy_load_and_short_only_clone(tmp_path, model):
-    import llmgo.server.app as server
-    store = make_store(tmp_path, model)
-    async def probe():
-        with patch.object(server, 'RUNS', tmp_path), patch.object(server, 'hub', server.Hub()):
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url='http://test') as client:
-                path = '/api/games/portable/events?view=compact&limit=2'
-                first = (await client.get(path)).json()
-                assert len(first['events']) == 2 and first['more']
-                second = (await client.get(path + f"&after={first['cursor']}")).json()
-                assert len(second['events']) == 2 and not second['more']
-                finished = second['events'][0]
-                assert finished['accepted'] and 'output_excerpt' in finished
-                raw = await client.get(f"/api/games/portable/event?offset={finished['raw_ref']['offset']}")
-                assert raw.status_code == 200 and len(raw.json()['raw_response']) == 400000
-                assert (await client.get('/api/games/portable/event?offset=2')).status_code == 400
-                assert (await client.get(path + '&after=2')).status_code == 400
-                store.events_path.rename(store.root / 'raw-local-backup')
-                assert (await client.get(path)).status_code == 200
-                assert (await client.get('/api/games/portable')).status_code == 200
-                assert (await client.get('/api/games/portable/raw')).status_code == 404
-                assert (await client.get('/api/reports')).json()['games'][0]['game_id'] == 'portable'
-                store.summary_path.unlink()
-                assert (await client.get('/api/games/portable')).json()['live'] is False
-                assert (await client.get('/api/reports')).json()['games'][0]['result'] is None
-    asyncio.run(probe())

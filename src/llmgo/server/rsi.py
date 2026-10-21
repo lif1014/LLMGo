@@ -136,7 +136,7 @@ def campaigns():
         try:
             inside(root, path)
             state = read_json(path)
-            result.append({k: state.get(k) for k in ("campaign_id", "phase", "current_level", "highest_cleared_level", "updated")})
+            result.append({k: state.get(k) for k in ("campaign_id", "phase", "updated")})
         except (ValueError, OSError):
             continue
     return result
@@ -157,11 +157,17 @@ def overview(name: str):
     active = state.get("active_job")
     latest = jobs.get(active) or next(reversed(jobs.values()), None)
     session = limited_json(root/"meta-session.json", 262144) or {}
-    result = {k: state.get(k) for k in ("campaign_id", "phase", "round", "current_level", "highest_cleared_level", "created", "updated", "incumbent", "failure", "needs_input")}
+    result = {k: state.get(k) for k in ("campaign_id", "phase", "round", "created", "updated", "incumbent", "working", "recommended", "failure", "needs_input")}
+    for key in ("working", "incumbent"):
+        item = state.get(key) or {}
+        result[key] = {k:item.get(k) for k in ("id", "model_path", "model_sha256", "hypothesis")}
+    best = state.get("best")
+    result["best"] = {"candidate_id":best["candidate"]["id"],"score":best["score"],"panel":best["panel"]} if best else None
+    result["candidate"] = {k: state.get("candidate", {}).get(k) for k in ("id","hypothesis","evaluation")} if state.get("candidate") else None
     result.update(active_job=latest, job_count=len(jobs), attempt_count=len(state.get("attempts", [])),
-                  accepted_count=sum(a.get("decision", {}).get("verdict") == "accept" for a in state.get("attempts", [])),
+                  accepted_count=sum(bool(a.get("new_best")) for a in state.get("attempts", [])),
                   worker_gpu_hours=sum((j.get("worker_wall_seconds") or 0)*(j.get("allocated_gpu_count") or 0)/3600 for j in jobs.values()),
-                  recent_jobs=[{k: j.get(k) for k in ("id", "role", "candidate_id", "level", "status", "task_id", "executor_status")}
+                  recent_jobs=[{k: j.get(k) for k in ("id", "role", "candidate_id", "level", "track", "status", "task_id", "executor_status")}
                                for j in list(jobs.values())[-30:]],
                   meta={k: session.get(k) for k in ("thread_id", "turn_id", "status", "cwd", "updated", "process", "token_usage")},
                   server_time=time.time())
@@ -205,10 +211,9 @@ def job_files(name: str, job_id: str):
         raise HTTPException(404, "Unknown job")
     names = ("manifest.json", "submission.json", "executor/report.json", "executor/platform.log", "output/progress.json",
              "output/environment.json", "output/failure.json", "output/result.json", "output/vllm.log", "output/metrics.json",
-             "output/checkpoint-ref.json", "output/training/latest.json", "output/training/training.jsonl",
+             "output/research.log", "output/submission.json", "output/research-result.json", "output/checkpoint-ref.json", "output/training/latest.json", "output/training/training.jsonl",
              "output/training/training-result.json",
-             # Historical campaigns retain lazy access to old artifacts. No old trainer is executable.
-             "output/labels/index.json", "output/training/verl-training.log", "output/training/verl-resolved.yaml")
+             "output/training/installed.freeze.txt")
     # Bounded pointer, no polling or scanning all historical rollout files.
     latest = limited_json(job/"output/training/latest.json", 65536) or {}
     for key in ("raw_path", "targets_path", "rollout_path"):
@@ -218,6 +223,9 @@ def job_files(name: str, job_id: str):
                 names += (path.relative_to(job).as_posix(),)
             except ValueError:
                 pass
+    # Candidate import/runtime failures get a lazy file link too; inspect at most20.
+    for candidate_log in islice((job/"output/harness_runs").glob("*/candidate.log"),20):
+        names += (candidate_log.relative_to(job).as_posix(),)
     files = []
     for name in names:
         path = inside(root, job/name)

@@ -1,146 +1,108 @@
-# 第一次在服务器启动 RSI
+# 远端首次部署
 
-适用目录：`/user/lyh4170`。Controller、强Agent与网页在0GPU devspace；对局、Lc0与PPO通过NORMAL/beijing/model-autosft的GPU job。本文是操作步骤，不表示远端依赖已经安装或真实4B GPU验收已经通过。
+本机负责实现与打包；运行环境基于用户指定镜像：
 
-## 1. 上载程序：Git 或 tar 选一种
+`share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb`
 
-服务器尚没有项目目录时，可直接拉取GitHub：
+不要把旧源代码 tar 和新自主研究 pipeline 混合解压。已有仓库先备份或移到自己目录的另一个位置，再把新包解压到站点配置的 repo 路径。原始模型路径不变。
 
-```bash
-cd /user/lyh4170
-git clone https://github.com/lif1014/LLMGo.git 'LLMGo!'
-```
+## 1. 上传与控制环境
 
-也可上传本机 `/tmp/llmgo-rsi-upload-20261021/LLMGo-rsi-source-20261021.tar.gz` 至自己远端目录，然后：
+将新的 LLMGo-rsi-autonomous-20261022.tar.gz 上传到 /user/lyh4170：
 
 ```bash
-cd /user/lyh4170
-tar -xzf /user/lyh4170/LLMGo-rsi-source-20261021.tar.gz -C /user/lyh4170
+tar -xzf /user/lyh4170/LLMGo-rsi-autonomous-20261022.tar.gz -C /user/lyh4170
+cd '/user/lyh4170/LLMGo!'
+python3 -m venv --without-pip --system-site-packages /user/lyh4170/venvs/llmgo-rsi-control-20261022
+/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python -m pip install -r requirements-rsi-control.txt
+export PATH=/user/lyh4170/tools/bin:$PATH
+export CODEX_HOME=/user/lyh4170/.codex-rsi
+export TMPDIR=/user/lyh4170/llmgo-rsi-runtime-20261022/tmp
+export XDG_CACHE_HOME=/user/lyh4170/llmgo-rsi-runtime-20261022/cache
+mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
 ```
 
-压缩包内部已带`LLMGo!`目录，不要解压到`LLMGo!`里再套一层。首次安装目录不存在时使用这些命令；已有版本/研究记录则先核对，不能盲目覆盖。Git安装后可用`git pull --ff-only`更新工作仓库，冻结中的campaign不会自动升级为新源码。
+这是新建的专用控制环境；若同名目录已存在且用途不明，不覆写，先选择自己的另一新目录。此控制环境不需要 torch/GPU。控制器、Meta-Agent、Memory 和网页都在自己0GPU devspace，使用安装好控制依赖的解释器。
 
-tar有源码、隐藏`.agents`、文档、Fairy及NNUE；没有`.git`、认证、Python环境、学生权重或BT4。Git与tar都是部署程序的方式，不需要两者都做。
+Codex 配置此前已经从来源目录复制到 /user/lyh4170/.codex-rsi/config.toml，保留它；不要覆盖来源目录或记录凭证。曾核对的配置默认 custom/deepseek-v4-pro，site.meta_model=null 会沿用配置，不会自动切为另一强模型。
 
-## 2. 先补齐启动条件
+若 own tools/bin/codex 尚不存在，并且镜像有 Node/npm，可安装此前验证的 CLI 版本：
 
-| 项目 | 站点需要的位置/条件 |
-|---|---|
-| 学生Qwen3.5-4B | 沿用只读`/user/liyaohu4170/models/Qwen3.5-4B`，不复制或改路径 |
-| Fairy | 项目`engines/fairy-stockfish`，同目录保留NNUE；Git/tar已带 |
-| Codex客户端 | `/user/lyh4170/tools/bin/codex`可执行，支持app-server且有可用provider认证 |
-| cctl | devspace的PATH可找到，`cctl pool list --own`能看到model-autosft |
-| Lc0程序 | `/user/lyh4170/tools/bin/lc0`，必须支持BT4及Worker所用GPU backend |
-| BT4网络 | `/user/lyh4170/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz` |
-| Worker环境 | `site.image`与`site.python`在每个新GPU容器中可运行Qwen/vLLM/PEFT及全部Worker依赖 |
-
-BT4另行上传，本机文件为：
-
-```text
-/home/lif/.cache/llmgo/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz
-SHA256 e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618
+```bash
+export npm_config_cache=/user/lyh4170/llmgo-rsi-runtime-20261022/cache/npm
+npm install --global --prefix /user/lyh4170/tools/llmgo-rsi-20261022 @openai/codex@0.163.0
+/user/lyh4170/tools/llmgo-rsi-20261022/bin/codex --version
+/user/lyh4170/tools/llmgo-rsi-20261022/bin/codex app-server --help
+CODEX_HOME=/user/lyh4170/.codex-rsi /user/lyh4170/tools/llmgo-rsi-20261022/bin/codex login status
 ```
 
-只上传tar还不能启动完整训练。2026-10-21核对时，自己的远端目录尚缺Codex程序、控制Python、Lc0和BT4。现有Codex配置已复制到`.codex-rsi/config.toml`，不要重复覆盖；它目前指向custom/deepseek-v4-pro，`meta_model=null`会沿用该模型。
+上例为避免干扰其他任务使用新的独立CLI前缀；采用它时，将自己的site配置中codex_bin设为 `/user/lyh4170/tools/llmgo-rsi-20261022/bin/codex`，且在init前完成。已有默认 `/user/lyh4170/tools/bin/codex` 可用时直接只读复用，无需重新安装或覆盖。
 
-### 控制环境与Codex
+CLI login status 不验证模型推理，自定义 provider 可能需要自己的环境变量或服务。可自行用一次只回复READY的 ephemeral 请求检查，避免记录认证信息。没有实际请求通过前不要宣称远端强模型已可用。
 
-在0GPU devspace执行：
+## 2. 在指定基底镜像安装 Worker overlay
+
+每个新GPU容器都从基底镜像启动，不能依赖之前容器里临时 pip 的结果。现在的 worker_entry 会建立并复用共享目录中的隔离 overlay，不替换镜像：
+
+```bash
+# 这条安装命令应在指定镜像内执行；可用0GPU job完成安装/import检查。
+python3 scripts/bootstrap_worker.py --prefix /user/lyh4170/venvs/llmgo-rsi-20261022
+```
+
+本次专用路径为 `/user/lyh4170/venvs/llmgo-rsi-20261022` 与其 `-inference` 同级目录，pip/cache/tmp 全部在训练前缀的 `_runtime` 内。安装器只接受带 `llmgo-owner.json` 标识的已有环境，遇到其他环境会拒绝修改。不会激活、升级、卸载系统Python包或其他venv。
+
+下载固定走中科大 `https://mirrors.ustc.edu.cn/pypi/simple`；先测试直连，不通再测试集群白名单代理。两条路均不通会明确报错，不继续重复pip。
+
+安装器：
+
+1. 使用镜像自己的 Python 创建 `--system-site-packages` venv。
+2. 保留镜像 Torch 2.10.0+cu129、vLLM 0.17.0、CUDA相关包与tokenizers，不替换GPU栈。
+3. HF训练overlay单独安装 Transformers 5.2.0；原镜像4.57.6没有HF Qwen3.5模型类。
+4. 推理overlay `llmgo-rsi-20261022-inference` 保留 Transformers 4.57.6：vLLM 0.17声明依赖<5，且自带Qwen3.5 config/native模型实现。正式服务从site.inference_python启动，不能混用训练解释器。
+5. 安装 requirements-rsi-worker/control 中缺少的控制组件、PEFT、accelerate。
+6. 分别验证HF Qwen3.5/PEFT与vLLM native Qwen3.5 config。
+7. 在 venv 写入使用该解释器的 vllm launcher、环境回执、base-stack.constraints.txt 和 installed.freeze.txt。
+8. 通过安装锁避免多个任务同时写同一个环境。
+
+不支持 Qwen3.5 或依赖不兼容时会失败并保留原因，不自动升级 torch/CUDA/vLLM。此时应在同一基底上制作明确版本的派生环境，再验证；不能把“镜像名字有vllm”当作兼容证据。镜像检查/安装是否实际完成，以 docs/environment-status.json 的回执为准，代码实现本身不代表远端安装成功。
+
+镜像ensurepip不可用，因此venv用without-pip并继承镜像已有pip；安装路径和pip缓存均在自己目录。每次 worker 启动会先做安装/核验，再 exec overlay 解释器。基底镜像必须相同；不要把共享 venv 接到不同 Python ABI 的其他镜像。site.worker_venv 可指向自己目录的新前缀重新安装。
+
+在真正GPU job内：
+
+```bash
+/user/lyh4170/venvs/llmgo-rsi-20261022/bin/python scripts/rsi.py doctor --worker
+# 若选择初始LC0 PPO，再加 --ppo 检查可选教师资产
+/user/lyh4170/venvs/llmgo-rsi-20261022/bin/python scripts/rsi.py doctor --worker --ppo
+```
+
+0GPU import 检查不能替代GPU生成、训练、导出和重载检查。devspace 不申请GPU。
+
+## 3. 模型与引擎
+
+- 学生只读来源：`/user/liyaohu4170/models/Qwen3.5-4B`。
+- Fairy 与 NNUE：包内 engines，站点保持 `/user/lyh4170/LLMGo!/engines/fairy-stockfish`。
+- 初始 PPO 可选 Lc0：`/user/lyh4170/tools/bin/lc0`，需支持BT4和所选backend。
+- 可选 BT4：`/user/lyh4170/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz`。
+
+本机已下载BT4位于 `/home/lif/.cache/llmgo/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz`，不包含在源码tar。上传后核对SHA256：`e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618`。不使用该配方时无需LC0/BT4。
+
+## 4. 启动与恢复
 
 ```bash
 cd '/user/lyh4170/LLMGo!'
-mkdir -p /user/lyh4170/tmp /user/lyh4170/cache /user/lyh4170/tools/bin
-export TMPDIR=/user/lyh4170/tmp
-export XDG_CACHE_HOME=/user/lyh4170/cache
+export PYTHONPATH="$PWD/src"
 export CODEX_HOME=/user/lyh4170/.codex-rsi
 export PATH=/user/lyh4170/tools/bin:$PATH
-python3 -m venv /user/lyh4170/venvs/rsi-control
-/user/lyh4170/venvs/rsi-control/bin/pip install -r requirements-rsi-control.txt
+/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python scripts/rsi.py doctor --platform --codex-auth
+/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python scripts/rsi.py init chess-autonomous-v2
+/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python scripts/rsi.py run chess-autonomous-v2
 ```
 
-若已有Node/npm，可在自己的前缀下安装Codex。以下版本是本机使用并确认npm存在的CLI版本，不代表其远端provider推理已验证：
+站点默认路径见 configs/rsi/site.beijing.json。需要自定义时复制为自己的 site，CLI 的 --site 放在子命令前。campaign创建后站点冻结，保持原配置恢复。
 
-```bash
-export npm_config_cache=/user/lyh4170/cache/npm
-npm install --global --prefix /user/lyh4170/tools @openai/codex@0.163.0
-/user/lyh4170/tools/bin/codex --version
-/user/lyh4170/tools/bin/codex app-server --help
-/user/lyh4170/tools/bin/codex login status
-```
+首次是160局player基线，之后Meta-Agent开始研究。每个研究任务由Executor提交/监控/收集；评测按档位分job。不开独立 vLLM、不用旧 serve_vllm/eval_harness/arena 启动脚本。恢复只重跑run，不再init。旧campaign不迁移。
 
-CLI支持npm安装；登录方式按自己已有provider/账号配置，不要粘贴凭证进仓库或日志。[官方安装说明](https://learn.chatgpt.com/docs/codex/cli)，[认证说明](https://learn.chatgpt.com/docs/auth)。自定义provider可能还依赖配置指定的环境变量或桥接服务；不要凭`login status`通过就断言推理可用，也不要为了登录覆盖原provider配置。
+网页：设置 LLMGO_RSI_ROOT=/user/lyh4170/rsi_campaigns，用控制venv运行 scripts/run_web.sh，平台转发7860；访问/rsi。
 
-在准备好认证后，可手动验证一次真实强模型调用（会使用相应模型额度）：
-
-```bash
-CODEX_HOME=/user/lyh4170/.codex-rsi /user/lyh4170/tools/bin/codex exec \
-  --ephemeral --sandbox read-only --skip-git-repo-check \
-  --cd '/user/lyh4170/LLMGo!' '只回复READY，不调用工具，不修改文件。'
-```
-
-这条实际请求成功后，再把强Agent视为具备可用的推理入口；它仍不能代替RSI app-server闭环验证。若要使用其他强模型，先明确provider与模型支持范围，再在init前配置`meta_model`；本说明不偷偷替换现有默认模型。
-
-### Worker环境是独立条件
-
-控制venv只负责调度/网页，不会自动安装GPU容器依赖。`requirements-rsi-worker.txt`需落实到每个新job可用的环境；默认站点镜像尚未验证为完整训练镜像。
-
-可采用已准备并验证的镜像，或自己的共享Worker环境。在init前核对`site.image`、`site.python`和Worker PATH；vLLM启动器与Python必须匹配。仅在一次性job里pip安装，而后续仍启动原始镜像，不会使安装自动保留。不要直接假定devspace的`export PATH`会传给新job。更具体的边界见[操作文档第2节](rsi-operations.md#2-上传与环境准备)。
-
-正式run前先在自己的GPU job验证`doctor --worker`，然后验证真实Qwen生成、BT4原生WDL和PPO单卡导出/重载；该验证不能在devspace申请GPU，也不能停止他人任务。所有任务继续用NORMAL/beijing/model-autosft。
-
-## 3. 启动常驻循环
-
-准备齐上述条件后，在0GPU devspace中执行；可用自己的tmux会话保持进程在线：
-
-```bash
-cd '/user/lyh4170/LLMGo!'
-export TMPDIR=/user/lyh4170/tmp XDG_CACHE_HOME=/user/lyh4170/cache
-export CODEX_HOME=/user/lyh4170/.codex-rsi
-export PATH=/user/lyh4170/tools/bin:$PATH
-source /user/lyh4170/venvs/rsi-control/bin/activate
-python scripts/rsi.py doctor --platform --codex-auth
-```
-
-doctor失败退出码为1。先处理失败项目，再执行以下两条；`init`只在第一次运行：
-
-```bash
-python scripts/rsi.py init chess-rsi-001
-python scripts/rsi.py run chess-rsi-001
-```
-
-`run`会真实提交GPU任务；当前默认embedded Executor，不需要另启动executor进程，也不需要手工启动`serve_vllm.sh`。评测Worker会启动和停止自己创建的学生服务。
-
-如果重新运行同一个campaign，只执行`run chess-rsi-001`，不要再次init。它读持久Memory与已有job报告继续，任务提交不确定时先对账，不重复创建。更改站点配置/框架后应使用新campaign，不修改冻结实验。
-
-## 4. 启动后会发生什么
-
-1. 提交第一个GPU job：原Qwen3.5-4B对L1 Fairy，20局（10白10黑），200半步上限、thinking开启。
-2. Executor自动提交/轮询/收集，Meta-Agent不会一直问job是否结束；等待GPU排队时可能较久。
-3. 未达到升级条件时，强Agent读完整证据和Memory，选择改skills、PPO或两者组合；不是每轮都必定训练。
-4. 有PPO时，GPU job做当前策略采样→学生移CPU→Lc0对实际选择前后评分→Lc0退出→学生回GPU做多轮token clip→导出完整学生模型。
-5. 候选重新打20局，同级比较不明确时补匹配批次；同级有实测改善、已通关级回归无退步才扶正。失败/无改善候选保留证据，现任不被替换。
-6. 现任连续两批满足胜至少16/20、得分率85%、黑白各60%才升级Fairy，再测新档基线。循环没有预设轮数终点，也不保证每轮都提高Elo。
-
-当前PPO是课程单步反馈，A=V_Lc0(after)−V_Lc0(before)，不是完整多步GAE；正式下棋没有Lc0参与。
-
-## 5. 网页和状态
-
-在同一个devspace另开一个终端，使用控制环境：
-
-```bash
-cd '/user/lyh4170/LLMGo!'
-LLMGO_RSI_ROOT=/user/lyh4170/rsi_campaigns PYTHONPATH=src \
-  /user/lyh4170/venvs/rsi-control/bin/python -m uvicorn llmgo.server.app:app \
-  --host 0.0.0.0 --port 7860
-```
-
-通过自己的devspace访问/端口转发方式打开`/rsi`。网页端口不会由以上命令自动在平台公开。可看到强Agent事件/工具/用量、Executor任务与轮询、Worker阶段、已完成对局、当前棋盘/思考、候选得分和Memory；大日志按需分页读取。PPO日志可看批次、优势、loss/KL/clip及原文文件，不是训练token数组全量自动推送。
-
-只读状态：
-
-```bash
-python scripts/rsi.py status chess-rsi-001
-python scripts/rsi.py executor status chess-rsi-001
-```
-
-进程中断后用相同run恢复；平台Failed/OOM则先查failure.json并解决原因，再显式`resume-failed chess-rsi-001`。不要同时开第二个Controller、删锁文件或盲目重提任务。完整恢复说明见[操作文档](rsi-operations.md)。
+版本设计依据：[vLLM 0.17依赖声明](https://github.com/vllm-project/vllm/blob/v0.17.0/requirements/common.txt)、[其Qwen3.5配置实现](https://github.com/vllm-project/vllm/blob/v0.17.0/vllm/transformers_utils/configs/qwen3_5.py)、[Transformers 5.2 Qwen3.5](https://github.com/huggingface/transformers/tree/v5.2.0/src/transformers/models/qwen3_5)。这些源码说明接口设计，实际远端验证以回执为准。

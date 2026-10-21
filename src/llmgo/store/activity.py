@@ -118,8 +118,8 @@ def project(event):
         elif "error" in kind or kind in ("submission_uncertain", "reconciliation_required", "artifact_invalid"):
             view.update(category="error", title="执行异常 · " + kind)
     else:
-        labels = {"hypothesis": "提出实验假设", "decision": "候选验收结论", "handoff": "研究交接", "research_note": "研究笔记",
-                  "proposal_invalid": "候选校验失败", "experiment_failed": "实验失败", "opponent_level_promoted": "对手升级",
+        labels = {"hypothesis": "提出实验假设", "decision": "实验结论", "handoff": "研究交接", "research_note": "研究笔记",
+                  "proposal_invalid": "候选校验失败", "experiment_failed": "实验失败",
                   "evaluation": "评测完成", "executor_transition": "任务状态变化", "explicit_retry": "显式恢复任务"}
         view["title"] = labels.get(kind, kind)
         if kind == "evaluation":

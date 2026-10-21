@@ -91,10 +91,16 @@ def load_site(path: str | Path) -> dict:
         raise ValueError("Remote writable root must be /user/lyh4170")
     for key in ("repo", "codex_home", "campaign_root", "worktree_root", "checkpoint_root", "reward_weights", "engine", "lc0_bin", "codex_bin"):
         inside(site["user_root"], site[key])
-    if type(site.get("gpu_count")) is not int or site["gpu_count"] != 1:
-        raise ValueError("This Worker supports exactly one GPU per job")
+    if type(site.get("gpu_count")) is not int or site["gpu_count"] < 1:
+        raise ValueError("Default worker gpu_count must be positive; research jobs may override it")
     if site.get("executor_mode", "embedded") not in {"embedded", "external"}:
         raise ValueError("executor_mode must be embedded or external")
+    if site.get("runtime_root"):
+        inside(site["user_root"], site["runtime_root"])
+    if site.get("worker_venv"):
+        inside(site["user_root"], site["worker_venv"])
+    if site.get("inference_python"):
+        inside(site["user_root"], site["inference_python"])
     base_poll = finite(site.get("poll_seconds", 30), "poll_seconds", 1, 3600)
     finite(site.get("executor_max_poll_seconds", max(120, base_poll)), "executor_max_poll_seconds", base_poll, 3600)
     for key in ("cpu", "memory_gib"):
@@ -106,12 +112,13 @@ def load_site(path: str | Path) -> dict:
 def worker_environment(site: dict) -> dict:
     root = Path(site["user_root"])
     env = os.environ.copy()
+    runtime = inside(root, site.get("runtime_root", root/"llmgo-rsi-runtime-20261022"))
     # Use each variable for its documented purpose; never change HOME.
     paths = {
-        "TMPDIR": root / "tmp", "XDG_CACHE_HOME": root / "cache",
-        "HF_HOME": root / "cache/huggingface", "TORCH_HOME": root / "cache/torch",
-        "TRITON_CACHE_DIR": root / "cache/triton", "RAY_TMPDIR": root / "tmp/ray",
-        "WANDB_DIR": root / "cache/wandb",
+        "TMPDIR": runtime / "tmp", "XDG_CACHE_HOME": runtime / "cache",
+        "HF_HOME": runtime / "cache/huggingface", "TORCH_HOME": runtime / "cache/torch",
+        "TRITON_CACHE_DIR": runtime / "cache/triton", "RAY_TMPDIR": runtime / "tmp/ray",
+        "WANDB_DIR": runtime / "cache/wandb", "PIP_CACHE_DIR": runtime / "cache/pip",
     }
     for name, path in paths.items():
         inside(root, path).mkdir(parents=True, exist_ok=True)
@@ -140,9 +147,11 @@ def validate_protocol(p: dict) -> None:
     for key, value in required.items():
         if p.get(key) != value or type(p.get(key)) is not type(value):
             raise ValueError(f"Official RSI protocol requires {key}={value!r}")
-    from llmgo.harness.config import HarnessConfig
-    if HarnessConfig.from_dict(p.get("harness")).as_dict() != protocol(p["opponent"], p["engine"])["harness"]:
-        raise ValueError("RSI harness settings are frozen")
+    # Candidate settings are editable. These external resource ceilings are not.
+    from .ladder import opponent
+    expected = protocol(opponent(p["opponent"]["level"]), p["engine"])
+    if p != expected:
+        raise ValueError("Official evaluation protocol or opponent was changed")
 
 
 def model_identity(path: str | Path) -> dict:

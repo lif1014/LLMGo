@@ -1,35 +1,40 @@
-"""Versioned opponent presets and independent candidate/level promotion rules."""
+"""Fixed opponent panel. There is no promotion ladder or mastery threshold."""
 from __future__ import annotations
-
-import random
 from statistics import mean
-from .contracts import digest
+import math
 
-LADDER_VERSION = "chess-skill-v1"
-PRESETS = [
-    (-9, .05, 800), (-5, .10, 1100), (-1, .15, 1400),
-    (3, .15, None), (7, .15, None), (11, .15, None), (15, .15, None), (20, .15, None),
-]
-
-
-def opponent(level=1, *, nodes_base=None):
-    if type(level) is not int or level < 1:
-        raise ValueError("The lowest project level is L1")
-    spec = {"level": level, "level_id": f"L{level}", "version": LADDER_VERSION,
-            "strength_mode": "skill", "threads": 1, "hash_mb": 16, "variant": "chess"}
-    if level <= 8:
-        skill, seconds, anchor = PRESETS[level - 1]
-        spec.update(skill=skill, depth=5, movetime_sec=seconds, nodes=None,
-                    search_limit_mode="depth_time", anchor_elo=anchor)
-    else:
-        if not isinstance(nodes_base, int) or nodes_base < 1:
-            raise ValueError("L9+ needs a node baseline measured from completed L8 games")
-        spec.update(skill=20, depth=None, movetime_sec=None, nodes=nodes_base * 2 ** (level - 9),
-                    search_limit_mode="nodes", anchor_elo=None)
-    return spec
+LADDER_VERSION = "chess-panel-v2"
+LEVELS = tuple(range(1, 9))
+PRESETS = [(-9, .05), (-5, .10), (-1, .15), (3, .15),
+           (7, .15), (11, .15), (15, .15), (20, .15)]
 
 
-def batch_stats(metrics: dict) -> dict:
+def opponent(level=1, **unused):
+    if type(level) is not int or level not in LEVELS:
+        raise ValueError("Fixed evaluation supports L1-L8 only")
+    skill, seconds = PRESETS[level-1]
+    return {"level": level, "level_id": f"L{level}", "version": LADDER_VERSION,
+            "strength_mode": "skill", "threads": 1, "hash_mb": 16, "variant": "chess",
+            "skill": skill, "depth": 5, "movetime_sec": seconds, "nodes": None,
+            "search_limit_mode": "depth_time", "anchor_elo": None}
+
+
+def evaluation_plan(data=None):
+    data = {} if data is None else data
+    if not isinstance(data, dict):
+        raise ValueError("evaluation must be an object or false")
+    levels = data.get("levels", list(LEVELS))
+    tracks = data.get("tracks", ["player"])
+    if (not isinstance(levels, list) or not levels or len(set(levels)) != len(levels)
+            or any(type(x) is not int or x not in LEVELS for x in levels)):
+        raise ValueError("levels must be unique integers from L1-L8")
+    if (not isinstance(tracks, list) or not tracks or len(set(tracks)) != len(tracks)
+            or any(x not in ("player", "model") for x in tracks)):
+        raise ValueError("tracks must contain player and/or model")
+    return {"levels": sorted(levels), "tracks": tracks}
+
+
+def batch_stats(metrics):
     games = metrics.get("games", [])
     if len(games) != 20:
         raise ValueError("A formal batch must contain exactly 20 games")
@@ -56,35 +61,23 @@ def batch_stats(metrics: dict) -> dict:
         pairs[key, side] = point
     if any(len(points) != 10 for points in by_side.values()):
         raise ValueError("Expected 10 white and 10 black games")
-    pair_scores = [(pairs[i, "white"] + pairs[i, "black"]) / 2 for i in range(10)]
-    return {"wins": wins, "draws": draws, "losses": losses, "score": mean(pair_scores),
+    scores = [(pairs[i, "white"]+pairs[i, "black"])/2 for i in range(10)]
+    m = mean(scores)
+    # Descriptive uncertainty only; repeated development tests are adaptive.
+    se = math.sqrt(sum((x-m)**2 for x in scores)/9/10)
+    return {"wins": wins, "draws": draws, "losses": losses, "score": m,
             "white_score": mean(by_side["white"]), "black_score": mean(by_side["black"]),
-            "pair_scores": pair_scores,
+            "pair_scores": scores, "pair_standard_error": se,
             "truncated": sum(g.get("result_reason") == "truncated" for g in games)}
 
 
-def mastered(metrics):
-    s = batch_stats(metrics)
-    return s["wins"] >= 16 and s["score"] >= .85 and s["white_score"] >= .60 and s["black_score"] >= .60
-
-
-def compare(candidate_batches, incumbent_batches, *, min_improvement=.05, confidence=.95):
-    if len(candidate_batches) != len(incumbent_batches) or not candidate_batches:
-        raise ValueError("Matched baseline and candidate batches are required")
-    differences = []
-    for candidate, baseline in zip(candidate_batches, incumbent_batches):
-        for key in ("comparison_id", "opponent_identity", "protocol_identity", "seed_schedule"):
-            if not candidate.get(key) or candidate[key] != baseline.get(key):
-                raise ValueError(f"Cannot compare incompatible {key}")
-        c, b = batch_stats(candidate), batch_stats(baseline)
-        differences.extend(x-y for x, y in zip(c["pair_scores"], b["pair_scores"]))
-    gain = mean(differences)
-    rng = random.Random(4170)
-    bootstrap = sorted(mean(rng.choices(differences, k=len(differences))) for _ in range(4000))
-    alpha = (1-confidence)/2
-    lower, upper = bootstrap[int(alpha*4000)], bootstrap[min(3999, int((1-alpha)*4000))]
-    verdict = "accept" if gain >= min_improvement - 1e-12 and lower > 0 else "reject" if gain <= 0 else "inconclusive"
-    return {"verdict": verdict, "gain": gain, "interval": [lower, upper], "confidence": confidence,
-            "method": "paired_game_cluster_percentile_bootstrap", "pairs": len(differences),
-            "min_improvement": min_improvement,
-            "note": "Small adaptive development samples are not a calibrated Elo estimate."}
+def panel_summary(rows):
+    result = {}
+    for track in ("player", "model"):
+        selected = [x for x in rows if x.get("track", "player") == track]
+        latest = {x["level"]: x for x in selected}
+        complete = set(latest) == set(LEVELS)
+        result[track] = {"complete": complete, "levels": {str(k): v["statistics"] for k,v in sorted(latest.items())},
+                         "score": mean(x["statistics"]["score"] for x in latest.values()) if complete else None,
+                         "games": 20*len(latest), "note": "Development results are adaptive, not calibrated Elo."}
+    return result

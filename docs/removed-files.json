@@ -1,0 +1,40 @@
+{
+  "reason": "Retired alternate games, old direct launch/evaluation and automatic ladder; this release contains the autonomous chess pipeline only",
+  "deleted": [
+    "scripts/eval_harness.py",
+    "scripts/arena_ladder.py",
+    "scripts/serve_vllm.sh",
+    "src/llmgo/env/xiangqi.py",
+    "src/llmgo/env/xiangqi_game.py",
+    "src/llmgo/env/gomoku.py",
+    "src/llmgo/env/games.py",
+    "src/llmgo/env/notation.py",
+    "src/llmgo/runner/loop.py",
+    "src/llmgo/runtime/scripted.py",
+    "src/llmgo/runtime/vllm_player.py",
+    "src/llmgo/render/frames.py",
+    "src/llmgo/render/video.py",
+    "src/llmgo/render/__init__.py",
+    "src/llmgo/eval/elo.py",
+    "src/llmgo/server/static/index.html",
+    "src/llmgo/server/static/app.js",
+    "src/llmgo/server/static/style.css",
+    "configs/demo.yaml",
+    "docs/2026-10-18-latest-runs.md",
+    "tests/test_xiangqi.py",
+    "tests/test_server.py",
+    "tests/test_games.py",
+    "tests/test_arena.py",
+    "tests/test_observed_summary.py",
+    "tests/test_harness_ui.js",
+    ".agents/skills/rsi-rl-review/SKILL.md",
+    ".gitattributes"
+  ],
+  "replaced": [
+    "plan.md",
+    "src/llmgo/server/app.py",
+    "src/llmgo/runtime/prompt.py",
+    "src/llmgo/runtime/player.py"
+  ],
+  "removed_orphan_bytecode": 36
+}

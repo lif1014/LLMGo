@@ -1,25 +1,16 @@
 ---
 name: rsi-submit
-description: 在 RSI 工作目录准备可冻结的 skills 或 RL 实验，交由 Controller 提交并在重启时核对已有任务。
+description: 为自主棋力研究登记任意计算命令、模型或Harness提交和多难度测试，交给Executor管理任务。
 ---
 
-默认路径是本轮 workspace 中的 `skills.json`、`curriculum.jsonl` 和 `proposal.json`。
-读取 `docs/rsi-operations.md` 的 proposal 字段，再准备 `skills`、`rl` 或 `rl_and_skills` 候选。
-不直接编辑既有权重、evaluator、基础 prompt、协议、已冻结源码或其他候选。
+workspace 是自由研究副本：训练方法、reward、数据、Harness、prompt、工具、skills 与触发条件均可改。当前 PPO/LC0 是可选起点，不是方法限制。不能修改受保护正式评测、对手、裁判及历史正式结果。读取 docs/rsi-operations.md 的 proposal 格式。
 
-Controller 正在调用你时，它持有 campaign 写锁。不要从该 turn 调用 `prepare`、`step`、`submit` 或 `run`，也不要重复 `cctl job create`。
-完成后按指定JSON返回`ready`和proposal绝对路径；Controller负责冻结与研究验收，专用Executor负责提交、轮询和产物交接。等待任务不需要Meta-Agent反复发shell指令；原始查询与平台日志不写进研究Memory。`needs_input`只用于具体缺失项。
+proposal.json 可登记任意 argv 任务；每项通过独立 job 执行，支持 {python}/{candidate}/{output}/{model}/{source} 占位。训练、标注、转换都可以登记；向 LLMGO_OUTPUT 写日志/结果，模型导出后写 submission.json 的 model_path。源码提交后快照不再改变；要改代码，在下一个研究 workspace 改。需要任务中生成 Harness 时把代码产物交回 Meta-Agent，再纳入下一次提交。
 
-独立运维场景、Controller 未运行时，可以：
+正式最终测试固定 L1–L8，每档20局。evaluation 可选择 levels 和 tracks 做探针；只有覆盖八档的 player 结果能更新实测最佳。model 对照使用固定参考 Harness，单独计分。资源边界和成功 cctl 格式见 docs/rsi-submission-and-files.md。
 
-```bash
-python3 /user/lyh4170/LLMGo!/scripts/rsi.py preview CAMPAIGN
-python3 /user/lyh4170/LLMGo!/scripts/rsi.py submit CAMPAIGN
-python3 /user/lyh4170/LLMGo!/scripts/rsi.py run CAMPAIGN
-```
+Controller 调用你时持有 campaign 写锁，避免在该 turn 递归运行 prepare/step/run；完成研究后返回 ready 和 proposal 绝对路径，由 Controller 快照，Executor 提交/轮询/收集。也允许自行提交独立研究任务，但应登记任务 ID、输出与结论，避免重提；常规任务建议走 Executor 以免轮询占用上下文。
 
-提交响应不确定时，保留 `submission.json`，按 description 查自己的任务并对账；查不到也不能盲目重提。平台失败须先确认原任务终止，再 `resume-failed`，保留原始失败产物。不要删锁文件来绕过仍存活的进程。
+提交响应不确定时保留 intent、按 description 查询自己的任务并对账；不要盲目重提。只用 beijing/model-autosft/NORMAL，devspace 0 GPU，只写 /user/lyh4170，不停止他人任务。需要原生操作时读同级 cctl/SKILL.md。
 
-需要任务诊断时先读`rsi-executor/SKILL.md`和短report；`external`模式的独立Executor可在Controller持锁时工作，不应再开启第二个提交循环。
-
-资源边界、已成功任务样例和日志参数见 `docs/rsi-submission-and-files.md`；需原生 cctl 时再读同级 `cctl/SKILL.md`。
+环境互不干扰：使用本RSI专用环境，若实验需要不同依赖，另建自己的实验venv/cache；不升级系统Python或其他task的环境，也不原地改正在被任务使用的共享环境。中科大镜像为 https://mirrors.ustc.edu.cn/pypi/simple。

@@ -1,8 +1,9 @@
-# Add to a Qwen3.5-compatible CUDA/PyTorch/vLLM image; do not replace its CUDA stack blindly.
-# Remote GPU compatibility is still to be verified and frozen in an image/lockfile.
+# Base: share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb
+# bootstrap_worker.py pins the image's existing torch/CUDA/vLLM/tokenizers.
 -r requirements-rsi-control.txt
-transformers>=5.2,<6
+# Qwen3.5 requires the 5.x architecture; image Transformers 4.57.6 is insufficient.
+transformers==5.2.0
 peft>=0.18,<1
 accelerate>=1.12,<2
 safetensors>=0.6,<1
-# Native HF PPO uses a frozen offline Lc0 critic; no verl/GRPO dependency.
+# Existing HF PPO is optional; Meta-Agent may add other trainers, including verl.

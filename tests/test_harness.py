@@ -168,81 +168,8 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(sum(1 for event in events if event["type"] == "position" and event.get("last_move")), 2)
 
 
-class ServerHarnessTests(unittest.TestCase):
-    def test_xiangqi_is_rejected(self):
-        import httpx
-        from llmgo.server.app import app
-        async def probe():
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-                return await client.post("/api/games", json={"backend": "harness", "game": "xiangqi", "max_plies": 1})
-        self.assertEqual(asyncio.run(probe()).status_code, 400)
-
-    def test_chess_game_continues_when_vllm_is_down(self):
-        import httpx
-        from unittest.mock import patch
-        import llmgo.server.app as server
-        async def down(*args, **kwargs):
-            return AskResult("", 0, error="test connection failure")
-        async def probe():
-            with tempfile.TemporaryDirectory() as folder, patch.object(server, 'RUNS', Path(folder)), patch('llmgo.harness.player.VllmAsker.stream', down):
-                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as client:
-                    response = await client.post('/api/games', json={'backend':'harness','game':'chess','opponent':'model','max_plies':2,'max_tokens':64})
-                    self.assertEqual(response.status_code, 200, response.text)
-                    game = server.hub.games[response.json()['id']]
-                    await game.task
-                    data = (await client.get(f'/api/games/{game.id}/events')).json()
-                    self.assertEqual(game.summary['random_moves'], 2)
-                    self.assertGreater(game.summary['request_errors'], 0)
-                    self.assertTrue(any(e['type'] == 'model_request' and e['status'] == 'finished' for e in data['events']))
-                    self.assertTrue(any(e['type'] == 'fallback' for e in data['events']))
-                    self.assertEqual((await client.get('/api/harness')).status_code, 200)
-        asyncio.run(probe())
 
 
-class EvalScriptTests(unittest.TestCase):
-    def test_script_refuses_without_gpu_or_url(self):
-        import importlib.util
-        import os
-        import subprocess
-        import sys
-
-        script = Path(__file__).resolve().parents[1] / "scripts" / "eval_harness.py"
-        loaded = importlib.util.spec_from_file_location("eval_harness", script)
-        module = importlib.util.module_from_spec(loaded)
-        assert loaded.loader is not None
-        loaded.loader.exec_module(module)
-        if module.has_gpu():
-            self.skipTest("this machine has a GPU")
-        completed = subprocess.run(
-            [sys.executable, str(script), "--protocol", str(script.parents[1].parent / "PostTrainBench" / "protocol.json"), "--output", str(Path(tempfile.gettempdir()) / "llmgo-test-probe" / "metrics.json")],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
-        )
-        self.assertEqual(completed.returncode, 1, completed.stderr)
-        self.assertTrue("沒有 GPU" in completed.stderr or "引擎不能執行" in completed.stderr)
-
-    def test_eight_gpus_cover_ten_games(self):
-        import importlib.util
-
-        script = Path(__file__).resolve().parents[1] / "scripts" / "eval_harness.py"
-        loaded = importlib.util.spec_from_file_location("eval_harness_jobs", script)
-        module = importlib.util.module_from_spec(loaded)
-        assert loaded.loader is not None
-        loaded.loader.exec_module(module)
-        ids = module.choose_gpu_ids([str(i) for i in range(8)], games=10, requested=None)
-        self.assertEqual(ids, [str(i) for i in range(8)])
-        seats = ["white"] * 5 + ["black"] * 5
-        urls = [f"http://127.0.0.1:{8000 + i}/v1" for i in range(len(ids))]
-        jobs = module.assign_jobs(seats, urls)
-        counts = {}
-        for job in jobs:
-            counts[job["url"]] = counts.get(job["url"], 0) + 1
-        self.assertEqual(sorted(counts.values()), [1, 1, 1, 1, 1, 1, 2, 2])
-        self.assertEqual(module.parse_gpu_list("GPU 0: A100\nGPU 3: A100\n"), ["0", "3"])
-        self.assertEqual(module.choose_gpu_ids(ids, games=2, requested=None), ["0", "1"])
-        with self.assertRaises(ValueError):
-            module.choose_gpu_ids(["0", "1"], games=10, requested=8)
 
 
 if __name__ == "__main__":

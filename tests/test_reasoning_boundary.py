@@ -1,6 +1,7 @@
 """Original GPU SSE replay plus strict boundary and early-stream regressions."""
 import asyncio
 import json
+import gzip
 from pathlib import Path
 
 import httpx
@@ -35,42 +36,40 @@ def test_full_latest_gpu_responses_recover_all_ten_completed_answers(tmp_path):
     path = tokenizer_file(tmp_path, {'</think>':248069, '<think>':248068, '<|im_end|>':248046})
     async def replay():
         accepted, rejected = [], []
-        for name in RUNS:
-            with (ROOT/'runs/harness_runs'/name/'events.jsonl').open() as handle:
-                for line in handle:
-                    event = json.loads(line)
-                    if event['type'] != 'model_request' or event.get('status') != 'finished':
-                        continue
-                    raw = event['raw_response'].encode()
-                    def respond(request):
-                        return httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Body(raw))
-                    asker = VllmAsker('http://recorded/v1','Qwen3.5-4B',tokenizer_path=path,
-                                      transport=httpx.MockTransport(respond))
-                    changes = []
-                    async def emit(change): changes.append(change)
-                    result = await asker.stream(event['prompt'],event['max_tokens'],emit)
-                    assert result.raw_response == event['raw_response']
-                    move = parse_move(result.text,set(event['allowed_choices'])) if not result.error else None
-                    if event['finish_reason'] == 'stop':
-                        assert move and result.normalization_error is None and result.boundary_source == 'token_ids'
-                        content = ''
-                        for change in changes:
-                            if change['channel'] == 'content':
-                                content = change['text'] if change.get('replace') else content + change['text']
-                        assert content.strip() == move
-                        accepted.append((name,event['request_id'],move))
-                        if len(accepted) == 1:
-                            trace = []
-                            async def record(item): trace.append(item)
-                            decision = await choose_move(chess.Board(),[],asker,record,seat='white')
-                            assert decision.source == 'model' and decision.uci == move
-                            assert decision.diagnostics['request_count'] == 1
-                            assert not any(e['type']=='fallback' for e in trace)
-                            finished = next(e for e in trace if e['type']=='model_request' and e['status']=='finished')
-                            assert finished['accepted'] and finished['boundary_source']=='token_ids'
-                    else:
-                        assert result.error and move is None and result.normalization_error == 'incomplete_thinking'
-                        rejected.append((name,event['request_id']))
+        with gzip.open(ROOT/'tests/fixtures/qwen_stream_boundaries.json.gz','rt',encoding='utf-8') as handle:
+            cases=json.load(handle)['cases']
+        for event in cases:
+            name=event['source_run']
+            raw = event['raw_response'].encode()
+            def respond(request):
+                return httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Body(raw))
+            asker = VllmAsker('http://recorded/v1','Qwen3.5-4B',tokenizer_path=path,
+                              transport=httpx.MockTransport(respond))
+            changes = []
+            async def emit(change): changes.append(change)
+            result = await asker.stream(event['prompt'],event['max_tokens'],emit)
+            assert result.raw_response == event['raw_response']
+            move = parse_move(result.text,set(event['allowed_choices'])) if not result.error else None
+            if event['finish_reason'] == 'stop':
+                assert move and result.normalization_error is None and result.boundary_source == 'token_ids'
+                content = ''
+                for change in changes:
+                    if change['channel'] == 'content':
+                        content = change['text'] if change.get('replace') else content + change['text']
+                assert content.strip() == move
+                accepted.append((name,event['request_id'],move))
+                if len(accepted) == 1:
+                    trace = []
+                    async def record(item): trace.append(item)
+                    decision = await choose_move(chess.Board(),[],asker,record,seat='white')
+                    assert decision.source == 'model' and decision.uci == move
+                    assert decision.diagnostics['request_count'] == 1
+                    assert not any(e['type']=='fallback' for e in trace)
+                    finished = next(e for e in trace if e['type']=='model_request' and e['status']=='finished')
+                    assert finished['accepted'] and finished['boundary_source']=='token_ids'
+            else:
+                assert result.error and move is None and result.normalization_error == 'incomplete_thinking'
+                rejected.append((name,event['request_id']))
         assert len(accepted) == 10 and len(rejected) == 1
         assert rejected[0] == (RUNS[1],'4:white:2')
     asyncio.run(replay())

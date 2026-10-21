@@ -12,8 +12,8 @@ description: 在国际象棋 RSI 的任务交接或异常恢复时读取独立 E
 
 - `retrying`是观察失败，原task可能仍在运行；不重提、不自动取消。
 - `submission_uncertain`保留intent并对账，不能盲目创建第二份。
-- `collected`仅代表平台与产物核验通过；扶正/晋级仍由Controller按正式比赛结果决定。
-- `artifact_invalid`不能当成功评测；真实失败经确认终止及解决原因后才显式`resume-failed`。
+- `collected`仅代表平台与产物核验通过；是否更新实测最佳由完整多难度比赛结果决定，研究可继续。
+- `artifact_invalid`不能当成功评测；基线基础设施失败可确认终止后`resume-failed`；候选失败会交回Meta-Agent，下一提案明确恢复路径。
 
 独立`external`模式下，运维进程运行`executor run CAMPAIGN`；Controller只读其报告。`embedded`模式由单个`run CAMPAIGN`托管同一组件。不要在Meta-Agent turn内启动第二个Controller或循环执行step。
 

@@ -5,14 +5,14 @@
   <title>LLMGo! RSI</title><link rel="stylesheet" href="/static/rsi.css">
 </head>
 <body>
-  <header><a href="/">对局回放</a><h1>国际象棋 RSI</h1>
+  <header><a href="/rsi">研究面板</a><h1>国际象棋 RSI</h1>
     <label>研究 <select id="campaign"></select></label><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
   <p id="overview">上传框架并创建 campaign 后，这里显示远端研究状态。</p>
   <div class="status-grid">
     <section><h2>强 Agent 状态</h2><pre id="meta-status">尚未读取</pre><p id="meta-usage" class="muted">等待服务返回Token用量</p></section>
     <section><h2>Executor 状态</h2><pre id="executor-state">尚未读取</pre></section>
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
-    <section><h2>研究与验收</h2><pre id="research-state">尚未读取</pre></section>
+    <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
   <section class="monitor"><h2>Executor · 提交、轮询与收集</h2>
     <div class="toolbar"><label>事件 <select id="executor-filter"><option value="all">全部</option><option value="poll">轮询</option><option value="command">cctl命令</option><option value="error">异常</option></select></label>
@@ -34,7 +34,8 @@
       <details><summary>工具、请求与后备诊断</summary><div id="student-events" class="feed"></div></details>
     </section>
     <section><h2>Memory · 假设与结论</h2><div id="memory" class="feed"></div></section>
-    <section><h2>候选的实测表现</h2><p>最近200条评测；纵轴为同级得分率，颜色区分对手等级。完整历史仍保存在原始记录。</p>
+    <section><h2>跨难度实测表现</h2><p>固定 L1–L8，每档20局；完整玩家和模型对照分开显示。最低档沿用原设置，无通关或自动升档。部分测试不计完整总分；20局存在采样波动，成绩不是校准Elo。</p>
+      <div id="matrix" class="matrix" aria-label="候选与难度成成绩矩阵"></div><p>最近200条单档评测；纵轴为得分率，颜色区分难度。原始历史完整保留。</p>
       <svg id="curve" viewBox="0 0 640 260" role="img" aria-label="候选表现曲线"></svg>
       <p id="cost"></p><div id="results" class="feed"></div></section>
   </main>

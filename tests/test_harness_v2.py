@@ -213,25 +213,6 @@ def test_tool_failure_is_not_hidden_by_legal_fallback():
     assert 'broken candidate tool' in failure['error'] and failure['status']=='finished'
 
 
-def test_external_match_incremental_events_keep_partial_writes_out(tmp_path):
-    import llmgo.server.app as server
-    folder=tmp_path/'harness_runs'/'external-test';folder.mkdir(parents=True)
-    (folder/'config.json').write_text(json.dumps({'model_seat':'white','model':'Qwen3.5-4B'}))
-    first={'type':'model_request','status':'finished','seat':'white','stage':'tool','raw_response':'full raw response','usage':{'completion_tokens':42}}
-    second={'type':'tool_call','status':'finished','seat':'white','tool':'preview','result':['full tool output']}
-    events=folder/'events.jsonl';events.write_text(json.dumps(first)+'\n'+json.dumps(second)+'\n'+ '{"type":')
-    async def probe():
-        with patch.object(server,'RUNS',tmp_path):
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app),base_url='http://test') as client:
-                info=(await client.get('/api/games/external-test')).json()
-                assert info['external'] and info['live'] and info['model_seat']=='white'
-                data=(await client.get('/api/games/external-test/events?after=1')).json()
-                assert data['cursor']==2 and len(data['events'])==1 and data['events'][0]['result']==['full tool output']
-                assert (await client.get('/api/games/external-test/events?after=-1')).status_code==400
-                assert (await client.get('/api/games',params={})).status_code in {404,405}
-                rejected=await client.post('/api/games',json={'game':'chess','backend':'harness','opponent':'model','max_plies':201})
-                assert rejected.status_code==400
-    asyncio.run(probe())
 
 
 def test_malformed_budget_is_rejected_before_starting_a_game():
@@ -251,36 +232,6 @@ def test_engine_failure_is_not_a_model_win_or_partial_score(tmp_path):
     async def emit(event):pass
     summary=asyncio.run(HarnessRunner(EngineSeat(BrokenOpponent()),HarnessSeat('black',ask),TrajectoryStore(tmp_path/'game'),max_plies=2).run(emit))
     assert summary['result']=='aborted' and summary['result_reason']=='engine_error'
-    spec=importlib.util.spec_from_file_location('harness_eval_errors',ROOT/'scripts/eval_harness.py')
-    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    with pytest.raises(RuntimeError,match='no partial batch score'):
-        module.collect_metrics({},[{'game_id':'broken','result':summary['result'],'result_reason':summary['result_reason'],'model_seat':'black'}],None)
-
-
-def test_evaluation_entry_reuses_server_and_persists_batch_metrics(tmp_path):
-    import sys
-    spec = importlib.util.spec_from_file_location('harness_eval_entry', ROOT/'scripts/eval_harness.py')
-    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-    protocol = json.loads((ROOT.parent/'PostTrainBench/protocol.json').read_text())
-    protocol['engine'] = str(ROOT/'engines/fairy-stockfish')
-    protocol_path = tmp_path/'protocol.json'; protocol_path.write_text(json.dumps(protocol))
-    output = tmp_path/'metrics.json'
-    async def play(settings, urls, engine, runs, white, black):
-        assert urls == ['http://127.0.0.1:8001/v1'] and (white, black) == (1, 1)
-        assert runs == tmp_path/'harness_runs' and engine.is_file()
-        assert settings['enable_thinking'] and settings['max_plies'] == 200
-        assert settings['harness_artifact']['sha256'] == module.harness_manifest()['sha256']
-        return [{'game_id': seat, 'model_seat': seat, 'result': result, 'random_moves': random,
-                 'diagnostics': {'model_turns': 2, 'request_count': 4, 'completion_tokens': 80,
-                                 'fallback_reasons': {'invalid_choice': 1} if random else {}}}
-                for seat, result, random in [('white', 'white_win', 0), ('black', 'draw', 1)]]
-    argv = ['eval_harness.py', '--protocol', str(protocol_path), '--output', str(output),
-            '--base-url', 'http://127.0.0.1:8001/v1/', '--games', '2', '--batch', 'test-batch']
-    with patch.object(sys, 'argv', argv), patch.object(module, '_run_games', side_effect=play), \
-         patch.object(module, 'visible_gpu_ids', side_effect=AssertionError('Existing server needs no GPU discovery')):
-        assert module.main() == 0
-    metrics = json.loads(output.read_text())
-    assert metrics['primary_score'] == .75 and metrics['random_rate'] == .25
-    assert metrics['request_count'] == 8 and metrics['completion_tokens'] == 160
-    assert metrics['fallback_reasons'] == {'invalid_choice': 1}
-    assert json.loads((tmp_path/'harness_batches/test-batch.json').read_text()) == metrics
+    from llmgo.rsi.ladder import batch_stats
+    with pytest.raises(ValueError,match="Incomplete/aborted"):
+        batch_stats({'games':[{'game_id':str(i),'result':summary['result'],'result_reason':summary['result_reason'],'model_seat':'black'} for i in range(20)]})

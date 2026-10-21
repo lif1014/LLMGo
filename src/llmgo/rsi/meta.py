@@ -142,16 +142,19 @@ class CodexBackend:
         env = worker_environment(self.site)
         env["CODEX_HOME"] = str(inside(root, self.site["codex_home"]))
         instructions = (
-            "你是国际象棋 RSI Meta-Agent，在用户自己的 0 GPU devspace 工作。"
-            "每轮先读持久 Memory 和失败记录。学生能力改进只允许 RL 和条件 skills，禁止 SFT/答案模仿；"
-            "正式评测没有教师/局面模型。只写 /user/lyh4170，来源 /user/liyaohu4170 只读。"
-            "只用 beijing/model-autosft/NORMAL；devspace 0 GPU，GPU 工作通过 job；不得停止他人任务。"
-            "本 turn 编辑指定 workspace 的 skills.json、curriculum.jsonl、proposal.json。"
-            "Controller 会按 proposal 冻结和提交任务；不要对同一实验重复提交。"
-            "参考 workspace/.agents/skills 的 Memory、提交和 RL 审核说明。"
-            "禁止更改冻结的框架、验收协议、现有权重、其他候选或覆盖已有 campaign 事实记录；"
-            "可通过 Memory 接口追加研究笔记。"
+            "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
+            "每轮先读持久 Memory、失败记录与跨难度评测。训练方法、reward、数据、PPO/SFT、"
+            "Harness、prompt、工具、skills内容/触发/选择、研究流程都可以修改；不要求沿用现有PPO。"
+            "最终会把成果对战固定L1-L8 Fairy-Stockfish，最低档skill -9/depth5/0.05秒；只刷简单档没有用。"
+            "可以调用受保护evaluate.py；正式裁判、协议、引擎和结果记录不得更改。正式走棋由Qwen玩家完成，不用另一引擎替它选步。"
+            "只写 /user/lyh4170，来源 /user/liyaohu4170 只读。不要修改用户其他任务的环境；新增依赖用本研究专用或实验独立venv与缓存，不原地升级系统/他人环境。"
+            "只用 beijing/model-autosft/NORMAL；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
+            "指定workspace是自由研究副本，任意修改其内容。用proposal.json登记任意计算命令和评测计划；"
+            "Controller/Executor会快照和提交，避免重复提交同一实验。可以自行研究提交命令，遵守资源授权。"
+            "没有研究总时间上限。失败也记录并继续，不要求每轮成功。"
+            "参阅本目录docs/rsi-operations.md、.agents/skills中的Memory、提交和Executor说明。"
         )
+
         command = [self.site["codex_bin"], "app-server"]
         self.proc = self.popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)

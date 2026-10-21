@@ -3,8 +3,8 @@ const el=id=>document.getElementById(id), freshStream=()=>({cursor:null,before:n
 const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set(),cards:new Map(),streams:{research:freshStream(),executor:freshStream()},
   evaluations:[],totalHours:0,evaluationRefresh:0,job:"",autoJob:true,game:"",autoGame:true,gameCursor:0,channels:{reasoning:"",content:""},raw:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
-const labels={BASELINE:"测量现任基线",WAITING:"等待计算任务",LEVEL_CHECK:"检查难度晋级",PLANNING:"强Agent研究与规划",TRAIN:"准备训练",
-  CANDIDATE_EVAL:"准备候选评测",REVIEW:"比较候选与现任",FAILED:"任务失败，保留证据",NEEDS_INPUT:"等待缺失项处理"};
+const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
+  EVALUATING:"固定评测",NEEDS_INPUT:"等待缺失项处理"};
 const show=v=>v==null?"未提供":String(v);
 const date=v=>{if(v==null)return "未记录";const d=new Date(typeof v==="number"?v*1000:v);return Number.isNaN(d.getTime())?show(v):d.toLocaleString();};
 const api=(suffix="")=>"/api/rsi/campaigns/"+encodeURIComponent(state.campaign)+suffix;
@@ -83,27 +83,43 @@ function curve(){
   [0,.5,1].forEach(y=>{draw("line",{x1:50,x2:620,y1:225-y*200,y2:225-y*200,stroke:"#d4dfd7"});draw("text",{x:4,y:230-y*200,"font-size":12}).textContent=y*100+"%";});
   state.evaluations.forEach((e,i)=>{const x=state.totalHours?50+550*(e.worker_gpu_hours||0)/state.totalHours:50+550*i/Math.max(1,state.evaluations.length-1);
     const dot=draw("circle",{cx:x,cy:225-e.statistics.score*200,r:5,fill:"hsl("+((e.level*67)%360)+" 55% 40%)"}),t=document.createElementNS(ns,"title");
-    t.textContent=e.candidate_id+" L"+e.level+": "+e.statistics.score;dot.append(t);});
+    t.textContent=e.candidate_id+" · "+(e.track||"player")+" L"+e.level+": "+e.statistics.score;dot.append(t);});
   el("cost").textContent="已收集成功任务的Worker分配时长估算 "+state.totalHours.toFixed(3)+" GPU小时；不含排队/启动，不等于活跃计算或FLOPs。";
 }
 function results(rows){
   const signature=JSON.stringify(rows);if(el("results").dataset.signature===signature)return;
   el("results").dataset.signature=signature;clearFeed("results");
-  for(const e of rows.slice(-80))detail("results",(e.candidate_id||"候选")+" · L"+show(e.level)+" · 得分率 "+
+  matrix(rows);
+  for(const e of rows.slice(-80))detail("results",(e.candidate_id||"候选")+" · "+(e.track=== "model"?"模型对照":"完整玩家")+" · L"+show(e.level)+" · 得分率 "+
     (typeof e.statistics?.score==="number"?(e.statistics.score*100).toFixed(1)+"%":"未提供"),e);
+}
+function matrix(rows){
+  const target=el("matrix");target.replaceChildren();
+  const groups=new Map();
+  for(const e of rows){const key=e.candidate_id+":"+(e.track||"player");if(!groups.has(key))groups.set(key,{id:e.candidate_id,track:e.track||"player",levels:{}});groups.get(key).levels[e.level]=e;}
+  const table=document.createElement("table"),head=document.createElement("tr");
+  for(const title of ["候选 / 评测",...Array.from({length:8},(_,i)=>"L"+(i+1)),"完整均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
+  for(const group of [...groups.values()].slice(-20)){
+    const row=document.createElement("tr"),name=document.createElement("td");name.textContent=group.id+" / "+(group.track==="model"?"模型对照":"完整玩家");row.append(name);
+    let total=0,count=0;
+    for(let level=1;level<=8;level++){const cell=document.createElement("td"),r=group.levels[level],v=r?.statistics?.score;
+      cell.textContent=typeof v==="number"?(v*100).toFixed(1)+"%":"—";
+      if(typeof v==="number"){total+=v;count++;cell.title="胜/和/负 "+[r.statistics.wins,r.statistics.draws,r.statistics.losses].map(show).join("/")+" · 20局";}row.append(cell);}
+    const score=document.createElement("td");score.textContent=count===8?(total/8*100).toFixed(1)+"%":"部分测试 "+count+"/8";row.append(score);table.append(row);
+  }target.append(table);
 }
 function renderStatus(s,x){
   const m=s.meta||{},j=s.active_job||{},r=x.report||{},h=x.heartbeat||{};
   if(m.token_usage)usage(m.token_usage);
-  el("overview").textContent=(labels[s.phase]||s.phase)+" · incumbent "+(s.incumbent?.id||"—")+" · 当前L"+s.current_level+" / 已通关L"+s.highest_cleared_level+" · 第"+s.round+"轮";
+  el("overview").textContent=(labels[s.phase]||s.phase)+" · 工作版本 "+(s.working?.id||s.incumbent?.id||"—")+" · 实测最佳 "+(s.best?.candidate_id||"—")+" · 第"+s.round+"轮";
   el("meta-status").textContent="最近记录状态："+show(m.status)+"\n线程："+show(m.thread_id)+"\n轮次："+show(m.turn_id)+"\n工作目录："+show(m.cwd)+
     "\n最近状态时间："+date(m.updated)+"\n记录的进程："+(m.process?m.process.host+" / PID "+m.process.pid:"当前无已记录子进程");
   const left=r.next_check_at?Math.ceil(r.next_check_at-(s.server_time||Date.now()/1000)):null;
   el("executor-state").textContent="模式："+(x.mode||"embedded")+"\n任务："+(j.id||r.job_id||"—")+" / 平台ID "+show(r.task_id)+
     "\n平台："+show(r.platform_status)+" / 交接："+show(r.status)+"\n已检查："+show(r.checks)+"次 · 间隔 "+show(r.interval_seconds)+"秒\n下次检查："+date(r.next_check_at)+
     (left===null?"":"（"+(left>0?"约"+left+"秒后":"已到计划时间，等执行器处理")+"）")+"\n"+(r.summary||"等待Executor报告")+"\n最近报告："+date(r.updated)+"\n独立服务心跳："+date(h.updated);
-  el("research-state").textContent="阶段："+(labels[s.phase]||s.phase)+"\n任务数："+s.job_count+" · 尝试数："+s.attempt_count+" · 扶正数："+s.accepted_count+
-    "\n当前任务职责："+(j.role||"—")+" / 候选 "+(j.candidate_id||"—")+"\n更新："+date(s.updated)+(s.failure?"\n失败："+JSON.stringify(s.failure):"")+(s.needs_input?"\n待处理："+s.needs_input:"");
+  el("research-state").textContent="阶段："+(labels[s.phase]||s.phase)+"\n任务数："+s.job_count+" · 尝试数："+s.attempt_count+" · 完整评测新最佳："+s.accepted_count+
+    "\n研究目标："+(s.candidate?.hypothesis||"由Meta-Agent自主决定")+"\n最佳跨难度得分："+(typeof s.best?.score==="number"?(s.best.score*100).toFixed(1)+"%":"尚无完整测试")+"\n推荐版本："+(s.recommended?.candidate_id||"尚未指定")+"\n当前任务职责："+(j.role||"—")+" / 候选 "+(j.candidate_id||"—")+"\n更新："+date(s.updated)+(s.failure?"\n失败："+JSON.stringify(s.failure):"")+(s.needs_input?"\n待处理："+s.needs_input:"");
 }
 function options(id,rows,selected,label,value){
   const select=el(id),signature=JSON.stringify(rows.map(r=>[value(r),label(r)]));
@@ -132,10 +148,10 @@ async function student(generation){
   if(generation!==state.generation||chosen!==state.game)return;state.gameCursor=data.cursor;
   for(const row of data.events){const e=row.event;
     if(e.type==="position"){board(e.fen);el("game-state").textContent="轮到"+e.side+" · "+(e.last_move?.uci||"初始局面");}
-    if(e.type==="model_request"&&e.status==="started"){state.channels={reasoning:"",content:""};el("thinking").textContent="";}
+    if(["model_request","request"].includes(e.type)&&e.status==="started"){state.channels={reasoning:"",content:""};el("thinking").textContent="";}
     if(e.type==="token"){const c=e.channel==="reasoning"?"reasoning":"content";state.channels[c]=(e.replace?e.text:state.channels[c]+e.text).slice(-20000);el("thinking").textContent=state.channels.reasoning+"\n"+state.channels.content;}
-    if(e.type==="model_request"&&e.status==="finished")el("thinking").textContent=(e.output||(e.reasoning||"")+"\n"+(e.text||"")).slice(-20000);
-    if(["turn_started","choice","tool_call","model_request","fallback","game_finished","engine_search"].includes(e.type)||e.display_truncated)
+    if(["model_request","request"].includes(e.type)&&e.status==="finished")el("thinking").textContent=(e.output||(e.reasoning||"")+"\n"+(e.text||"")).slice(-20000);
+    if(["turn_started","choice","tool_call","model_request","request","fallback","game_finished","engine_search","candidate_event"].includes(e.type)||e.display_truncated)
       detail("student-events",e.type+" "+(e.status||"")+" "+(e.tool||e.reason||e.finish_reason||""),e,{...row,path:chosen+"/events.jsonl"});}
 }
 async function refresh(){

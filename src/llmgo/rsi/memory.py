@@ -155,8 +155,14 @@ class MemoryStore:
 
     def context(self):
         state = self.state()
-        summary = {k: state[k] for k in ("campaign_id", "phase", "round", "current_level",
-                                         "highest_cleared_level", "incumbent", "acceptance")}
+        summary = {k: state.get(k) for k in ("campaign_id", "phase", "round", "working", "recommended", "incumbent")}
+        best = state.get("best")
+        summary["best"] = {"candidate_id":best["candidate"]["id"], "score":best["score"], "panel":best["panel"]} if best else None
+        for key in ("working", "incumbent"):
+            item = state.get(key) or {}
+            summary[key] = {k:item.get(k) for k in ("id", "model_path", "model_sha256", "hypothesis")}
+        summary["protected_source"] = {k:state["source"][k] for k in ("root", "sha256")}
+        summary["evaluation_objective"] = "L1-L8, 20 balanced games each; partial tests never update best"
         summary["active_job"] = state["jobs"].get(state.get("active_job"))
         summary["recent_attempts"] = state["attempts"][-3:]
         summary["attempt_count"] = len(state["attempts"])

@@ -14,7 +14,7 @@
   "priority": "NORMAL",
   "project": "rsi",
   "billing_account_id": "N00069",
-  "image": "b-side/vllm/vllm-openai:v0.23.0-x86_64-cu129-ubuntu2404",
+  "image": "share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb",
   "devspace_id": 1309690,
   "filesystem_id": 385,
   "base_model": "/user/liyaohu4170/models/Qwen3.5-4B",
@@ -28,5 +28,8 @@
   "meta_model": null,
   "poll_seconds": 30,
   "executor_mode": "embedded",
-  "executor_max_poll_seconds": 120
+  "executor_max_poll_seconds": 120,
+  "worker_venv": "/user/lyh4170/venvs/llmgo-rsi-20261022",
+  "inference_python": "/user/lyh4170/venvs/llmgo-rsi-20261022-inference/bin/python",
+  "runtime_root": "/user/lyh4170/llmgo-rsi-runtime-20261022"
 }

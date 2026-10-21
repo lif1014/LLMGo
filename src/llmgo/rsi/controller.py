@@ -1,21 +1,16 @@
-"""Persistent experiment state machine. All expensive work is a GPU job."""
+"""Persistent, method-agnostic research coordination with an external evaluator."""
 from __future__ import annotations
-
-import json
 import shutil
 import time
 from pathlib import Path
-
-from llmgo.harness.skills import validate_cards
 from llmgo.remote.lifecycle import JobExecutor
-from llmgo.training.ppo import training_config
-from llmgo.training.rewards import validate_reward
-from llmgo.training.rollout import load_curriculum, seed_curriculum, write_curriculum
 from .artifacts import source_snapshot, verify_source, write_manifest
-from .contracts import SCHEMA, REPO, atomic_json, digest, file_hash, identifier, inside, protocol, read_json, utc
+from .contracts import SCHEMA, atomic_json, digest, file_hash, identifier, inside, model_identity, protocol, read_json, utc
 from .evaluator import engine_identity
-from .ladder import batch_stats, compare, mastered, opponent
+from .ladder import evaluation_plan, panel_summary, opponent
 from .memory import CampaignLocked, MemoryStore
+
+RESEARCH_VERSION = "autonomous-chess-v2"
 
 
 class Controller:
@@ -23,6 +18,8 @@ class Controller:
         self.root = Path(root)
         self.memory = MemoryStore(self.root)
         self.state = self.memory.state()
+        if self.state.get("research_version") != RESEARCH_VERSION:
+            raise ValueError("Legacy ladder campaign: retain it read-only and init a new autonomous campaign")
         self.site = self.state["site"]
         inside(self.site["user_root"], self.root)
         self.lifecycle = JobExecutor(self.root, self.site, transport=executor)
@@ -30,7 +27,6 @@ class Controller:
 
     @property
     def executor(self):
-        """Transport injection compatibility; research code consumes reports."""
         return self.lifecycle.transport
 
     @executor.setter
@@ -40,29 +36,29 @@ class Controller:
     @classmethod
     def create(cls, site, campaign_id, *, repo=None):
         campaign_id = identifier(campaign_id)
-        root = inside(site["user_root"], Path(site["campaign_root"]) / campaign_id)
+        root = inside(site["user_root"], Path(site["campaign_root"])/campaign_id)
         if root.exists():
             raise FileExistsError("Campaign already exists; use run/status to resume")
-        root.mkdir(parents=True)
         repo = Path(repo or site["repo"])
-        source = source_snapshot(repo, root / "source")
-        cards = validate_cards(read_json(repo / "src/llmgo/harness/skills/cards.json"))
-        skills = root / "candidates/initial/skills.json"
-        atomic_json(skills, list(cards))
-        state = {
-            "schema_version": SCHEMA, "campaign_id": campaign_id, "created": utc(), "site": site,
-            "source": source, "phase": "BASELINE", "round": 0, "current_level": 1,
-            "highest_cleared_level": 0, "nodes_base": None, "active_job": None, "jobs": {},
-            "baselines": [], "candidate": None, "workspace": None, "attempts": [],
-            "incumbent": {"id": "initial", "model_path": site["base_model"], "model_sha256": None,
-                          "skills_path": str(skills), "skills_sha256": file_hash(skills)},
-            "acceptance": {"min_improvement": .05, "confidence": .95, "max_comparison_batches": 2},
-            "level_certificates": [], "meta_stalls": 0,
-        }
+        root.mkdir(parents=True)
+        source = source_snapshot(repo, root/"source")
+        # A reference harness is frozen once for the model-only control track.
+        initial_source = source_snapshot(repo, root/"candidates/initial/source")
+        cards = root/"candidates/initial/skills.json"
+        shutil.copy2(repo/"src/llmgo/harness/skills/cards.json", cards)
+        initial = {"id": "initial", "model_path": site["base_model"], "model_sha256": None,
+                   "source": initial_source, "skills_path": str(cards), "skills_sha256": file_hash(cards)}
+        state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
+                 "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
+                 "phase": "BASELINE", "round": 0, "active_job": None, "jobs": {},
+                 "candidate": None, "workspace": None, "attempts": [], "meta_stalls": 0,
+                 "initial": initial, "incumbent": initial.copy(), "working": initial.copy(),
+                 "best": None, "recommended": None, "candidate_step": 0, "evaluation_cursor": 0,
+                 "evaluation_plan": evaluation_plan(), "pending_evaluations": [], "baseline": []}
         memory = MemoryStore(root)
         memory.save_state(state)
         memory.append("campaign_created", {"campaign_id": campaign_id, "source": source["sha256"],
-                                           "constraints": "RL/skills only; 20 games; thinking; 200 plies; no runtime oracle"})
+            "objective": "Open research; fixed L1-L8 evaluation; 20 games per level; no mastery ladder"})
         return cls(root)
 
     def save(self):
@@ -74,43 +70,48 @@ class Controller:
             raise ValueError("Stored evaluation evidence changed")
         return read_json(ref["path"])
 
-    def _candidate(self):
-        return self.state["candidate"] or self.state["incumbent"]
-
-    def _new_job(self, kind, role, candidate, *, batch_index=0, level=None, comparison=None, resume_from=None):
-        level = level or self.state["current_level"]
-        spec = opponent(level, nodes_base=self.state["nodes_base"])
-        serial = len(self.state["jobs"]) + 1
-        job_id = f"j{serial:06d}"
-        folder = inside(self.site["user_root"], self.root / "jobs" / job_id)
-        payload = {
-            "schema_version": SCHEMA, "campaign_id": self.state["campaign_id"], "job_id": job_id,
-            "kind": kind, "role": role, "candidate_id": candidate["id"],
-            "site": self.site, "source": self.state["source"],
-            "output": str(folder / "output"), "model_path": candidate["model_path"],
-            "expected_model_sha256": candidate.get("model_sha256"),
-            "skills_path": candidate["skills_path"], "skills_sha256": candidate["skills_sha256"],
-        }
+    def _new_job(self, kind, role, candidate, *, level=1, track="player", command=None,
+                 batch_index=0, comparison=None, resume_from=None):
+        job_id = f"j{len(self.state['jobs'])+1:06d}"
+        folder = inside(self.site["user_root"], self.root/"jobs"/job_id)
+        payload = {"schema_version": SCHEMA, "campaign_id": self.state["campaign_id"], "job_id": job_id,
+                   "kind": kind, "role": role, "candidate_id": candidate["id"], "site": self.site,
+                   "source": self.state["source"], "candidate_source": candidate["source"],
+                   "output": str(folder/"output"), "model_path": candidate["model_path"],
+                   "expected_model_sha256": candidate.get("model_sha256"),
+                   "skills_path": candidate["skills_path"], "skills_sha256": candidate["skills_sha256"]}
         if kind == "evaluate":
-            seed_schedule = comparison["seed_schedule"] if comparison else [100000*level+100*batch_index+i for i in range(10)]
-            comparison_id = comparison["comparison_id"] if comparison else f"{self.state['incumbent']['id']}:L{level}:b{batch_index}"
-            payload.update(protocol=protocol(spec, self.site["engine"]),
-                           engine_identity=self.engine_probe(self.site["engine"], spec),
-                           seed_schedule=seed_schedule, comparison_id=comparison_id)
-        else:
-            payload.update(training=candidate["training"], reward=candidate["reward"],
-                           curriculum_path=candidate["curriculum_path"],
-                           curriculum_sha256=candidate["curriculum_sha256"])
+            spec = opponent(level)
+            # A panel has matched schedules across candidates; repeats use a new batch index.
+            actual_engine = self.engine_probe(self.site["engine"], spec)
+            pin = {k:v for k,v in actual_engine.items() if k != "spec"}
+            if self.state.get("engine_pin") is not None and self.state["engine_pin"] != pin:
+                raise ValueError("Official opponent binary/NNUE identity changed since campaign baseline")
+            self.state["engine_pin"] = pin
+            payload.update(protocol=protocol(spec, self.site["engine"]), track=track, resources={"gpu_count":1},
+                engine_identity=actual_engine,
+                seed_schedule=[100000*level+100*batch_index+i for i in range(10)],
+                comparison_id=f"panel-v2:L{level}:b{batch_index}",
+                reference_source=self.state["initial"]["source"])
+        elif kind == "research":
+            payload["command"] = command
+            resources = command.get("resources", {})
+            if set(resources) - {"gpu_count", "cpu", "memory_gib"}:
+                raise ValueError("Unknown job resource field")
+            payload["resources"] = resources
             if resume_from:
                 payload["resume_from"] = str(inside(self.site["user_root"], resume_from))
-        manifest_path = folder / "manifest.json"
-        manifest = write_manifest(manifest_path, payload)
-        self.state["jobs"][job_id] = {"id": job_id, "manifest": str(manifest_path),
-                                      "sha256": manifest["sha256"], "role": role, "batch_index": batch_index,
-                                      "level": level, "candidate_id": candidate["id"], "status": "PREPARED"}
+        else:
+            raise ValueError("Use research jobs for arbitrary training/labeling/conversion")
+        path = folder/"manifest.json"
+        manifest = write_manifest(path, payload)
+        job = {"id": job_id, "manifest": str(path), "sha256": manifest["sha256"], "role": role,
+               "kind": kind, "batch_index": batch_index, "level": level if kind == "evaluate" else None,
+               "track": track if kind == "evaluate" else None, "candidate_id": candidate["id"], "status": "PREPARED"}
+        self.state["jobs"][job_id] = job
         self.state.update(active_job=job_id, phase="WAITING")
-        self.save()  # durable before the external submission
-        return self.state["jobs"][job_id]
+        self.save()
+        return job
 
     def _poll(self):
         job = self.state["jobs"][self.state["active_job"]]
@@ -118,283 +119,236 @@ class Controller:
             report = (self.lifecycle.report(job) if self.site.get("executor_mode") == "external"
                       else self.lifecycle.advance(job))
         except CampaignLocked:
-            return {"status": "waiting", "job_id": job["id"], "detail": "Executor is checking this campaign"}
+            return {"status": "waiting", "job_id": job["id"]}
         old = (job.get("task_id"), job["status"], job.get("executor_status"))
         job.update(task_id=report.get("task_id"), status=report.get("platform_status") or job["status"],
                    executor_status=report["status"], executor_report=report["report_path"])
-        changed = old != (job["task_id"], job["status"], job["executor_status"])
-        if changed:
-            # Only semantic transitions enter research Memory, not check counts,
-            # timestamps, shell output, or repeated Running/Queued observations.
+        if old != (job["task_id"], job["status"], job["executor_status"]):
             self.memory.append("executor_transition", {"job_id": job["id"], "task_id": job["task_id"],
                 "status": report["status"], "platform_status": job["status"], "report_path": report["report_path"]})
             self.save()
         if report["status"] == "submission_uncertain":
-            return {"status": "submission_uncertain", "job_id": job["id"], "detail": report["summary"],
-                    "report_path": report["report_path"]}
+            return {"status": "submission_uncertain", "report_path": report["report_path"]}
         if report["status"] == "artifact_invalid":
-            raise ValueError("Worker result identity/hash mismatch; see Executor report")
+            raise ValueError("Worker artifact identity/hash mismatch")
         if report["status"] == "failed":
-            self.state.update(phase="FAILED", failure={"job_id": job["id"], "task_id": job["task_id"],
-                                                     "status": job["status"], "executor_report": report["report_path"]})
-            self.memory.append("experiment_failed", self.state["failure"])
-            self.memory.handoff({"completed": [], "waiting": [], "next": "Inspect failure and resume-failed explicitly",
-                                 "failure": self.state["failure"]})
+            failure = {"job_id": job["id"], "task_id": job["task_id"], "report_path": report["report_path"]}
+            self.memory.append("experiment_failed", failure)
+            # Research failure is evidence for the next turn, not a permanent campaign stop.
+            self.state["failure"] = failure
+            if job["role"] == "baseline":
+                self.state.update(phase="NEEDS_INPUT", resume_phase="BASELINE", needs_input="Baseline infrastructure failed; inspect and resume or resume-failed")
+            else:
+                self._finish({"status": "failed", "failure": failure}, persist=False)
+                self.state["active_job"] = None
             self.save()
-            return {**self.state["failure"], "status": "failed", "platform_status": job["status"]}
+            return {"status": "needs_input" if job["role"] == "baseline" else "advanced", "phase": self.state["phase"]}
         if report["status"] != "collected":
-            return {"status": "waiting_for_artifact" if report["status"] == "waiting_for_artifact" else "waiting",
-                    "task_id": job["task_id"], "platform_status": job["status"], "report_path": report["report_path"]}
+            return {"status": "waiting", "report_path": report["report_path"]}
         wrapper = read_json(job["manifest"])
-        ref = report["artifact"]
-        inside(self.site["user_root"], ref["path"])
-        if digest(wrapper["payload"]) != job["sha256"] or wrapper["sha256"] != job["sha256"]:
+        if wrapper["sha256"] != job["sha256"] or digest(wrapper["payload"]) != job["sha256"]:
             raise ValueError("Manifest changed before collection")
-        job["worker_wall_seconds"] = report.get("worker_wall_seconds")
-        job["allocated_gpu_count"] = report.get("allocated_gpu_count")
-        self._consume(job, ref, wrapper["payload"])
+        job.update(worker_wall_seconds=report.get("worker_wall_seconds"), allocated_gpu_count=report.get("allocated_gpu_count"))
+        self._consume(job, report["artifact"], wrapper["payload"])
         job["handled"] = True
         self.state["active_job"] = None
         self.save()
         return {"status": "collected", "job_id": job["id"], "phase": self.state["phase"]}
 
     def _consume(self, job, ref, payload):
-        role = job["role"]
-        if role == "train":
-            result = self.metrics(ref)
-            candidate = self.state["candidate"]
-            inside(self.site["user_root"], result["model_path"])
-            if (result.get("training") != payload["training"] or result.get("sft_enabled") is not False
-                    or result.get("parent_identity", {}).get("sha256") != payload["expected_model_sha256"]
-                    or not result.get("identity", {}).get("sha256")
-                    or result["identity"]["sha256"] == payload["expected_model_sha256"]):
-                raise ValueError("Training result does not match the frozen parent/PPO configuration")
-            candidate.update(model_path=result["model_path"], model_sha256=result["identity"]["sha256"],
-                             checkpoint_ref=ref)
-            self.state["phase"] = "CANDIDATE_EVAL"
+        result = self.metrics(ref)
+        candidate = self.state["initial"] if job["role"] == "baseline" else self.state["candidate"]
+        if payload["kind"] == "research":
+            candidate.setdefault("artifacts", []).append(ref)
+            if result.get("model_path"):
+                model_path = str(inside(self.site["user_root"], result["model_path"]))
+                identity = model_identity(model_path)
+                if result.get("model_identity") and result["model_identity"] != identity:
+                    raise ValueError("Research export identity changed before collection")
+                candidate.update(model_path=model_path, model_sha256=identity["sha256"])
+            self.state["candidate_step"] += 1
+            self.state["phase"] = "EXPERIMENT"
             return
-        metrics = self.metrics(ref)
-        batch_stats(metrics)
-        expected = {"candidate_id": payload["candidate_id"], "skills_sha256": payload["skills_sha256"],
-                    "source_identity": payload["source"]["sha256"], "comparison_id": payload["comparison_id"],
-                    "protocol_identity": digest(payload["protocol"]), "opponent_identity": digest(payload["engine_identity"]),
-                    "seed_schedule": payload["seed_schedule"]}
-        if any(metrics.get(k) != v for k, v in expected.items()):
-            raise ValueError("Evaluation result does not match the frozen manifest")
-        if payload.get("expected_model_sha256") and metrics["model_identity"]["sha256"] != payload["expected_model_sha256"]:
+        from .ladder import batch_stats
+        batch_stats(result)
+        expected = {"candidate_id": payload["candidate_id"], "track": payload["track"],
+                    "source_identity": payload["source"]["sha256"], "candidate_source_identity": payload["candidate_source"]["sha256"],
+                    "comparison_id": payload["comparison_id"], "protocol_identity": digest(payload["protocol"]),
+                    "opponent_identity": digest(payload["engine_identity"]), "seed_schedule": payload["seed_schedule"]}
+        if any(result.get(k) != v for k,v in expected.items()):
+            raise ValueError("Evaluation does not match its registered benchmark/candidate")
+        if payload.get("expected_model_sha256") and result["model_identity"]["sha256"] != payload["expected_model_sha256"]:
             raise ValueError("Evaluated the wrong checkpoint")
-        self.memory.append("evaluation", {"ref": ref, "role": role, "level": job["level"],
-                                          "candidate_id": job["candidate_id"], "statistics": metrics["statistics"]})
-        if role in ("baseline", "comparison_baseline"):
-            self.state["incumbent"]["model_sha256"] = metrics["model_identity"]["sha256"]
-            self.state["baselines"].append(ref)
-            self.state["phase"] = "CANDIDATE_EVAL" if role == "comparison_baseline" else "LEVEL_CHECK"
-        elif role == "candidate":
-            self.state["candidate"]["evaluations"].append(ref)
-            self.state["phase"] = "REVIEW"
-        elif role == "regression_baseline":
-            self.state["candidate"]["regression_baseline"] = ref
-            self.state["phase"] = "REGRESSION_EVAL"
-        elif role == "regression_candidate":
-            self.state["candidate"]["regression_candidate"] = ref
-            self.state["phase"] = "REGRESSION_REVIEW"
-        else:
-            raise ValueError("Unknown evaluation role")
-
-    def _level_check(self):
-        refs = self.state["baselines"]
-        if not refs:
-            self.state["phase"] = "BASELINE"
-        elif mastered(self.metrics(refs[-1])):
-            if len(refs) >= 2 and mastered(self.metrics(refs[-2])):
-                level = self.state["current_level"]
-                if level == 8 and self.state["nodes_base"] is None:
-                    nodes = [n for ref in refs[-2:] for game in self.metrics(ref)["games"]
-                             for n in game.get("engine_nodes", []) if isinstance(n, int)]
-                    if not nodes:
-                        self.state.update(phase="NEEDS_INPUT", needs_input="L8 node telemetry missing", resume_phase="LEVEL_CHECK")
-                        self.save()
-                        return
-                    self.state["nodes_base"] = max(1000, 2*max(nodes))
-                certificate = {"level": level, "incumbent": self.state["incumbent"].copy(), "batches": refs[-2:]}
-                self.state["level_certificates"].append(certificate)
-                self.state["highest_cleared_level"] = max(level, self.state["highest_cleared_level"])
-                self.state["current_level"] += 1
-                self.state["baselines"] = []
-                self.state["phase"] = "BASELINE"
-                self.memory.append("opponent_level_promoted", certificate)
-            else:
-                self.state["phase"] = "BASELINE"
-        else:
-            self.state["phase"] = "PLANNING"
-        self.save()
+        candidate["model_sha256"] = result["model_identity"]["sha256"]
+        row = {"ref": ref, "role": job["role"], "candidate_id": candidate["id"], "track": job["track"],
+               "level": job["level"], "statistics": result["statistics"]}
+        self.memory.append("evaluation", row, event_id="evaluation-"+job["id"])
+        self.state["pending_evaluations"].append(row)
+        self.state["evaluation_cursor"] += 1
+        self.state["phase"] = "BASELINE" if job["role"] == "baseline" else "EVALUATING"
 
     def workspace(self):
         if self.state.get("workspace"):
             return Path(self.state["workspace"])
         self.state["round"] += 1
-        folder = inside(self.site["user_root"], Path(self.site["worktree_root"]) /
-                        self.state["campaign_id"] / f"round-{self.state['round']:06d}")
-        folder.mkdir(parents=True, exist_ok=False)
-        shutil.copy2(self.state["incumbent"]["skills_path"], folder / "skills.json")
-        write_curriculum(folder / "curriculum.jsonl", seed_curriculum())
-        for name in (".agents", "docs"):
-            source = Path(self.state["source"]["root"]) / name
-            if source.exists():
-                shutil.copytree(source, folder / name)
-        atomic_json(folder / "context.json", self.memory.context())
+        folder = inside(self.site["user_root"], Path(self.site["worktree_root"])/self.state["campaign_id"]/f"round-{self.state['round']:06d}")
+        parent = self.state["working"]
+        source_snapshot(Path(parent["source"]["root"]), folder)
+        # Editable package + top-level skill override for the initial/reference harness.
+        if parent.get("skills_path"):
+            shutil.copy2(parent["skills_path"], folder/"skills.json")
+        atomic_json(folder/"context.json", self.memory.context())
+        atomic_json(folder/"proposal.json", {"hypothesis": "Describe the next experiment", "evidence_refs": [],
+            "jobs": [], "evaluation": evaluation_plan(), "recommend": False})
         self.state["workspace"] = str(folder)
         self.save()
         return folder
 
     def prepare(self, proposal_path):
         if self.state["phase"] != "PLANNING":
-            raise ValueError("A proposal can only be prepared after a completed incumbent baseline")
-        proposal_path = inside(self.site["user_root"], proposal_path)
-        proposal = read_json(proposal_path)
-        allowed = {"mode", "hypothesis", "evidence_refs", "training", "reward", "repetition_reason"}
-        if set(proposal) - allowed or proposal.get("mode") not in ("skills", "rl", "rl_and_skills"):
-            raise ValueError("Proposal allows only skills, rl or rl_and_skills")
-        if not isinstance(proposal.get("hypothesis"), str) or len(proposal["hypothesis"].strip()) < 5:
-            raise ValueError("A concrete experiment hypothesis is required")
-        if not isinstance(proposal.get("evidence_refs"), list):
-            raise ValueError("evidence_refs must be an array (empty explicitly means no prior evidence)")
-        workspace = proposal_path.parent
-        if self.state.get("workspace") and workspace != Path(self.state["workspace"]):
-            raise ValueError("Use the current registered proposal workspace")
-        cards = list(validate_cards(read_json(workspace / "skills.json")))
-        mode = proposal["mode"]
-        if mode == "rl" and cards != read_json(self.state["incumbent"]["skills_path"]):
-            raise ValueError("rl-only cannot change student skills")
-        if mode == "skills" and cards == read_json(self.state["incumbent"]["skills_path"]):
-            raise ValueError("skills-only proposal made no change")
-        if mode == "skills" and (proposal.get("training") or proposal.get("reward")):
-            raise ValueError("skills-only cannot submit a training configuration")
-        cfg = training_config(proposal.get("training", {})) if mode != "skills" else None
-        reward = validate_reward(proposal.get("reward", {})) if mode != "skills" else None
-        records = load_curriculum(workspace / "curriculum.jsonl") if mode != "skills" else []
-        fingerprint = digest({"parent": self.state["incumbent"]["model_sha256"], "skills": cards,
-                              "training": cfg, "reward": reward, "curriculum": records})
-        if fingerprint in [a["fingerprint"] for a in self.state["attempts"]] and not proposal.get("repetition_reason"):
-            raise ValueError("Repeated experiment; consult Memory and declare a reason to repeat")
-        cid = f"r{self.state['round']:06d}-{fingerprint[:10]}"
-        folder = inside(self.site["user_root"], self.root / "candidates" / cid)
-        if folder.exists():
-            raise FileExistsError("Candidate already frozen; resume the existing state")
-        folder.mkdir(parents=True)
-        atomic_json(folder / "skills.json", cards)
-        atomic_json(folder / "proposal.json", proposal)
-        candidate = {**self.state["incumbent"], "id": cid, "parent_id": self.state["incumbent"]["id"],
-                     "skills_path": str(folder / "skills.json"), "skills_sha256": file_hash(folder / "skills.json"),
-                     "mode": mode, "fingerprint": fingerprint, "hypothesis": proposal["hypothesis"],
-                     "evidence_refs": proposal["evidence_refs"], "evaluations": []}
-        if mode != "skills":
-            write_curriculum(folder / "curriculum.jsonl", records)
-            candidate.update(training=cfg, reward=reward, curriculum_path=str(folder / "curriculum.jsonl"),
-                             curriculum_sha256=file_hash(folder / "curriculum.jsonl"))
-        self.state["candidate"] = candidate
-        self.state["phase"] = "TRAIN" if mode != "skills" else "CANDIDATE_EVAL"
-        self.memory.append("hypothesis", {"candidate": candidate, "proposal": proposal})
+            raise ValueError("Prepare proposals during PLANNING")
+        path = Path(proposal_path)
+        if not path.is_absolute() and self.state.get("workspace"):
+            path = Path(self.state["workspace"])/path
+        path = inside(self.site["user_root"], path)
+        workspace = Path(self.state["workspace"]) if self.state.get("workspace") else path.parent
+        if path.parent != workspace:
+            raise ValueError("Use the registered research workspace")
+        proposal = read_json(path)
+        digest(proposal)  # Reject non-JSON/nonfinite metadata before creating frozen artifacts.
+        if not isinstance(proposal.get("hypothesis"), str) or not proposal["hypothesis"].strip():
+            raise ValueError("Describe an experiment hypothesis")
+        jobs = proposal.get("jobs", [])
+        if not isinstance(jobs, list):
+            raise ValueError("jobs must be a list of commands")
+        for command in jobs:
+            resources = command.get("resources", {}) if isinstance(command,dict) else {}
+            if not isinstance(resources,dict) or set(resources)-{"gpu_count","cpu","memory_gib"}:
+                raise ValueError("Invalid job resources")
+            for key,value in resources.items():
+                if type(value) is not int or value < (0 if key=="gpu_count" else 1):
+                    raise ValueError("Invalid job resources")
+            argv = command.get("argv") if isinstance(command, dict) else None
+            if not isinstance(argv, list) or not argv or any(not isinstance(x,str) or not x or "\0" in x for x in argv):
+                raise ValueError("Each job requires a nonempty argv string array")
+        batch = proposal.get("evaluation_batch", 0)
+        if type(batch) is not int or batch < 0:
+            raise ValueError("evaluation_batch must be a nonnegative integer")
+        plan = evaluation_plan(proposal.get("evaluation")) if proposal.get("evaluation", True) is not False else None
+        model = proposal.get("model_path", self.state["working"]["model_path"])
+        if Path(model).resolve() != Path(self.site["base_model"]).resolve():
+            model = str(inside(self.site["user_root"], model))
+        folder = self.root/"candidates"/f"r{self.state['round']:06d}"
+        snapshot = source_snapshot(workspace, folder/"source")
+        cards = None
+        if (workspace/"skills.json").is_file():
+            cards = folder/"skills.json"
+            shutil.copy2(workspace/"skills.json", cards)
+        candidate = {"id": folder.name, "parent_id": self.state["working"]["id"], "source": snapshot,
+                     "model_path": model, "model_sha256": None, "skills_path": str(cards) if cards else None, "skills_sha256": file_hash(cards) if cards else None,
+                     "hypothesis": proposal["hypothesis"], "proposal": proposal, "jobs": jobs,
+                     "evaluation": plan, "evaluations": [], "fingerprint": digest({"source":snapshot["sha256"], "model":model})}
+        atomic_json(folder/"proposal.json", proposal)
+        self.state.update(candidate=candidate, candidate_step=0, evaluation_cursor=0,
+                          pending_evaluations=[], phase="EXPERIMENT", meta_stalls=0)
+        self.memory.append("hypothesis", {"candidate_id": candidate["id"], "hypothesis": candidate["hypothesis"],
+                                          "source": snapshot["sha256"], "proposal": proposal})
         self.save()
         return candidate
 
-    def _decide(self, decision):
-        candidate = self.state["candidate"]
-        if decision["verdict"] == "accept":
-            self.state["incumbent"] = {key: candidate[key] for key in
-                                       ("id", "model_path", "model_sha256", "skills_path", "skills_sha256")}
-            self.state["baselines"] = candidate["evaluations"][:]
-        record = {"candidate_id": candidate["id"], "fingerprint": candidate["fingerprint"],
-                  "hypothesis": candidate["hypothesis"], "decision": decision,
-                  "evaluations": candidate["evaluations"], "parent_id": candidate["parent_id"]}
-        self.state["attempts"].append(record)
-        self.memory.append("decision", record)
-        if decision["verdict"] == "accept":
-            self.memory.append("incumbent_updated", {"incumbent": self.state["incumbent"], "evidence": record})
-        self.memory.handoff({"completed": [record], "waiting": [], "next": "level check, then plan next hypothesis",
-                             "incumbent": self.state["incumbent"], "current_level": self.state["current_level"]})
-        self.state.update(candidate=None, workspace=None, phase="LEVEL_CHECK")
-        self.save()
+    def _evaluate_next(self, candidate, plan, role):
+        schedule = [(t,l) for t in plan["tracks"] for l in plan["levels"]]
+        cursor = self.state["evaluation_cursor"]
+        if cursor < len(schedule):
+            track, level = schedule[cursor]
+            self._new_job("evaluate", role, candidate, track=track, level=level,
+                          batch_index=candidate.get("proposal", {}).get("evaluation_batch", 0))
+            return True
+        return False
 
-    def _review(self):
+    def _finish(self, extra=None, *, persist=True):
         candidate = self.state["candidate"]
-        n = len(candidate["evaluations"])
-        c = [self.metrics(ref) for ref in candidate["evaluations"]]
-        b = [self.metrics(ref) for ref in self.state["baselines"][:n]]
-        decision = compare(c, b, min_improvement=self.state["acceptance"]["min_improvement"],
-                           confidence=self.state["acceptance"]["confidence"])
-        if decision["verdict"] == "inconclusive" and n < self.state["acceptance"]["max_comparison_batches"]:
-            self.state["phase"] = "CANDIDATE_EVAL"
+        if not candidate:
+            return
+        rows = self.state["pending_evaluations"]
+        panel = panel_summary(rows)
+        previous = self.state.get("best")
+        score = panel["player"]["score"]
+        improved = score is not None and (previous is None or score > previous["score"])
+        record = {"candidate_id": candidate["id"], "parent_id": candidate["parent_id"],
+                  "hypothesis": candidate["hypothesis"], "fingerprint": candidate["fingerprint"],
+                  "panel": panel, "evaluations": rows, "new_best": improved, **(extra or {})}
+        if improved:
+            self.state["best"] = {"candidate": candidate.copy(), "score": score, "panel": panel,
+                                  "note": "Observed best; confirm with independent repeats before claiming improvement"}
+            self.state["incumbent"] = candidate.copy()
+        candidate["evaluations"] = rows
+        # Research may branch from failures. A job failure can leave missing model paths;
+        # retain its code but keep the last runnable checkpoint for the next turn.
+        if record.get("status") == "failed":
+            candidate["model_path"] = self.state["working"]["model_path"]
+            candidate["model_sha256"] = self.state["working"].get("model_sha256")
+        self.state["working"] = candidate.copy()
+        if candidate["proposal"].get("recommend"):
+            self.state["recommended"] = {"candidate_id": candidate["id"], "reason": candidate["proposal"].get("recommendation", candidate["hypothesis"])}
+        self.state["attempts"].append(record)
+        self.memory.append("decision", record, event_id="decision-"+candidate["id"])
+        self.memory.handoff({"completed": [record], "next": "Read evidence; choose any next research method",
+                             "working": candidate["id"], "best": self.state.get("best", {}).get("score") if self.state.get("best") else None})
+        self.state.update(candidate=None, workspace=None, phase="PLANNING")
+        if persist:
             self.save()
-        elif decision["verdict"] == "accept" and self.state["highest_cleared_level"] > 0:
-            candidate["pending_decision"] = decision
-            self.state["phase"] = "REGRESSION_BASELINE"
-            self.save()
-        else:
-            self._decide(decision)
 
     def step(self, *, proposal=None):
         self.state = self.memory.state()
         verify_source(self.state["source"])
-        if self.state.get("active_job") and self.state["phase"] != "FAILED":
+        if self.state.get("active_job") and self.state["phase"] != "NEEDS_INPUT":
             return self._poll()
         phase = self.state["phase"]
-        incumbent, candidate = self.state["incumbent"], self.state["candidate"]
         if phase == "BASELINE":
-            self._new_job("evaluate", "baseline", incumbent, batch_index=len(self.state["baselines"]))
-        elif phase == "LEVEL_CHECK":
-            self._level_check()
+            if not self._evaluate_next(self.state["initial"], evaluation_plan(), "baseline"):
+                panel = panel_summary(self.state["pending_evaluations"])
+                self.state["baseline"] = self.state["pending_evaluations"][:]
+                self.state["best"] = {"candidate": self.state["initial"].copy(), "score": panel["player"]["score"], "panel": panel}
+                self.state.update(phase="PLANNING", pending_evaluations=[], evaluation_cursor=0)
+                self.save()
         elif phase == "PLANNING":
             if proposal:
                 self.prepare(proposal)
             else:
                 return {"status": "needs_meta", "workspace": str(self.workspace())}
-        elif phase == "TRAIN":
-            self._new_job("train", "train", candidate)
-        elif phase == "CANDIDATE_EVAL":
-            index = len(candidate["evaluations"])
-            if index >= len(self.state["baselines"]):
-                self._new_job("evaluate", "comparison_baseline", incumbent, batch_index=index)
+        elif phase == "EXPERIMENT":
+            candidate = self.state["candidate"]
+            i = self.state["candidate_step"]
+            if i < len(candidate["jobs"]):
+                self._new_job("research", "research", candidate, command=candidate["jobs"][i])
             else:
-                comparison = self.metrics(self.state["baselines"][index])
-                self._new_job("evaluate", "candidate", candidate, batch_index=index, comparison=comparison)
-        elif phase == "REVIEW":
-            self._review()
-        elif phase == "REGRESSION_BASELINE":
-            self._new_job("evaluate", "regression_baseline", incumbent, level=self.state["highest_cleared_level"])
-        elif phase == "REGRESSION_EVAL":
-            self._new_job("evaluate", "regression_candidate", candidate, level=self.state["highest_cleared_level"],
-                          comparison=self.metrics(candidate["regression_baseline"]))
-        elif phase == "REGRESSION_REVIEW":
-            baseline = batch_stats(self.metrics(candidate["regression_baseline"]))
-            tested = batch_stats(self.metrics(candidate["regression_candidate"]))
-            decision = {**candidate["pending_decision"], "regression": {"baseline": baseline, "candidate": tested}}
-            if tested["score"] < baseline["score"]:
-                decision.update(verdict="reject", reason="old_level_regression")
-            self._decide(decision)
-        elif phase in ("FAILED", "NEEDS_INPUT"):
-            return {"status": phase.lower(), "detail": self.state.get("failure") or self.state.get("needs_input")}
+                self.state.update(phase="EVALUATING", evaluation_cursor=0)
+                self.save()
+        elif phase == "EVALUATING":
+            candidate = self.state["candidate"]
+            if not candidate["evaluation"] or not self._evaluate_next(candidate, candidate["evaluation"], "candidate"):
+                self._finish()
+        elif phase == "NEEDS_INPUT":
+            return {"status": "needs_input", "detail": self.state.get("needs_input")}
         else:
             raise ValueError("Unknown controller phase")
         return {"status": "advanced", "phase": self.state["phase"]}
 
     def resume_failed(self):
-        if self.state["phase"] != "FAILED":
-            raise ValueError("Campaign is not in a failed-task state")
-        old = self.state["jobs"][self.state["active_job"]]
+        job_id = self.state.get("active_job") or next((k for k,v in reversed(self.state["jobs"].items()) if v.get("executor_status")=="failed"), None)
+        if not job_id:
+            raise ValueError("No failed task to resume")
+        old = self.state["jobs"][job_id]
         self.lifecycle.confirm_failed(old)
         payload = read_json(old["manifest"])["payload"]
-        candidate = self.state["incumbent"] if old["role"] in ("baseline", "comparison_baseline", "regression_baseline") else self.state["candidate"]
-        comparison = payload if payload["kind"] == "evaluate" else None
-        resume = None
-        if payload["kind"] == "train":
-            fresh = Path(payload["output"]) / "training"
-            # A retry can fail before creating its own checkpoint. Keep the prior
-            # resume root instead of silently restarting an already trained batch.
-            resume = fresh if any(fresh.glob("checkpoint-*/state.json")) else payload.get("resume_from", fresh)
+        if old["role"] != "baseline" and not self.state.get("candidate"):
+            raise ValueError("Experiment was handed back to Meta-Agent; submit a new proposal with explicit resume paths")
+        candidate = self.state["initial"] if old["role"] == "baseline" else self.state["candidate"]
         self.memory.append("explicit_retry", {"previous_job": old, "partial_artifacts_retained": payload["output"]})
-        self._new_job(payload["kind"], old["role"], candidate, batch_index=old["batch_index"],
-                      level=old["level"], comparison=comparison, resume_from=resume)
+        self._new_job(payload["kind"], old["role"], candidate, level=old.get("level") or 1,
+                      track=old.get("track") or "player", command=payload.get("command"),
+                      batch_index=old["batch_index"], resume_from=payload["output"])
 
     def run(self, *, backend=None, max_steps=None, poll_seconds=None):
         with self.memory.lock():
@@ -407,15 +361,13 @@ class Controller:
                         from .meta import CodexBackend
                         backend = CodexBackend(self.site, self.memory)
                     workspace = Path(result["workspace"])
-                    prompt = (
-                        f"读取 {workspace / 'context.json'} 与 Memory，诊断并准备下一次实验。"
-                        f"完整证据在 {self.root}。先读 .agents/skills/rsi-memory/SKILL.md。"
-                        "在本工作目录编辑 skills.json、curriculum.jsonl，并写 proposal.json。"
-                        "proposal 格式见 docs/rsi-operations.md。只允许 skills/rl/rl_and_skills。"
-                        "RL仅用hf_ppo与lc0_bootstrap，固定Lc0 critic；细节先读rsi-rl-review技能。"
-                        "复查失败指纹，说明主要假设和证据。没有真实进步不能扶正。"
-                        "最后按指定 JSON 返回 ready 和 proposal 路径，或 needs_input 与具体缺失项。"
-                    )
+                    prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
+                        f"完整证据在 {self.root}。自主修改本研究副本的任何训练、Harness、skills、工具或配置。"
+                        "研究方法不限，现有 PPO/LC0 只是可用起点。最终会对战固定 L1-L8 Fairy-Stockfish，"
+                        "最低档仍是 skill -9/depth5/0.05秒；只刷简单档没有用。"
+                        "评测套件/裁判/正式记录不可修改。提交协议及任意计算任务格式见 docs/rsi-operations.md。"
+                        "可以通过 research job 调用受保护 source/scripts/evaluate.py 做快速或完整测试。"
+                        "不要求本轮成功才能继续。保存实验结论，最后写 proposal.json 并返回路径，或说明缺失项。")
                     answer = backend.turn(workspace, prompt)
                     self.memory.append("meta_result", answer)
                     if answer["status"] == "needs_input":
@@ -423,20 +375,16 @@ class Controller:
                         self.save()
                         return answer
                     try:
-                        if not isinstance(answer.get("proposal_path"), str):
-                            raise ValueError("ready requires a proposal_path string")
                         self.prepare(answer["proposal_path"])
-                        self.state["meta_stalls"] = 0
-                        self.save()
-                    except (ValueError, FileNotFoundError) as exc:
+                    except (ValueError, FileNotFoundError, TypeError) as exc:
                         self.memory.append("proposal_invalid", {"error": str(exc)})
                         self.state["meta_stalls"] += 1
-                        atomic_json(workspace / "context.json", self.memory.context())
+                        atomic_json(workspace/"context.json", self.memory.context())
                         if self.state["meta_stalls"] >= 3:
-                            self.state.update(phase="NEEDS_INPUT", needs_input=f"Three invalid proposals: {exc}", resume_phase="PLANNING")
+                            self.state.update(phase="NEEDS_INPUT", needs_input=str(exc), resume_phase="PLANNING")
                         self.save()
-                elif result["status"] in ("waiting", "waiting_for_artifact"):
+                elif result["status"] == "waiting":
                     time.sleep(min(60, poll_seconds or self.site.get("poll_seconds", 30)))
-                elif result["status"] in ("submission_uncertain", "failed", "needs_input"):
+                elif result["status"] in ("submission_uncertain", "needs_input"):
                     return result
             return {"status": "step_limit", "phase": self.state["phase"]}

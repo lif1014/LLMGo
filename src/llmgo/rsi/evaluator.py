@@ -5,6 +5,7 @@ import asyncio
 import importlib.util
 import platform
 import time
+import sys
 from pathlib import Path
 
 from llmgo.harness.config import HarnessConfig
@@ -15,6 +16,8 @@ from llmgo.runtime.uci_player import UciPlayer
 from llmgo.store.jsonl import TrajectoryStore
 from .contracts import atomic_json, digest, file_hash, model_identity, read_json, validate_protocol
 from .ladder import batch_stats
+from .candidate import CandidateSeat
+from .artifacts import verify_source
 
 
 def engine_identity(engine_path, spec):
@@ -37,12 +40,9 @@ def engine_player(side, path, spec):
                      threads=spec["threads"], hash_mb=spec["hash_mb"])
 
 
-def runtime_helpers(source_root):
-    path = Path(source_root) / "scripts/eval_harness.py"
-    spec = importlib.util.spec_from_file_location("_llmgo_eval_runtime", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def runtime_helpers(source_root=None):
+    from . import service
+    return service
 
 
 async def play_batch(payload, url, cards, output):
@@ -68,7 +68,12 @@ async def play_batch(payload, url, cards, output):
             asker = VllmAsker(url, p["model_name"], tokenizer_path=payload["model_path"],
                              temperature=p["temperature"], top_p=p["top_p"], top_k=p["top_k"],
                              presence_penalty=p["presence_penalty"], seed=seed, timeout_sec=cfg.request_timeout_sec)
-            student = HarnessSeat(side, asker, config=cfg, seed=seed, skill_cards=cards)
+            if payload.get("track", "player") == "model":
+                student = HarnessSeat(side, asker, config=cfg, seed=seed, skill_cards=cards)
+            else:
+                student = CandidateSeat(side, asker, payload["candidate_source"]["root"],
+                                        game_root/"candidate.log", seed=seed,
+                                        python=sys.executable)
             other = "black" if side == "white" else "white"
             engine = engine_player(other, p["engine"], p["opponent"])
             seats = {side: student, other: EngineSeat(engine)}
@@ -84,6 +89,8 @@ async def play_batch(payload, url, cards, output):
                 summary = await runner.run(emit)
             finally:
                 engine.close()
+                if isinstance(student, CandidateSeat):
+                    await student.close()
             row = {"game_id": game_id, "pair_id": pair_id, "seed": seed, "model_seat": side,
                    "result": summary["result"], "result_reason": summary.get("result_reason"),
                    "seconds": time.monotonic()-start, "diagnostics": summary, "engine_nodes": nodes,
@@ -97,10 +104,18 @@ async def play_batch(payload, url, cards, output):
 def evaluate(payload):
     p, output = payload["protocol"], Path(payload["output"])
     validate_protocol(p)
-    cards = validate_cards(read_json(payload["skills_path"]))
+    verify_source(payload["source"])
+    verify_source(payload["candidate_source"])
+    # Model control uses the original reference skill library, never candidate cards.
+    cards = None
+    if payload.get("track") == "model":
+        verify_source(payload["reference_source"])
+        cards = validate_cards(read_json(Path(payload["reference_source"]["root"])/"src/llmgo/harness/skills/cards.json"))
     identity = model_identity(payload["model_path"])
     if payload.get("expected_model_sha256") and identity["sha256"] != payload["expected_model_sha256"]:
         raise ValueError("Candidate model changed since its registered checkpoint")
+    if p["opponent"]["level"] not in range(1,9):
+        raise ValueError("Unsupported official panel")
     actual_engine = engine_identity(p["engine"], p["opponent"])
     if actual_engine != payload["engine_identity"]:
         raise ValueError("Opponent binary, NNUE or options changed")
@@ -109,7 +124,7 @@ def evaluate(payload):
     if not gpus:
         raise RuntimeError("Official evaluation must run in a GPU job")
     port = helpers._pick_ports(8000, 1)[0]
-    service = helpers.VllmServer(Path(payload["model_path"]), p, output / "vllm.log", port, gpus[0])
+    service = helpers.VllmServer(Path(payload["model_path"]), p, output / "vllm.log", port, gpus[0], python=payload["site"].get("inference_python"))
     try:
         service.start()
         error = helpers._wait_servers([service], 1800)
@@ -122,11 +137,21 @@ def evaluate(payload):
         "schema_version": 1, "candidate_id": payload["candidate_id"],
         "comparison_id": payload["comparison_id"], "seed_schedule": payload["seed_schedule"],
         "opponent_identity": digest(actual_engine), "protocol_identity": digest(p),
+        "track": payload.get("track", "player"),
+        "candidate_source_identity": payload["candidate_source"]["sha256"],
+        "reference_source_identity": payload.get("reference_source", {}).get("sha256"),
         "source_identity": payload["source"]["sha256"], "skills_sha256": payload["skills_sha256"],
         "model_identity": identity, "engine_identity": actual_engine, "protocol": p,
         "host": platform.node(), "games": games,
     }
     metrics["statistics"] = batch_stats(metrics)
     metrics["primary_score"] = metrics["statistics"]["score"]
+    # Do not publish if candidate execution changed the protected source/engine.
+    verify_source(payload["source"])
+    if engine_identity(p["engine"], p["opponent"]) != actual_engine:
+        raise ValueError("Evaluation engine changed during the batch")
+    verify_source(payload["candidate_source"])
+    if model_identity(payload["model_path"])["sha256"] != identity["sha256"]:
+        raise ValueError("Student weights changed during evaluation")
     atomic_json(output / "metrics.json", metrics)
     return output / "metrics.json"

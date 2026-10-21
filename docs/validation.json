@@ -1,0 +1,37 @@
+{
+  "checked_at": "2026-10-21T17:46:07.222458+00:00",
+  "full_local_suite": {
+    "passed": 164,
+    "skipped": 3
+  },
+  "native_cpu_ppo_and_tiny_qwen": {
+    "passed": 11
+  },
+  "chromium_dashboard": {
+    "passed": 1
+  },
+  "node_dashboard": "passed",
+  "latest_executor_activity_worker_regression": {
+    "passed": 28
+  },
+  "skill_validation": "4 revised RSI skills passed",
+  "git_diff_check": "passed",
+  "real_4b_gpu_training": false,
+  "elo_improvement_measured": false,
+  "archive_extraction_validation": {
+    "passed": 164,
+    "skipped": 3,
+    "portable_fixture": true
+  },
+  "additional_boundary_checks": [
+    "opponent binary/NNUE pinned across all campaign difficulties",
+    "partial generation preserved on external turn timeout"
+  ],
+  "latest_candidate_diagnostics": {
+    "passed": 8,
+    "includes": "inexact token accounting and timeout output preservation"
+  },
+  "latest_meta_regression": {
+    "passed": 3
+  }
+}

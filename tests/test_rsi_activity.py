@@ -149,7 +149,7 @@ def test_overview_job_files_and_evaluations_are_compact_and_isolated(tmp_path, m
     atomic_json(job/"manifest.json", {"payload": "manifest"})
     atomic_json(job/"output/progress.json", {"stage": "training", "curriculum_records": 64})
     (job/"output/training").mkdir()
-    (job/"output/training/verl-training.log").write_text("loss\n"*300000)
+    (job/"output/research.log").write_text("loss\n"*300000)
     for job_id in ("j1", "j2"):
         atomic_json(root/f"jobs/{job_id}/output/harness_runs/g/config.json", {"id": "g", "model_seat": "white"})
     memory.append("evaluation", {"candidate_id": "candidate", "level": 1, "statistics": {"score": .75}, "ref": {"job_id": "j1"}})
@@ -167,5 +167,5 @@ def test_overview_job_files_and_evaluations_are_compact_and_isolated(tmp_path, m
     evidence = client.get(url+"/evaluations").json()[0]
     assert evidence["worker_gpu_hours"] == 1 and evidence["statistics"]["score"] == .75
     # File bodies are still available only through explicit byte-range reads.
-    body = client.get(url+"/artifact", params={"path": "jobs/j1/output/training/verl-training.log", "offset": 5, "length": 6}).json()
+    body = client.get(url+"/artifact", params={"path": "jobs/j1/output/research.log", "offset": 5, "length": 6}).json()
     assert body["text"] == "loss\nl" and body["next_offset"] == 11

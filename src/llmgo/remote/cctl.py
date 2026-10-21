@@ -84,17 +84,23 @@ class CctlExecutor:
         if site["user_root"] != "/user/lyh4170":
             raise ValueError("Only /user/lyh4170 can submit remote experiments")
         inside(site["user_root"], manifest_path)
-        gpu = site["gpu_count"]
-        if type(gpu) is not int or gpu != 1:
-            raise ValueError("This worker implementation supports exactly one GPU per job")
-        script = Path(payload["source"]["root"]) / "scripts/rsi_worker.py"
+        resources = {k: site[k] for k in ("gpu_count", "cpu", "memory_gib")}
+        resources.update(payload.get("resources", {}))
+        gpu = resources["gpu_count"]
+        if type(gpu) is not int or gpu < 0:
+            raise ValueError("gpu_count must be a nonnegative integer")
+        for key in ("cpu", "memory_gib"):
+            if type(resources[key]) is not int or resources[key] < 1:
+                raise ValueError("Worker CPU/memory must be positive integers")
+        script = Path(payload["source"]["root"]) / ("scripts/worker_entry.py" if site.get("worker_venv") else "scripts/rsi_worker.py")
         entry = shlex.join([site["python"], str(script), "--manifest", str(manifest_path),
                             "--manifest-sha256", manifest["sha256"]])
         description = f"llmgo-rsi:{payload['campaign_id']}:{payload['job_id']}:{manifest['sha256']}"
         return ["job", "create", "--project", site["project"], "--cluster", "beijing",
                 "--resource-pool", "model-autosft", "--billing-account-id", site["billing_account_id"],
                 "--priority", "NORMAL", "--image", site["image"], "--gpu", str(gpu),
-                "--gpu-model", site["gpu_model"], "--cpu", str(site["cpu"]), "--memory", str(site["memory_gib"]),
+                *(["--gpu-model", site["gpu_model"]] if gpu else []),
+                "--cpu", str(resources["cpu"]), "--memory", str(resources["memory_gib"]),
                 "--description", description, "--entry", entry], description
 
     def preview(self, manifest_path):

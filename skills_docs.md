@@ -1,5 +1,7 @@
 # 国际象棋 Skills 说明
 
+这是初始参考 Harness 的技能库，Meta-Agent 可以修改数量、格式、内容、触发和检索实现；正式模型对照使用创建 campaign 时冻结的参考版本。
+
 本文根据当前 `src/llmgo/harness/skills/cards.json` 和 `src/llmgo/harness/skills.py` 整理，共 13 张卡；以下触发条件以代码实际判断为准。
 
 所有卡片都用于同一个“从全部合法走法中选择完整一步”的 `move` 阶段，没有单独的选棋子阶段；默认每手最多载入 2 张，可由 Harness 配置调整，符合触发条件不代表一定进入 prompt。

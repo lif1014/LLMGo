@@ -1,0 +1,8 @@
+# Add to a Qwen3.5-compatible CUDA/PyTorch/vLLM image; do not replace its CUDA stack blindly.
+# Remote GPU compatibility is still to be verified and frozen in an image/lockfile.
+-r requirements-rsi-control.txt
+transformers>=5.2,<6
+peft>=0.18,<1
+accelerate>=1.12,<2
+safetensors>=0.6,<1
+# Native HF PPO uses a frozen offline Lc0 critic; no verl/GRPO dependency.

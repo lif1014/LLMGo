@@ -6,6 +6,83 @@
 python-chess 執行；對手為 Fairy-Stockfish，預設第 1 檔（skill -9、depth 5、
 每步 0.05 秒）。最多 **200 半步**，即 100 回合。中國象棋及五子棋保留相容入口。
 
+## RSI：遠端強 Agent、RL 與條件技能
+
+第一次部署請按[伺服器首次啟動步驟](docs/rsi-first-run.md)操作，涵蓋 Git／tar、必要依賴、常駐循環與網頁。
+
+新增持久化 RSI Controller：強 Agent 在自己的 **0 GPU devspace** 讀 Memory、
+準備 skills／RL 候選，再由 Controller 提交 GPU job。學生能力改進只允許 RL 和
+條件 skills；正式下棋仍由 Qwen 自己作答，教師與 Lc0 不參與正式走子。
+
+每批正式評測固定 **20 局（10 白、10 黑）**。同級證明改善才扶正候選；現任學生
+連續兩批達到勝至少16局、得分率85%、黑白各60%，才升級對手。最低檔維持 L1
+（-9／depth5／0.05秒），L4–L8 接到 skill20，L9 起增加 nodes 並移除 depth5
+上限。沒有 random_rate 驗收門檻，診斷仍照常保存。
+
+本機實作由使用者上傳到 `/user/lyh4170/LLMGo!`，實際研究不依賴開發機在線。
+預設站點配置為 [`configs/rsi/site.beijing.json`](configs/rsi/site.beijing.json)，
+只允許 beijing／model-autosft／NORMAL；所有遠端寫入位於 `/user/lyh4170`。
+既有來源模型路徑保持唯讀。
+
+在 devspace 準備好 Codex 程式／認證、cctl 及 Python 依賴，並核對站點配置後：
+
+```bash
+cd '/user/lyh4170/LLMGo!'
+mkdir -p /user/lyh4170/tmp /user/lyh4170/cache
+export TMPDIR=/user/lyh4170/tmp XDG_CACHE_HOME=/user/lyh4170/cache
+python3 -m venv /user/lyh4170/venvs/rsi-control
+/user/lyh4170/venvs/rsi-control/bin/pip install -r requirements-rsi-control.txt
+/user/lyh4170/venvs/rsi-control/bin/python scripts/rsi.py doctor --platform --codex-auth
+/user/lyh4170/venvs/rsi-control/bin/python scripts/rsi.py init chess-rsi-001
+/user/lyh4170/venvs/rsi-control/bin/python scripts/rsi.py run chess-rsi-001
+```
+
+`run` 會提交實際 GPU 任務。Worker 需有相容的 Qwen3.5／CUDA／vLLM／PEFT 環境；
+[`requirements-rsi-worker.txt`](requirements-rsi-worker.txt) 為額外依賴清單，尚非驗證過的
+GPU lockfile。**訓練已切換為 `hf_ppo`：固定 Lc0 critic、單步 TD(0)、多輪 token
+clip 更新；GRPO 及舊 verl GRPO 入口已移除。** 不訓練額外 value head，也沒有 SFT。
+非終局使用 `A = V_Lc0(after) − V_Lc0(before)`，其中 `V=P(win)−P(lose)`；
+前後均從學生執棋方看。終局使用真實勝負／和棋並將 continuation 歸零。
+目前為課程局面的單步採樣，不是整盤 rollout 或 GAE；完整邊界和配置見
+[PPO 操作說明](docs/rsi-operations.md#5-固定lc0-critic的ppo)。
+
+唯一離線 critic 網路為已下載的 Lc0 BT4-it332，需連同 Lc0 程式上傳至站點指定的
+自己的目錄。每批先 Qwen 採樣並移至 CPU，再啟動 Lc0 評分、退出，最後載回
+Qwen 更新。PPO 的真實 Qwen GPU 訓練／vLLM 重載及棋力改善仍待遠端驗收。
+2026-10-21 的遠端核對確認：只有 Codex 設定檔已複製；站點指定的 Codex 程式、
+控制環境、RSI 源碼和 Lc0/BT4 尚未部署。該設定預設 `custom/deepseek-v4-pro`，
+`meta_model=null` 會沿用它；Codex 是執行客戶端，不代表實際推理模型必然是 OpenAI 模型。
+未驗證認證或真實模型請求。部署缺口與本次修復見[流程複核](docs/rsi-operations.md#9-整条pipeline复核与远端就绪状态)。
+
+devspace 的只讀 RSI 網頁不需要 GPU：
+
+```bash
+LLMGO_RSI_ROOT=/user/lyh4170/rsi_campaigns PYTHONPATH=src \
+  /user/lyh4170/venvs/rsi-control/bin/python -m uvicorn llmgo.server.app:app --host 0.0.0.0 --port 7860
+```
+
+開啟 **`/rsi`**，可查看強 Agent 的文字／工具起訖／用量／錯誤、Executor 的逐次輪詢、
+cctl 命令與耗時，以及 Worker 階段、學生棋盤、Memory 和最近200條候選評測。
+每3秒增量刷新；預設最新事件，每個列表最多80張卡片，可篩選、暫停、翻歷史。
+完整交互保存在共享盤，大段原文點開才按64KiB分段讀取，不會灌入強 Agent 上下文。
+舊 campaign 若缺顯示索引，可執行 `python3 scripts/rsi.py index-activity CAMPAIGN`；
+詳細欄位、負擔控制與升級方式見 [網頁觀測說明](docs/rsi-observability.md)。
+重啟使用同一 `run CAMPAIGN`；提交回應不確定時先對帳，避免重複任務。
+
+任務生命週期已抽成專用 **Executor**：提交、輪詢、產物核驗和原始cctl日誌使用
+獨立記錄，Meta-Agent只取得短摘要與證據路徑，等待期間不呼叫模型。預設單命令
+仍可啟動；新campaign若在站點設定`executor_mode=external`，可另開
+`python3 scripts/rsi.py executor run CAMPAIGN`常駐進程，Controller僅讀其本地報告。
+網頁有獨立Executor區，原始記錄按需載入。參見 [Executor說明](docs/rsi-executor.md)。
+
+詳細操作、proposal 範例、Memory、訓練和恢復見
+[RSI 操作文件](docs/rsi-operations.md)。**之前成功提交的任務格式、Agent 提交方式，
+以及此次新增／修改檔案清單**見 [任務提交與檔案說明](docs/rsi-submission-and-files.md)。
+研究設計與尚待遠端驗收項目保留在 [plan.md](plan.md)。
+
+目前已實作並完成本機流程測試；尚未在使用者上傳後的 GPU 環境完成 Qwen 訓練及
+20 局前後比較，因此不能宣稱已提升 Elo。
+
 ## 伺服器啟動
 
 沿用現有模型、引擎路徑和啟動腳本；不需將模型改成本地開發機的路徑。
@@ -151,27 +228,17 @@ pawn e2: e2e3 e2e4
 PostTrainBench 使用同一個選擇題 runner；Meta-Agent 可改該輪的 `harness/` 及
 skills，亦可選擇後訓練。提交與 seal 打包方式見 `../PostTrainBench/README.md`。
 
-伺服器更新 LLMGo! 後，也要同步 PostTrainBench 的 Meta-Agent 任務與 baseline。
-本倉庫附有針對上一版 chess harness 整合的文字更新 patch：
+PostTrainBench 已包含選擇題、精簡紀錄、裸 UCI 與 tokenizer 依賴的整合，舊的一次性
+patch 已移除。伺服器更新兩個倉庫後，在 RSI 輪次之間重新打包 baseline：
 
 ```bash
 cd ../PostTrainBench
-git apply --unidiff-zero --check '../LLMGo!/integrations/posttrainbench-single-choice.patch'
-git apply --unidiff-zero '../LLMGo!/integrations/posttrainbench-single-choice.patch'
 python3 package_seal.py --llmgo '../LLMGo!'
 ```
 
-若已套用，無需重複 apply。此次精簡紀錄、裸 UCI 與 tokenizer 依賴的增量同步：
-
-```bash
-cd ../PostTrainBench
-git apply --check '../LLMGo!/integrations/posttrainbench-compact-events.patch'
-git apply '../LLMGo!/integrations/posttrainbench-compact-events.patch'
-python3 package_seal.py --llmgo '../LLMGo!'
-```
-
-每個 patch 只套用一次；每次更新 baseline 後重新執行 packager 即可。請在 RSI
-輪次之間打包，原有模型／引擎路徑保持不變。
+現行入口為 `eval_harness.py`（批量評測）、`arena_ladder.py`（重用已部署服務），以及
+`rsi.py`／`rsi_worker.py`（devspace 研究與 GPU 任務）。早期中國象棋五局測試和
+直接 SSH／Docker 的 Arena 啟動腳本已移除；模型、引擎及站點路徑沿用現有設定。
 
 ```bash
 PYTHONPATH=src python3 -m pytest -q tests

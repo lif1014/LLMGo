@@ -1,4 +1,4 @@
-"""UCI 引擎座位。只讀當前 FEN，不看模型提示，也不和其他座位共享行程。"""
+"""UCI 引擎座位。支援完整棋局歷史，不看模型提示，座位各有獨立行程。"""
 
 from __future__ import annotations
 
@@ -21,8 +21,9 @@ class UciPlayer:
         engine_path: str,
         *,
         skill: int,
-        depth: int,
-        movetime: float,
+        depth: int | None,
+        movetime: float | None,
+        nodes: int | None = None,
         threads: int = 1,
         hash_mb: int = 16,
         name: str | None = None,
@@ -33,6 +34,9 @@ class UciPlayer:
         self.skill = skill
         self.depth = depth
         self.movetime = movetime
+        self.nodes = nodes
+        if nodes is not None and (nodes < 1 or depth is not None or movetime is not None):
+            raise ValueError("Node limits require positive nodes and no depth/time cap")
         self.threads = threads
         self.hash_mb = hash_mb
         self._engine: chess.engine.SimpleEngine | None = None
@@ -56,26 +60,47 @@ class UciPlayer:
                 f"Skill Level {self.skill} 超出引擎範圍 {option.min}..{option.max}"
             )
         config = {"Skill Level": self.skill, "Threads": self.threads, "Hash": self.hash_mb}
+        if "UCI_LimitStrength" in engine.options:
+            config["UCI_LimitStrength"] = False
+        variant = engine.options.get("UCI_Variant")
+        if variant is not None:
+            if "chess" not in (variant.var or []):
+                engine.close()
+                raise RuntimeError("Engine does not support standard chess")
+            # python-chess manages UCI_Variant from the Board type on play().
+            # Configuring this managed option explicitly raises EngineError.
         eval_file = engine.options.get("EvalFile")
         if eval_file is not None and eval_file.default:
             candidate = Path(self.engine_path).resolve().parent / str(eval_file.default)
             if candidate.exists():
                 config["EvalFile"] = str(candidate)
-        engine.configure(config)
+        try:
+            engine.configure(config)
+        except BaseException:
+            engine.close()
+            raise
         self._engine = engine
         return engine
 
-    def _best_uci(self, fen: str) -> str:
+    def _play_board(self, board: chess.Board):
         with self._lock:
             engine = self._ensure()
-            board = chess.Board(fen)
-            played = engine.play(board, chess.engine.Limit(time=self.movetime, depth=self.depth))
+            played = engine.play(board, chess.engine.Limit(time=self.movetime, depth=self.depth, nodes=self.nodes),
+                                 info=chess.engine.INFO_BASIC)
             if played.move is None:
                 raise RuntimeError(f"{self.name} 沒有走出著法")
             uci = played.move.uci()
             if played.move not in board.legal_moves:
                 raise RuntimeError(f"{self.name} 走出非法著法 {uci}")
-            return uci
+            return uci, {"search": {key: played.info.get(key) for key in ("depth", "seldepth", "nodes", "time", "nps")},
+                         "limits": {"skill": self.skill, "depth": self.depth, "movetime_sec": self.movetime, "nodes": self.nodes},
+                         "engine": engine.id}
+
+    def _best_uci(self, fen: str) -> str:
+        return self._play_board(chess.Board(fen))[0]
+
+    async def play_board(self, board: chess.Board):
+        return await asyncio.to_thread(self._play_board, board.copy(stack=True))
 
     async def play(self, obs: Observation) -> AsyncIterator[StreamEvent]:
         if obs.seat != self.seat:

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLMGo! RSI</title><link rel="stylesheet" href="/static/rsi.css">
+</head>
+<body>
+  <header><a href="/">对局回放</a><h1>国际象棋 RSI</h1>
+    <label>研究 <select id="campaign"></select></label><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
+  <p id="overview">上传框架并创建 campaign 后，这里显示远端研究状态。</p>
+  <div class="status-grid">
+    <section><h2>强 Agent 状态</h2><pre id="meta-status">尚未读取</pre><p id="meta-usage" class="muted">等待服务返回Token用量</p></section>
+    <section><h2>Executor 状态</h2><pre id="executor-state">尚未读取</pre></section>
+    <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
+    <section><h2>研究与验收</h2><pre id="research-state">尚未读取</pre></section>
+  </div>
+  <section class="monitor"><h2>Executor · 提交、轮询与收集</h2>
+    <div class="toolbar"><label>事件 <select id="executor-filter"><option value="all">全部</option><option value="poll">轮询</option><option value="command">cctl命令</option><option value="error">异常</option></select></label>
+      <button id="executor-older">较早事件</button><button id="executor-live">返回实时</button><span id="executor-window" class="muted"></span></div>
+    <p class="muted">这里只读取磁盘记录；页面刷新不会向集群发状态查询，也不会把轮询放入教练上下文。</p>
+    <div id="executor-events" class="feed"></div>
+    <div class="toolbar"><label>任务 <select id="job"></select></label><span id="file-status"></span></div><div id="job-files" class="files"></div>
+  </section>
+  <main>
+    <section><h2>强 Agent · 复盘与工具</h2>
+      <div class="toolbar"><label>事件 <select id="coach-filter"><option value="all">全部</option><option value="text">文字/思考</option><option value="tool">工具/命令</option><option value="usage">Token用量</option><option value="request">请求</option><option value="error">异常</option><option value="lifecycle">轮次状态</option></select></label>
+        <button id="coach-older">较早事件</button><button id="coach-live-button">返回实时</button></div>
+      <p id="coach-window" class="muted"></p><details open><summary>最近可见思考/回答（有界窗口）</summary><pre id="coach-live"></pre></details>
+      <div id="coach" class="feed"></div></section>
+    <section><h2>学生 · 实时对局</h2><select id="game"><option value="">选择对局</option></select>
+      <button id="follow-game">跟随最新对局</button>
+      <p id="game-state"></p><div id="board" aria-label="国际象棋棋盘"></div>
+      <details open><summary>当前请求可见思考与回答</summary><pre id="thinking"></pre></details>
+      <details><summary>工具、请求与后备诊断</summary><div id="student-events" class="feed"></div></details>
+    </section>
+    <section><h2>Memory · 假设与结论</h2><div id="memory" class="feed"></div></section>
+    <section><h2>候选的实测表现</h2><p>最近200条评测；纵轴为同级得分率，颜色区分对手等级。完整历史仍保存在原始记录。</p>
+      <svg id="curve" viewBox="0 0 640 260" role="img" aria-label="候选表现曲线"></svg>
+      <p id="cost"></p><div id="results" class="feed"></div></section>
+  </main>
+  <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
+  <script src="/static/rsi.js" defer></script>
+</body></html>

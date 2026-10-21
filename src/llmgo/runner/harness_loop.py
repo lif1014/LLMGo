@@ -22,13 +22,14 @@ _MOVE_RE = re.compile(r"<move>\s*([a-h][1-8][a-h][1-8][qrbn]?)\s*</move>", re.IG
 
 
 class HarnessSeat:
-    def __init__(self, seat: str, ask: Ask, max_tokens: int = 32768, config: HarnessConfig | None = None, seed: int | None = None):
+    def __init__(self, seat: str, ask: Ask, max_tokens: int = 32768, config: HarnessConfig | None = None, seed: int | None = None, skill_cards=None):
         self.seat = seat
         self.ask = ask
         self.max_tokens = max_tokens
         self.name = f"harness-{seat}"
         self.config = config or HarnessConfig.from_dict()
         self.rng = random.Random(seed)
+        self.skill_cards = skill_cards
 
     async def choose(self, board: chess.Board, history: list[dict], emit: Emit) -> Decision:
         return await choose_move(
@@ -40,6 +41,7 @@ class HarnessSeat:
             budget=self.max_tokens,
             config=self.config,
             rng=self.rng,
+            skill_cards=self.skill_cards,
         )
 
 
@@ -52,6 +54,11 @@ class EngineSeat:
         self.name = player.name
 
     async def choose(self, board: chess.Board, history: list[dict], emit: Emit) -> Decision:
+        if hasattr(self.player, "play_board"):
+            uci, info = await self.player.play_board(board)
+            await emit({"type": "engine_search", "seat": self.seat, "ply": len(history),
+                        "uci": uci, **info})
+            return Decision(uci=uci, source="engine")
         obs = Observation(
             seat=self.seat,
             fen=board.fen(),

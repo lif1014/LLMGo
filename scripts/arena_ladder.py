@@ -26,11 +26,8 @@ from llmgo.runtime.uci_player import UciPlayer  # noqa: E402
 from llmgo.store.jsonl import TrajectoryStore  # noqa: E402
 
 # Project difficulty presets; anchor ratings are comparison labels, not calibrated human ratings.
-LEVELS = {
-    1: {"anchor_elo": 800, "skill": -9, "movetime": 0.05, "depth": 5},
-    2: {"anchor_elo": 1100, "skill": -5, "movetime": 0.10, "depth": 5},
-    3: {"anchor_elo": 1400, "skill": -1, "movetime": 0.15, "depth": 5},
-}
+from llmgo.rsi.ladder import opponent as opponent_spec
+LEVELS = {i: {**opponent_spec(i), 'movetime': opponent_spec(i)['movetime_sec']} for i in range(1, 9)}
 
 
 def _jobs(urls: list[str], white: int, black: int) -> list[dict]:
@@ -55,7 +52,7 @@ async def _play_one(job: dict, args, batch_id: str, level: dict) -> dict:
             "lichess_level": args.level,
             "anchor_elo": level["anchor_elo"],
             "skill": level["skill"],
-            "movetime_ms": int(level["movetime"] * 1000),
+            "movetime_ms": int(level["movetime"] * 1000) if level["movetime"] is not None else None,
             "depth": level["depth"],
             "model_seat": model_seat,
             "model": args.model,
@@ -82,6 +79,7 @@ async def _play_one(job: dict, args, batch_id: str, level: dict) -> dict:
         skill=level["skill"],
         depth=level["depth"],
         movetime=level["movetime"],
+        nodes=level.get("nodes"),
         name=f"fairy-sf-l{args.level}-{engine_seat}",
     )
     players = {
@@ -138,6 +136,10 @@ async def _worker(url: str, jobs: list[dict], args, batch_id: str, level: dict) 
 
 def _print_report(batch_id: str, report: dict) -> None:
     print(f"batch {batch_id} finished={report['finished']} unfinished={report['unfinished']}", flush=True)
+    unrated = report.get("unrated", {})
+    if unrated.get("games"):
+        print(f"unrated W-D-L {unrated['wins']}-{unrated['draws']}-{unrated['losses']} "
+              f"score={unrated['score'] / unrated['games']:.3f}; no calibrated Elo anchor", flush=True)
     for item in report["by_anchor"]:
         overall = item["all"]
         rating = overall["rating"]
@@ -160,7 +162,8 @@ def _print_report(batch_id: str, report: dict) -> None:
 
 
 async def _run(args) -> None:
-    level = LEVELS[args.level]
+    spec = opponent_spec(args.level, nodes_base=getattr(args, "nodes_base", None))
+    level = {**spec, 'movetime': spec['movetime_sec']}
     urls = args.urls
     jobs = _jobs(urls, args.white, args.black)
     if not jobs:
@@ -191,7 +194,8 @@ def main() -> None:
     parser.add_argument("--urls", nargs="+", default=[])
     parser.add_argument("--white", type=int, default=20)
     parser.add_argument("--black", type=int, default=20)
-    parser.add_argument("--level", type=int, default=1, choices=sorted(LEVELS))
+    parser.add_argument("--level", type=int, default=1)
+    parser.add_argument("--nodes-base", type=int)
     parser.add_argument("--engine", default=str(ROOT / "engines" / "fairy-stockfish"))
     parser.add_argument("--runs", default=str(ROOT / "runs"))
     parser.add_argument("--batch")

@@ -1,0 +1,8 @@
+# Devspace controller + read-only web UI. This is a dependency list, not a GPU lockfile.
+python-chess>=1.999,<2
+httpx>=0.27,<1
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+PyYAML>=6,<7
+Pillow>=10
+tokenizers>=0.21,<1

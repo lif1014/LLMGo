@@ -11,6 +11,7 @@
     <div>
       <p class="eyebrow">LLMGo!</p>
       <h1>国际象棋</h1>
+      <a href="/rsi">RSI 研究看板</a>
       <p class="sub">双方各看各的思考。两边只共享棋盘和已经落下的走法。</p>
     </div>
     <form id="controls">
@@ -29,7 +30,10 @@
         </select>
       </label>
       <label>国际象棋对手
-        <select name="opponent"><option value="engine">Fairy-Stockfish 第 1 档</option><option value="model">另一模型座位</option></select>
+        <select name="opponent"><option value="engine">Fairy-Stockfish</option><option value="model">另一模型座位</option></select>
+      </label>
+      <label>国际象棋难度
+        <select name="opponent_level"><option value="">协议默认</option><option value="1">L1 · skill -9</option><option value="2">L2 · skill -5</option><option value="3">L3 · skill -1</option><option value="4">L4 · skill 3</option><option value="5">L5 · skill 7</option><option value="6">L6 · skill 11</option><option value="7">L7 · skill 15</option><option value="8">L8 · skill 20</option></select>
       </label>
       <label>模型执棋
         <select name="model_seat"><option value="white">白方</option><option value="black">黑方</option></select>

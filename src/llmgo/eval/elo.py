@@ -43,6 +43,7 @@ def _kind(reason: str | None, points: float | None) -> str:
 def summarize_games(games: list[dict]) -> dict:
     """games 每一項要有 result、result_reason、model_seat、anchor_elo。"""
     buckets: dict[float, list[dict]] = {}
+    unrated = []
     unfinished = 0
     for item in games:
         points = game_points(item.get("result"), item["model_seat"])
@@ -51,6 +52,9 @@ def summarize_games(games: list[dict]) -> dict:
             unfinished += 1
             continue
         row = {"points": points, "kind": kind}
+        if item.get("anchor_elo") is None:
+            unrated.append(row)
+            continue
         buckets.setdefault(float(item["anchor_elo"]), []).append(row)
 
     by_anchor = []
@@ -69,7 +73,12 @@ def summarize_games(games: list[dict]) -> dict:
                 "losses": sum(1 for row in rows if row["points"] == 0),
             }
         )
-    return {"finished": sum(len(rows) for rows in buckets.values()), "unfinished": unfinished, "by_anchor": by_anchor}
+    return {"finished": sum(len(rows) for rows in buckets.values()) + len(unrated),
+            "unfinished": unfinished, "by_anchor": by_anchor,
+            "unrated": {"games": len(unrated), "wins": sum(r["points"] == 1 for r in unrated),
+                        "draws": sum(r["points"] == .5 for r in unrated),
+                        "losses": sum(r["points"] == 0 for r in unrated),
+                        "score": sum(r["points"] for r in unrated)}}
 
 
 def load_batch(runs_dir: Path, batch_id: str) -> list[dict]:

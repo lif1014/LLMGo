@@ -48,7 +48,7 @@ class Decision:
 Ask = Callable[[str, int], Awaitable[AskResult]]
 Emit = Callable[[dict], Awaitable[None]]
 
-async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None, config=None) -> Decision:
+async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None, config=None, skill_cards=None) -> Decision:
     cfg = config or HarnessConfig.from_dict()
     picker = rng or random.Random()
     started = time.monotonic()
@@ -115,7 +115,7 @@ async def choose_move(board, history, ask, emit, *, seat, budget=32768, rng=None
         await send({'type': 'tool_call', 'status': 'finished', 'tool': name, 'parameters': parameters,
                     'call_id': call_id, 'result': lines, 'data': data, 'blackboard': observations,
                     'latency_ms': (time.monotonic() - tick) * 1000})
-    cards = select_skills(board, 'move', cfg.skills_limit, candidates=candidates)
+    cards = select_skills(board, 'move', cfg.skills_limit, candidates=candidates, cards=skill_cards)
     correction = None
     reason = 'invalid_choice'
     for attempt in range(cfg.attempts_per_choice):

@@ -20,14 +20,16 @@ def _token_ids(value):
 
 class VllmAsker:
     def __init__(self, base_url, model, temperature=0.9, top_p=0.95, top_k=20,
-                 presence_penalty=0.0, timeout_sec=540.0, transport=None, tokenizer_path=None):
+                 presence_penalty=0.0, timeout_sec=540.0, transport=None, tokenizer_path=None, seed=None):
         self.base_url = base_url.rstrip('/')
         self.model, self.temperature, self.top_p, self.top_k = model, temperature, top_p, top_k
         self.presence_penalty, self.timeout_sec, self.transport = presence_penalty, timeout_sec, transport
         self.boundary = TokenBoundary(tokenizer_path)
+        self.seed = seed
 
     def build_payload(self, prompt: str, max_tokens: int) -> dict:
         return {'model': self.model, 'messages': [{'role': 'user', 'content': prompt}],
+                   **({'seed': self.seed} if self.seed is not None else {}),
                    'temperature': self.temperature, 'top_p': self.top_p, 'max_tokens': max_tokens,
                    'presence_penalty': self.presence_penalty, 'top_k': self.top_k,
                    'skip_special_tokens': False, 'return_token_ids': True, 'include_reasoning': True,

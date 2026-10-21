@@ -338,7 +338,7 @@ class VllmServer:
         url = f"{self.base_url}/models"
         name = str(self.protocol["model_name"])
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=2) as response:
                 body = response.read().decode("utf-8", "replace")
             return name in body
         except (urllib.error.URLError, TimeoutError, OSError):
@@ -423,8 +423,9 @@ async def _play_one(job: dict, protocol: dict, base_url: str, engine: Path, runs
         engine_seat,
         str(engine),
         skill=int(protocol["skill"]),
-        depth=int(protocol["depth"]),
-        movetime=float(protocol["movetime_sec"]),
+        depth=int(protocol["depth"]) if protocol.get("depth") is not None else None,
+        movetime=float(protocol["movetime_sec"]) if protocol.get("movetime_sec") is not None else None,
+        nodes=protocol.get("nodes"),
         name=f"fairy-sf-{engine_seat}",
     )
     seats = {
@@ -553,12 +554,19 @@ def main() -> int:
     parser.add_argument("--games", type=int)
     parser.add_argument("--protocol", default=str(PROTOCOL_PATH))
     parser.add_argument("--batch")
+    parser.add_argument("--opponent-level", type=int, help="Explicit project ladder level; omitting preserves the supplied protocol")
+    parser.add_argument("--nodes-base", type=int, help="Measured L9 node baseline, required for L9+")
     args = parser.parse_args()
 
     protocol_path = Path(args.protocol)
     if not protocol_path.is_file():
         return _fail(f"找不到對局條件：{protocol_path}")
     protocol = load_protocol(protocol_path)
+    if args.opponent_level is not None:
+        from llmgo.rsi.ladder import opponent
+        spec = opponent(args.opponent_level, nodes_base=args.nodes_base)
+        protocol.update(level=spec['level'], skill=spec['skill'], depth=spec['depth'],
+                        movetime_sec=spec['movetime_sec'], nodes=spec['nodes'], opponent=spec)
     if args.model_path:
         protocol['model_path'] = str(Path(args.model_path).resolve())
     HarnessConfig.from_dict(protocol.get("harness"))

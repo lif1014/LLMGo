@@ -1077,6 +1077,7 @@ document.getElementById("controls").addEventListener("submit", async (event) => 
     game: form.get("backend") === "harness" ? "chess" : (form.get("game") || "xiangqi"),
     opponent: form.get("opponent"),
     model_seat: form.get("model_seat"),
+    opponent_level: form.get("opponent_level") ? Number(form.get("opponent_level")) : null,
   };
   setGame(body.game);
   const response = await fetch("/api/games", {

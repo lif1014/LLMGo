@@ -8,15 +8,38 @@ from llmgo.harness.tools import material_value
 @lru_cache(maxsize=1)
 def load_cards() -> tuple[dict, ...]:
     cards = json.loads((Path(__file__).with_name('skills') / 'cards.json').read_text(encoding='utf-8'))
+    return validate_cards(cards)
+
+
+TRIGGERS = {'in_check', 'checks_available', 'captures_available', 'opening', 'inactive_rook', 'endgame',
+            'candidate_allows_mate', 'opening_white_centre', 'opening_black_reply', 'opening_open_game',
+            'opening_sicilian', 'opening_caro_kann', 'opening_queen_pawn'}
+
+
+def validate_cards(cards) -> tuple[dict, ...]:
+    if not isinstance(cards, (list, tuple)) or len(cards) > 64:
+        raise ValueError('Skills must be an array with at most 64 cards')
     seen = set()
-    triggers = {'in_check', 'checks_available', 'captures_available', 'opening', 'inactive_rook', 'endgame', 'candidate_allows_mate',
-                'opening_white_centre', 'opening_black_reply', 'opening_open_game',
-                'opening_sicilian', 'opening_caro_kann', 'opening_queen_pawn'}
     for card in cards:
-        if card['id'] in seen or card['trigger'] not in triggers:
+        if not isinstance(card, dict):
+            raise ValueError('Every skill must be an object')
+        if any(not isinstance(card.get(key), str) or not card[key].strip()
+               for key in ('id', 'trigger', 'title', 'when', 'rule', 'counterexample')):
+            raise ValueError('Skill identifiers, trigger and prose must be nonempty strings')
+        if card['id'] in seen or card['trigger'] not in TRIGGERS:
             raise ValueError('Invalid or duplicate skill: ' + card['id'])
-        for field in ('when', 'rule', 'counterexample', 'sources', 'stages'):
+        for field in ('title', 'when', 'rule', 'counterexample', 'sources', 'stages'):
             if not card.get(field): raise ValueError(f'Missing {field} in {card["id"]}')
+        if type(card.get('priority')) is not int or not 0 <= card['priority'] <= 100:
+            raise ValueError('Skill priority must be an integer from 0 to 100')
+        if card['stages'] != ['move']:
+            raise ValueError('Only the complete-move stage is supported')
+        if not isinstance(card['sources'], list) or any(not isinstance(s, str) or not s.strip() for s in card['sources']):
+            raise ValueError('Skill sources must be a nonempty list of references')
+        if any(not isinstance(card[key], str) for key in ('id', 'title', 'when', 'rule', 'counterexample')):
+            raise ValueError('Skill prose fields must be strings')
+        if len('\n'.join(card[key] for key in ('title', 'when', 'rule', 'counterexample'))) > 2200:
+            raise ValueError('Skill card exceeds fixed prose budget')
         seen.add(card['id'])
     return tuple(cards)
 
@@ -48,7 +71,7 @@ def _opening_signals(board: chess.Board) -> dict[str, bool]:
             and not (white_e4 and black_e5),
     }
 
-def select_skills(board: chess.Board, stage: str = 'move', limit: int = 2, *, candidates=None) -> list[dict]:
+def select_skills(board: chess.Board, stage: str = 'move', limit: int = 2, *, candidates=None, cards=None) -> list[dict]:
     legal = list(board.legal_moves)
     opening = board.fullmove_number <= 12
     endgame = not board.queens and sum(material_value(board, c) - 100 * len(board.pieces(chess.PAWN, c)) for c in chess.COLORS) <= 2000
@@ -61,7 +84,8 @@ def select_skills(board: chess.Board, stage: str = 'move', limit: int = 2, *, ca
                **_opening_signals(board)}
     if candidates is not None:
         signals['candidate_allows_mate'] = any(item['preview']['opponent_mate_in_one'] for item in candidates)
-    cards = [card for card in load_cards() if stage in card['stages'] and signals[card['trigger']]]
+    cards = [card for card in (load_cards() if cards is None else cards)
+             if stage in card['stages'] and signals[card['trigger']]]
     if any(card['id'].startswith('opening-') for card in cards):
         cards = [card for card in cards if card['id'] != 'development']
     return sorted(cards, key=lambda card: (-card['priority'], card['id']))[:limit]

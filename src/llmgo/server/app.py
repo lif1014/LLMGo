@@ -53,12 +53,24 @@ class NewGame(BaseModel):
     game: str = "xiangqi"
     opponent: str = "engine"
     model_seat: str = "white"
+    opponent_level: int | None = Field(default=None, ge=1)
+    opponent_nodes_base: int | None = Field(default=None, ge=1)
     harness: dict | None = None
 
 
 def chess_protocol() -> dict:
     path = Path(os.environ.get("LLMGO_CHESS_PROTOCOL", ROOT.parent / "PostTrainBench" / "protocol.json"))
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def game_chess_protocol(request: NewGame) -> dict:
+    protocol = chess_protocol()
+    if request.opponent_level is not None:
+        from llmgo.rsi.ladder import opponent
+        spec = opponent(request.opponent_level, nodes_base=request.opponent_nodes_base)
+        protocol.update(level=spec['level'], skill=spec['skill'], depth=spec['depth'],
+                        movetime_sec=spec['movetime_sec'], nodes=spec['nodes'], opponent_spec=spec)
+    return protocol
 
 
 async def harness_library():
@@ -167,6 +179,8 @@ class Hub:
 
 hub = Hub()
 app = FastAPI(title="LLMGo")
+from llmgo.server.rsi import router as rsi_router
+app.include_router(rsi_router)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.get("/api/harness")(harness_library)
 
@@ -174,6 +188,11 @@ app.get("/api/harness")(harness_library)
 @app.get("/")
 async def index():
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/rsi")
+async def rsi_index():
+    return FileResponse(STATIC / "rsi.html")
 
 
 @app.get("/api/config")
@@ -385,6 +404,7 @@ async def start_game(body: NewGame):
         from llmgo.harness.config import HarnessConfig
         try:
             HarnessConfig.from_dict(body.harness or chess_protocol().get("harness"))
+            game_chess_protocol(body)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         if body.backend == "harness" and body.opponent == "engine" and not os.access(chess_protocol()["engine"], os.X_OK):
@@ -573,7 +593,7 @@ async def _drive(game: GameSession) -> None:
         from llmgo.runner.harness_loop import EngineSeat, HarnessRunner, HarnessSeat
         from llmgo.runtime.uci_player import UciPlayer
 
-        protocol = chess_protocol()
+        protocol = game_chess_protocol(body)
         harness_config = HarnessConfig.from_dict(body.harness or protocol.get("harness"))
 
         sampling = dict(
@@ -590,7 +610,10 @@ async def _drive(game: GameSession) -> None:
                  second: HarnessSeat(second, VllmAsker(temperature=second_temp, **sampling), max_tokens=budget, config=harness_config)}
         if body.opponent == "engine":
             opponent = "black" if body.model_seat == "white" else "white"
-            engine_seat = EngineSeat(UciPlayer(opponent, protocol["engine"], skill=int(protocol["skill"]), depth=int(protocol["depth"]), movetime=float(protocol["movetime_sec"])))
+            engine_seat = EngineSeat(UciPlayer(opponent, protocol["engine"], skill=int(protocol["skill"]),
+                                             depth=int(protocol["depth"]) if protocol.get("depth") is not None else None,
+                                             movetime=float(protocol["movetime_sec"]) if protocol.get("movetime_sec") is not None else None,
+                                             nodes=protocol.get("nodes")))
             seats[opponent] = engine_seat
         game.store.write_config({"id": game.id, "request": body.model_dump(), "server": config,
                                  "game": "chess", "model_seat": body.model_seat if body.opponent == "engine" else None,

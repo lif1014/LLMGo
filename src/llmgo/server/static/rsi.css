@@ -1,0 +1,26 @@
+:root { color-scheme:light; font:15px/1.55 system-ui,sans-serif; color:#1d3031; background:#f4f6f2; }
+body { margin:0 auto; max-width:1600px; padding:20px; }
+header { display:flex; align-items:center; flex-wrap:wrap; gap:24px; border-bottom:2px solid #245a4c; }
+header h1 { font-size:24px; } a { color:#245a4c; } select,button { font:inherit; padding:7px; max-width:100%; }
+main { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.status-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.status-grid section { border-top:4px solid #245a4c; padding:14px; }
+.status-grid h2 { font-size:16px; } .status-grid pre { font-size:12px; max-height:230px; }
+.monitor { margin-bottom:20px; } .monitor .feed { max-height:340px; }
+.toolbar,.files { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
+.files button { font-size:12px; background:#f1f6f3; border:1px solid #b9cfc4; border-radius:5px; }
+button { cursor:pointer; } button:disabled { cursor:default; opacity:.5; }
+[hidden] { display:none!important; } details[data-category="error"] { border-left:3px solid #b44736; padding-left:9px; }
+section { background:white; border:1px solid #d3ded8; border-radius:10px; padding:18px; min-width:0; }
+h2 { font-size:19px; margin:0 0 15px; } .feed { max-height:550px; overflow:auto; }
+details { margin:8px 0; border-bottom:1px solid #e5ebe6; padding-bottom:8px; }
+summary { cursor:pointer; overflow-wrap:anywhere; } pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:420px; overflow:auto; }
+#board { display:grid; grid-template-columns:repeat(8,1fr); width:min(100%,420px); aspect-ratio:1; border:2px solid #345; margin:12px 0; }
+.square { display:flex; align-items:center; justify-content:center; position:relative; background:#e7e6cf; font-size:clamp(20px,3vw,43px); }
+.square.dark { background:#78a28e; } .coordinate { position:absolute; bottom:0; left:2px; font:9px system-ui; color:#233; }
+#thinking { background:#f4f7f3; padding:12px; min-height:80px; }
+svg { width:100%; background:#fafcf9; } dialog { max-width:90vw; width:1000px; } dialog pre { max-height:75vh; }
+.muted { color:#63736d; } .error { color:#a33424; }
+@media(max-width:1100px) { .status-grid { grid-template-columns:1fr 1fr; } }
+@media(max-width:900px) { main { grid-template-columns:1fr; } body { padding:12px; } .square { font-size:34px; } }
+@media(max-width:550px) { .status-grid { grid-template-columns:1fr; } }

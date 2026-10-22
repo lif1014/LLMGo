@@ -11,6 +11,8 @@
 - 保存working/best/recommended、源码/模型/环境身份及原始日志；最终推荐追加新batch复测。
 - 网页展示研究和矩阵，有界增量读取；Executor原始轮询不进入Meta上下文。
 - Worker以用户指定ptdbench-verl-vllm017镜像安装共享overlay，保留GPU栈版本，实际兼容情况由环境回执记录。
+- 可选完整上传包包含LC0 Linux程序、对应源代码与BT4权重；install_teacher核验后安装到既有site路径，不覆盖不同文件，教师资产不进入每轮源码快照。
+- 专案名保持rsi；新campaign每120秒查询集群，状态稳定时退避至600秒，已有campaign保留冻结配置。
 - 清理其他棋种和旧平行入口；旧runs保留证据但不打包。旧campaign新建v2，不混用旧状态。
 
 交付验证涵盖恢复/身份/预算/真实候选子进程/真实Fairy接口、网页与可选CPU PPO；不把这些测试说成4B模型GPU训练或棋力提升的证据。

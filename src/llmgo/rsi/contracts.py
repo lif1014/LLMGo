@@ -101,8 +101,8 @@ def load_site(path: str | Path) -> dict:
         inside(site["user_root"], site["worker_venv"])
     if site.get("inference_python"):
         inside(site["user_root"], site["inference_python"])
-    base_poll = finite(site.get("poll_seconds", 30), "poll_seconds", 1, 3600)
-    finite(site.get("executor_max_poll_seconds", max(120, base_poll)), "executor_max_poll_seconds", base_poll, 3600)
+    base_poll = finite(site.get("poll_seconds", 120), "poll_seconds", 1, 3600)
+    finite(site.get("executor_max_poll_seconds", max(600, base_poll)), "executor_max_poll_seconds", base_poll, 3600)
     for key in ("cpu", "memory_gib"):
         if type(site.get(key)) is not int or site[key] < 1:
             raise ValueError(f"Invalid Worker {key}")

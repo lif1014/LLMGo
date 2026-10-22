@@ -26,9 +26,9 @@
   "cpu": 16,
   "memory_gib": 128,
   "meta_model": null,
-  "poll_seconds": 30,
+  "poll_seconds": 120,
   "executor_mode": "embedded",
-  "executor_max_poll_seconds": 120,
+  "executor_max_poll_seconds": 600,
   "worker_venv": "/user/lyh4170/venvs/llmgo-rsi-20261022",
   "inference_python": "/user/lyh4170/venvs/llmgo-rsi-20261022-inference/bin/python",
   "runtime_root": "/user/lyh4170/llmgo-rsi-runtime-20261022"

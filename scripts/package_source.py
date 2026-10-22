@@ -44,7 +44,7 @@ def verify(path):
     return {'archive':str(path),'files':len(manifest['files']),'sha256':sha(path),'verified':True}
 
 
-def build(output):
+def build(output,teacher_assets=None):
     files=[]
     for folder in FOLDERS:
         for p in sorted((ROOT/folder).rglob('*')):
@@ -52,19 +52,28 @@ def build(output):
             if p.is_symlink():raise ValueError('Unexpected source symlink: '+str(p))
             if p.is_file():files.append(p)
     files += [ROOT/name for name in TOP if (ROOT/name).is_file()]
-    for p in files:
+    entries = {p.relative_to(ROOT).as_posix():p for p in files}
+    teacher = None
+    if teacher_assets is not None:
+        from install_teacher import verify_assets
+        teacher_assets = teacher_assets.resolve()
+        teacher = verify_assets(teacher_assets)
+        for name in list(teacher['files'])+['manifest.json']:
+            entries['teacher_assets/'+name] = teacher_assets/name
+    for p in entries.values():
         if p.name in {'auth.json','config.toml','.env','token','token_expire_at'} or p.suffix in {'.pem','.key'}:
             raise ValueError('Credential-like file must not be packaged: '+str(p))
     try:head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True,stderr=subprocess.DEVNULL).strip()
     except (OSError,subprocess.CalledProcessError):head=None
     manifest={'created':datetime.now(timezone.utc).isoformat(),'git_base':head,'worktree_snapshot':True,
               'pipeline':'autonomous-chess-v2','base_image':'share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb',
-              'excluded':['.git','runs','credentials','Python environments','student weights','LC0 weights'],
-              'files':{p.relative_to(ROOT).as_posix():{'sha256':sha(p),'bytes':p.stat().st_size,'mode':p.stat().st_mode&0o777} for p in files}}
+              'excluded':['.git','runs','credentials','Python environments','student weights']+([] if teacher else ['LC0 weights']),
+              'teacher_assets':{'included':bool(teacher),'gpu_tested':teacher.get('gpu_tested',False) if teacher else False},
+              'files':{name:{'sha256':sha(p),'bytes':p.stat().st_size,'mode':p.stat().st_mode&0o777} for name,p in entries.items()}}
     output.parent.mkdir(parents=True,exist_ok=True)
     tmp=output.with_name(output.name+'.tmp')
     with tarfile.open(tmp,'w:gz',compresslevel=6) as tar:
-        for p in files:tar.add(p,arcname='LLMGo!/'+p.relative_to(ROOT).as_posix(),recursive=False)
+        for name,p in entries.items():tar.add(p,arcname='LLMGo!/'+name,recursive=False)
         data=(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n').encode()
         member=tarfile.TarInfo('LLMGo!/UPLOAD-MANIFEST.json');member.size=len(data);member.mode=0o644
         tar.addfile(member,io.BytesIO(data))
@@ -79,7 +88,9 @@ def main():
     g=p.add_mutually_exclusive_group(required=True)
     g.add_argument('--output',type=Path)
     g.add_argument('--verify',type=Path)
+    p.add_argument('--teacher-assets',type=Path,help='Include a verified LC0/BT4 bundle in the upload archive')
     args=p.parse_args()
-    print(json.dumps(verify(args.verify) if args.verify else build(args.output),ensure_ascii=False))
+    if args.verify and args.teacher_assets:p.error('--teacher-assets requires --output')
+    print(json.dumps(verify(args.verify) if args.verify else build(args.output,args.teacher_assets),ensure_ascii=False))
 
 if __name__=='__main__':main()

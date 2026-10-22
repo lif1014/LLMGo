@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-10-21T16:56:26.349209+00:00",
+  "checked_at": "2026-10-22T08:35:44.685084+00:00",
   "base_image": "share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb",
   "base_versions": {
     "python": "3.12.13",
@@ -107,5 +107,24 @@
     "caches_tmp": "/user/lyh4170/venvs/llmgo-rsi-20261022/_runtime",
     "system_python_modified": false,
     "other_venvs_modified": false
+  },
+  "lc0_teacher": {
+    "build_task_id": 1332483,
+    "build_status": "Succeeded",
+    "uci_task_id": 1332573,
+    "uci_status": "Succeeded",
+    "engine_sha256": "25fd32adfdc8904b1038c2c9e7f6f60aef2edd97ad32f1d2fa5c2e20bf2d31f9",
+    "bytes": 8561904,
+    "base_image": "share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb",
+    "cuda_compute_capability": 90,
+    "native_wdl_option": true,
+    "version_banner": "id name Lc0 v0.32.1+git.unknown",
+    "gpu_tested": false,
+    "build_root": "/user/lyh4170/tools/llmgo-lc0-v0.32.1-20261022",
+    "system_packages_modified": false,
+    "zlib_development_files": "Extracted to the owned build prefix; no system package installation",
+    "build_receipt": "/user/lyh4170/tools/llmgo-lc0-v0.32.1-20261022/build-result.json",
+    "uci_receipt": "/user/lyh4170/tools/llmgo-lc0-v0.32.1-20261022/uci-result.json",
+    "asset_installation": "The full upload archive contains LC0/BT4. Run scripts/install_teacher.py after extraction to install into existing site paths."
   }
 }

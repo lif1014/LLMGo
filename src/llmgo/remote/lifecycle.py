@@ -26,8 +26,8 @@ class JobExecutor:
         self.memory = MemoryStore(self.root / "executor")
         self.transport = transport or CctlExecutor(site, self.memory, record_commands=True)
         self.clock = clock
-        self.interval = max(1., float(site.get("poll_seconds", 30)))
-        self.max_interval = max(self.interval, float(site.get("executor_max_poll_seconds", 120)))
+        self.interval = max(1., float(site.get("poll_seconds", 120)))
+        self.max_interval = max(self.interval, float(site.get("executor_max_poll_seconds", 600)))
 
     def report_path(self, job):
         return inside(self.root, self.root / "jobs" / identifier(job["id"]) / "executor/report.json")

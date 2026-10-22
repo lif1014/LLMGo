@@ -26,6 +26,21 @@ python3 scripts/rsi.py run chess-autonomous-v2
 
 默认先完成 L1–L8 的初始玩家基线，每档20局，共160局，然后调用 Meta-Agent。之后由它决定代码改动、任意计算任务、测试范围和下一步。失败实验会保留产物并交回研究；基线基础设施失败则等待修复。没有 Meta-Agent 总研究时间上限。
 
+Executor默认embedded，与Controller同进程，但轮询/原始日志已从Meta上下文分离；需要独立0GPU进程时，在init前设置 `executor_mode: "external"`，分别运行 `scripts/rsi.py executor run CAMPAIGN` 和 `scripts/rsi.py run CAMPAIGN`。两种模式的研究、基线和恢复规则相同。新campaign默认每120秒查询集群，状态稳定时逐步延长至600秒。
+
+## LC0 / BT4 完整上传包
+
+`LLMGo-rsi-full-20261022.tar.gz` 在源码外包含 `teacher_assets/`：Linux x86_64 LC0 v0.32.1、对应源代码/构建输入、BT4-it332权重和SHA回执。LC0是在指定Worker镜像中为H800（sm_90）构建的离线教师程序；BT4是它加载的神经网络权重，用于初始PPO的局面价值估计。正式对手仍是Fairy-Stockfish，正式玩家不使用LC0替Qwen选步。
+
+上传完整包并解压到 `/user/lyh4170` 后，在仓库运行：
+
+```bash
+python3 scripts/install_teacher.py --verify-only
+python3 scripts/install_teacher.py
+```
+
+第二条将资产安装到原site的 `lc0_bin` 与 `reward_weights` 路径，遇到不同的已有文件会拒绝覆盖；不改系统或其他venv。编译/version/动态库检查不能替代GPU推理验证，详细范围见包内构建回执。源码小包不含这些资产，学生Qwen权重不包含在任一上传包。`teacher_assets/`不进入Git，也不复制到每轮研究快照，避免365 MiB教师反复占用磁盘。
+
 ## 固定评测
 
 正式入口是 **`scripts/evaluate.py`**。受保护范围包括它使用的裁判、棋规、引擎、协议和固定参考 Harness；候选在单独进程中载入可修改代码，不能通过 Python import 改动裁判。所有走法由裁判重新检查。
@@ -90,8 +105,10 @@ share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb
 PYTHONPATH=src python3 -m pytest -q
 node tests/test_rsi_ui.js
 python3 scripts/package_source.py --output /home/lif/LLMGo-rsi-autonomous-20261022.tar.gz
+# 已有完整教师资产目录时，额外生成完整包
+python3 scripts/package_source.py --teacher-assets /PATH/TO/teacher_assets --output /PATH/TO/LLMGo-rsi-full-20261022.tar.gz
 ```
 
-包包含当前源码、tests、隐藏 `.agents`、文档、Fairy 和 NNUE；排除 `.git`、runs、凭证、Python环境及学生/LC0权重。旧对局不会删除或打进包。本次删除了其他棋种、旧十局/自动晋级入口、旧游戏创建网页及其专用测试；逐手查看集成在 RSI 网页，删除清单见 [removed-files.json](docs/removed-files.json)。
+源码小包包含当前源码、tests、隐藏 `.agents`、文档、Fairy 和 NNUE；排除 `.git`、runs、凭证、Python环境及学生/LC0权重。带 `--teacher-assets` 的完整包额外包含经核验的LC0/BT4教师资产，学生权重仍不打包。旧对局不会删除或打进包。本次删除了其他棋种、旧十局/自动晋级入口、旧游戏创建网页及其专用测试；逐手查看集成在 RSI 网页，删除清单见 [removed-files.json](docs/removed-files.json)。
 
 本机无 Qwen4B GPU 实战验收。CPU/模拟服务/真实 Fairy 接口测试只验证程序链路，不证明模型棋力提高，也不证明远端镜像训练已成功。

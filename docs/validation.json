@@ -1,7 +1,7 @@
 {
-  "checked_at": "2026-10-21T17:46:07.222458+00:00",
+  "checked_at": "2026-10-22T08:44:36.314754+00:00",
   "full_local_suite": {
-    "passed": 164,
+    "passed": 167,
     "skipped": 3
   },
   "native_cpu_ppo_and_tiny_qwen": {
@@ -14,15 +14,13 @@
   "latest_executor_activity_worker_regression": {
     "passed": 28
   },
-  "skill_validation": "4 revised RSI skills passed",
+  "skill_validation": {
+    "prior_rsi_skills_passed": 4,
+    "updated_cctl_skill": "passed"
+  },
   "git_diff_check": "passed",
   "real_4b_gpu_training": false,
   "elo_improvement_measured": false,
-  "archive_extraction_validation": {
-    "passed": 164,
-    "skipped": 3,
-    "portable_fixture": true
-  },
   "additional_boundary_checks": [
     "opponent binary/NNUE pinned across all campaign difficulties",
     "partial generation preserved on external turn timeout"
@@ -40,5 +38,28 @@
     "revised_skills_validated": 2,
     "git_diff_check": "passed",
     "sft_rule": "Prompt prohibition and zero-score warning; no automatic SFT detector/scoring override"
+  },
+  "teacher_assets": {
+    "identity_and_install_safety_tests_passed": 3,
+    "lc0_cuda_compilation": "passed",
+    "lc0_uci_and_wdl_handshake": "passed",
+    "gpu_inference_tested": false
+  },
+  "polling_defaults": {
+    "project": "rsi",
+    "initial_seconds": 120,
+    "maximum_seconds": 600
+  },
+  "previous_release_archive_extraction_validation": {
+    "passed": 164,
+    "skipped": 3,
+    "portable_fixture": true
+  },
+  "archive_extraction_validation": {
+    "passed": 167,
+    "skipped": 3,
+    "teacher_assets_verified": true,
+    "portable_fixture": true,
+    "source_and_assets_match_accepted_bundle": true
   }
 }

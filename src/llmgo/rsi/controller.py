@@ -386,7 +386,7 @@ class Controller:
                             self.state.update(phase="NEEDS_INPUT", needs_input=str(exc), resume_phase="PLANNING")
                         self.save()
                 elif result["status"] == "waiting":
-                    time.sleep(min(60, poll_seconds or self.site.get("poll_seconds", 30)))
+                    time.sleep(min(60, poll_seconds or self.site.get("poll_seconds", 120)))
                 elif result["status"] in ("submission_uncertain", "needs_input"):
                     return result
             return {"status": "step_limit", "phase": self.state["phase"]}

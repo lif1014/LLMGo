@@ -13,7 +13,7 @@ python3 scripts/rsi.py run CAMPAIGN
 
 任务范围包括任意research命令和固定单档20局evaluate。research可指定GPU/CPU/memory，固定评测用1GPU；集群、池和优先级始终beijing/model-autosft/NORMAL。不会自动停止任务或抢占别人资源。
 
-文件：executor/events.jsonl保存完整命令、查询和原始输出；jobs/ID/executor/report.json保存短状态；jobs/ID/output保存worker环境、进度、日志与结果；submission.json记录外部task ID和唯一description。常规间隔30秒，稳定时退避至120秒。网页刷新不会查cctl。
+文件：executor/events.jsonl保存完整命令、查询和原始输出；jobs/ID/executor/report.json保存短状态；jobs/ID/output保存worker环境、进度、日志与结果；submission.json记录外部task ID和唯一description。新campaign常规查询间隔120秒，状态稳定时逐步退避至600秒；Controller/服务可每60秒醒来读取本地状态，尚未到期不会查询集群。网页刷新不会查cctl。已有campaign沿用创建时冻结的站点设置，不原地改其manifest或任务身份。
 
 - submission_uncertain：创建响应不确定，保留intent，枚举自己的任务对账，不能盲目重提。
 - retrying：一次观察失败，原任务可能仍运行；保留ID继续观察。

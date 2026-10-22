@@ -24,6 +24,8 @@ cctl job create \
 
 正式Worker相同资源授权，默认GPU1/H800、CPU16、128Gi；research可用resources字段选择GPU数量、CPU和内存。固定评测始终1GPU。GPU只能job/pytorchjob，不加到devspace。
 
+新的手写提交格式先加 `--dry-run` 检查实际request，再正式create。JSON `-f` 的环境变量字段是 `envVars: [{"name":"KEY","value":"VALUE"}]`；`envs`可能被忽略，不要混用文件主体与`--env`来假定覆盖。纯flags的`--env KEY=VALUE`仍可正常使用。平台限制每任务最多64个环境变量，每个value最多4096字符；大资产应正常上传共享盘，而不是作为环境变量提交。create后附带的expose失败不代表任务未创建，必须先按唯一description对账；不要重提或停止其他任务来腾端口。
+
 ```bash
 cctl job get TASK_ID --no-input -o json
 cctl job logs TASK_ID --pod job-rsi-TASK_ID-main-0 --page-size 200
@@ -51,6 +53,7 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 | scripts/worker_entry.py | 每个新容器先验证/安装overlay，再启动Worker |
 | scripts/train_ppo.py | 可自由修改的现有HF PPO/LC0起始配方入口 |
 | scripts/package_source.py | 打包、逐文件SHA/大小/权限核验，排除凭证和运行数据 |
+| scripts/install_teacher.py | 核验完整包内LC0/BT4身份，安装到现有site路径，不覆盖不同文件 |
 | .agents/skills/rsi-training/SKILL.md | RL/skills方法边界、SFT禁令与可选PPO配方说明 |
 | tests/test_rsi_worker.py | 任意研究命令、模型回执与幂等恢复检查 |
 | tests/fixtures/qwen_stream_boundaries.json.gz | 独立于runs目录的11条原始GPU流式响应回归样本 |

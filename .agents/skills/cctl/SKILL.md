@@ -14,6 +14,7 @@ description: 为本项目在 Cybertron 查询自己的资源和任务，按用�
 
 - 常规查询和创建用参数数组传 `--no-input -o json`，不要拼接包含未转义代码的 shell。
 - `--entry` 是远端 shell 文本，使用 `shlex.join` 包裹每个参数。不要将 JSON 编码当 shell 转义。
+- 新格式先用 `cctl job create ... --dry-run` 核对实际request。通过 `-f` 提交时，环境变量写入JSON的 `envVars: [{"name":"KEY","value":"VALUE"}]`，不要写未识别的 `envs`，也不要假定 `--env` 会覆盖文件主体；纯flags提交可用 `--env KEY=VALUE`。平台最多64个环境变量，每个value最多4096字符；不要把大资产塞进单个变量。
 - 提交后保存 ID、description、资源、manifest SHA 和产物目录；断线先查已存在的任务。
 - 本机已验证的日志格式为 `cctl job logs ID --pod job-rsi-ID-main-0 --page-size 200`，不附加 `-o json` 或 `--no-input`；先用 get 核对任务身份。
 - `cctl file-task` 是远端文件间操作，不是本机上传命令；当前 CLI 没有已验证的 devspace exec。用户负责首次上传本机代码和模型。

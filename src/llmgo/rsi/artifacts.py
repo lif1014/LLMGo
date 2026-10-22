@@ -5,7 +5,7 @@ from pathlib import Path
 from .contracts import SCHEMA, atomic_json, digest, file_hash, inside, read_json
 
 EXCLUDED = {".git", "__pycache__", ".pytest_cache", ".venv", "venv", "runs", "engines",
-            "base_model", "final_model", "models", "node_modules"}
+            "base_model", "final_model", "models", "node_modules", "teacher_assets"}
 
 
 def snapshot_files(root):

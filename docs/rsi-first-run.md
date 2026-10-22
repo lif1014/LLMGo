@@ -8,10 +8,10 @@
 
 ## 1. 上传与控制环境
 
-将新的 LLMGo-rsi-autonomous-20261022.tar.gz 上传到 /user/lyh4170：
+上传包有两种：`LLMGo-rsi-autonomous-20261022.tar.gz` 是源码小包；`LLMGo-rsi-full-20261022.tar.gz` 额外包含LC0/BT4教师资产，初始PPO建议使用完整包。两者都不含学生模型/认证信息/历史runs。以下使用完整包，上传到 /user/lyh4170：
 
 ```bash
-tar -xzf /user/lyh4170/LLMGo-rsi-autonomous-20261022.tar.gz -C /user/lyh4170
+tar -xzf /user/lyh4170/LLMGo-rsi-full-20261022.tar.gz -C /user/lyh4170
 cd '/user/lyh4170/LLMGo!'
 python3 -m venv --without-pip --system-site-packages /user/lyh4170/venvs/llmgo-rsi-control-20261022
 /user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python -m pip install -r requirements-rsi-control.txt
@@ -85,7 +85,19 @@ python3 scripts/bootstrap_worker.py --prefix /user/lyh4170/venvs/llmgo-rsi-20261
 - 初始 PPO 可选 Lc0：`/user/lyh4170/tools/bin/lc0`，需支持BT4和所选backend。
 - 可选 BT4：`/user/lyh4170/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz`。
 
-本机已下载BT4位于 `/home/lif/.cache/llmgo/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz`，不包含在源码tar。上传后核对SHA256：`e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618`。不使用该配方时无需LC0/BT4。
+完整包已把BT4、Linux LC0程序、对应源代码和构建回执放在 `LLMGo!/teacher_assets`。解压后执行：
+
+```bash
+cd '/user/lyh4170/LLMGo!'
+python3 scripts/install_teacher.py --verify-only
+python3 scripts/install_teacher.py
+```
+
+安装器核对全部资产SHA，把LC0和BT4复制到上面的原site路径；相同资产直接复用，不同已有文件拒绝覆盖，不修改系统/其他任务环境。LC0程序针对指定Worker镜像和H800/sm_90构建，GPU推理是否实际验证以build-result.json为准；不能只看编译成功。`teacher_assets/lc0-source.tar.gz`包含匹配的LC0/common/Abseil源代码、构建说明/脚本和Meson/Ninja wheel。
+
+源码小包不包含教师资产。单独上传时，LC0放到site.lc0_bin并设为可执行，BT4放到site.reward_weights；BT4保持gzip原文件，不解压，SHA256必须为 `e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618`。本机BT4位于 `/home/lif/.cache/llmgo/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz`。不使用该配方时无需LC0/BT4。
+
+含义与来源：[Lc0引擎](https://github.com/LeelaChessZero/lc0)、[BT4-it332网络](https://lczero.org/play/networks/bestnets/)。BT4是LC0加载的棋类神经网络权重；当前训练从其原生WDL得到V=P(win)−P(lose)，不是Qwen权重，也不是正式对手。
 
 ## 4. 启动与恢复
 
@@ -101,7 +113,11 @@ export PATH=/user/lyh4170/tools/bin:$PATH
 
 站点默认路径见 configs/rsi/site.beijing.json。需要自定义时复制为自己的 site，CLI 的 --site 放在子命令前。campaign创建后站点冻结，保持原配置恢复。
 
-首次是160局player基线，之后Meta-Agent开始研究。每个研究任务由Executor提交/监控/收集；评测按档位分job。不开独立 vLLM、不用旧 serve_vllm/eval_harness/arena 启动脚本。恢复只重跑run，不再init。旧campaign不迁移。
+init创建新campaign时冻结site与初始参考，只执行一次；重复init同名会报错，不会清零。首次是160局player基线，之后Meta-Agent开始研究。再次run同名campaign接续持久状态、当前模型/源码和已有任务；控制器在基线阶段中断后，会接续监控原任务，已收集完成的档位不会因为重启重跑；若某个评测job本身失败，修复后可能重跑该档20局，当前没有局内逐步断点恢复。换名称init才建立另一条初始研究，旧campaign不迁移。
+
+Executor默认embedded，由单个run进程托管；轮询不经过LLM，原始日志独立保存。external是在init前将site.executor_mode改为external，再额外启动 `scripts/rsi.py executor run chess-autonomous-v2`（用同一控制venv），Controller照常run；二者都0GPU。没有启动external Executor时，Controller会等待报告。两种模式都不会重置基线或模型，新campaign默认120秒查询、稳定时退避至600秒。已有campaign沿用冻结配置。
+
+每个研究任务由Executor提交/监控/收集；评测按档位分job。不开独立 vLLM、不用旧 serve_vllm/eval_harness/arena 启动脚本。重启不等于自动恢复任意trainer：训练失败后由Meta提案明确旧checkpoint恢复路径。
 
 网页：设置 LLMGO_RSI_ROOT=/user/lyh4170/rsi_campaigns，用控制venv运行 scripts/run_web.sh，平台转发7860；访问/rsi。
 

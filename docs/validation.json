@@ -33,5 +33,12 @@
   },
   "latest_meta_regression": {
     "passed": 3
+  },
+  "rl_skills_prompt_policy_update": {
+    "checked_at": "2026-10-22T07:32:55.139559+00:00",
+    "meta_and_controller_tests_passed": 17,
+    "revised_skills_validated": 2,
+    "git_diff_check": "passed",
+    "sft_rule": "Prompt prohibition and zero-score warning; no automatic SFT detector/scoring override"
   }
 }

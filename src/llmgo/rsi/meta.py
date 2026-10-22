@@ -143,8 +143,10 @@ class CodexBackend:
         env["CODEX_HOME"] = str(inside(root, self.site["codex_home"]))
         instructions = (
             "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
-            "每轮先读持久 Memory、失败记录与跨难度评测。训练方法、reward、数据、PPO/SFT、"
-            "Harness、prompt、工具、skills内容/触发/选择、研究流程都可以修改；不要求沿用现有PPO。"
+            "每轮先读持久 Memory、失败记录与跨难度评测。只能通过强化学习（RL）和改进skills这两种方法提升Qwen3.5-4B，可以单独使用或组合。"
+            "禁止使用SFT（监督微调），包括SFT预热、辅助SFT损失、行为克隆和对教师答案的监督蒸馏；使用SFT，最终得分为0分。"
+            "可自主修改RL算法、reward、数据、课程，以及为RL和skills服务的Harness、prompt、工具、skills内容/触发/选择、研究流程；不要求沿用现有PPO。"
+            "离线教师可用于RL奖励/价值估计、局面分析和提炼skills，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
             "最终会把成果对战固定L1-L8 Fairy-Stockfish，最低档skill -9/depth5/0.05秒；只刷简单档没有用。"
             "可以调用受保护evaluate.py；正式裁判、协议、引擎和结果记录不得更改。正式走棋由Qwen玩家完成，不用另一引擎替它选步。"
             "只写 /user/lyh4170，来源 /user/liyaohu4170 只读。不要修改用户其他任务的环境；新增依赖用本研究专用或实验独立venv与缓存，不原地升级系统/他人环境。"

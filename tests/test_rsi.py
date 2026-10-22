@@ -275,7 +275,7 @@ def test_free_form_training_receipt_routes_new_model_to_fixed_panel(controller):
     c=controller;complete_baseline(c)
     workspace=c.workspace()
     # Arbitrary reward/trainer/helper code is captured, not restricted to preset knobs.
-    (workspace/"custom").mkdir();(workspace/"custom/train.py").write_text("print('custom SFT/PPO')")
+    (workspace/"custom").mkdir();(workspace/"custom/train.py").write_text("print('custom RL/PPO')")
     path=workspace/"proposal.json"
     atomic_json(path,{"hypothesis":"Explore a different training objective","jobs":[{"argv":["{python}","custom/train.py"]}],
                      "reward":{"anything":"editable"},"evaluation":{"levels":[1,8],"tracks":["player","model"]}})

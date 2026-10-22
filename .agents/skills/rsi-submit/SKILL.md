@@ -3,7 +3,7 @@ name: rsi-submit
 description: 为自主棋力研究登记任意计算命令、模型或Harness提交和多难度测试，交给Executor管理任务。
 ---
 
-workspace 是自由研究副本：训练方法、reward、数据、Harness、prompt、工具、skills 与触发条件均可改。当前 PPO/LC0 是可选起点，不是方法限制。不能修改受保护正式评测、对手、裁判及历史正式结果。读取 docs/rsi-operations.md 的 proposal 格式。
+workspace 是研究副本：只能通过RL和改进skills提升Qwen3.5-4B，禁止SFT，使用SFT最终得0分。在此范围内RL算法、reward、数据、Harness、prompt、工具、skills与触发条件均可改。当前PPO/LC0是可选起点，不限于此RL配方。不能修改受保护正式评测、对手、裁判及历史正式结果。读取 docs/rsi-operations.md 的 proposal 格式与SFT禁令说明。
 
 proposal.json 可登记任意 argv 任务；每项通过独立 job 执行，支持 {python}/{candidate}/{output}/{model}/{source} 占位。训练、标注、转换都可以登记；向 LLMGO_OUTPUT 写日志/结果，模型导出后写 submission.json 的 model_path。源码提交后快照不再改变；要改代码，在下一个研究 workspace 改。需要任务中生成 Harness 时把代码产物交回 Meta-Agent，再纳入下一次提交。
 

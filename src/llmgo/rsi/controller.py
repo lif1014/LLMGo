@@ -362,8 +362,10 @@ class Controller:
                         backend = CodexBackend(self.site, self.memory)
                     workspace = Path(result["workspace"])
                     prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
-                        f"完整证据在 {self.root}。自主修改本研究副本的任何训练、Harness、skills、工具或配置。"
-                        "研究方法不限，现有 PPO/LC0 只是可用起点。最终会对战固定 L1-L8 Fairy-Stockfish，"
+                        f"完整证据在 {self.root}。只能通过RL和改进skills提升Qwen3.5-4B，可单独或组合使用。"
+                        "禁止SFT（监督微调），包括预热、辅助SFT损失、行为克隆和监督蒸馏；使用SFT，最终得分为0分。"
+                        "在此范围内自主修改本研究副本的RL、reward、数据、Harness、prompt、skills、工具或配置，现有 PPO/LC0 只是可用起点。"
+                        "教师只能用于RL奖励/价值、分析和提炼skills，不能作为SFT答案目标。最终会对战固定 L1-L8 Fairy-Stockfish，"
                         "最低档仍是 skill -9/depth5/0.05秒；只刷简单档没有用。"
                         "评测套件/裁判/正式记录不可修改。提交协议及任意计算任务格式见 docs/rsi-operations.md。"
                         "可以通过 research job 调用受保护 source/scripts/evaluate.py 做快速或完整测试。"

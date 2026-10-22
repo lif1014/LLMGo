@@ -2,7 +2,9 @@
 
 ## 1. 权限与目标
 
-Meta-Agent 可以改本轮 workspace 的任何研究代码和配置，包括 RL/SFT、reward、PPO/其他算法、数据、课程、Harness、prompt、工具、skills 内容/格式/触发/选择。无需预先声明固定 mode。既有 training_config 的参数范围仅属于初始 PPO 实现，可以改它或换 trainer。
+Meta-Agent 只能通过 RL 和改进 skills 提升 Qwen3.5-4B，可单独或组合使用；禁止 SFT，使用 SFT 最终得0分。可以改本轮 workspace 的研究代码和配置，包括 RL 算法、reward、数据、课程，以及支持 RL/skills 的 Harness、prompt、工具、skills 内容/格式/触发/选择。无需预先声明固定 mode。既有 training_config 的参数范围仅属于初始 PPO 实现，可以改它或换 RL trainer。
+
+禁止 SFT 预热、辅助 SFT 损失、行为克隆及监督蒸馏。离线教师可用于 RL 奖励/价值估计、局面分析和提炼 skills，不可用教师走法/思考作为监督微调目标。RL 策略梯度及价值函数拟合不属于上述 SFT 禁令。方法限制和0分规则写在 Meta-Agent 的 developer/任务 prompt 与研究 skills 中；目前不自动检测任意训练代码是否含 SFT，也不自动据此将棋局分数归零。
 
 不能改 campaign/source 中的受保护评测副本、正式裁判/引擎/协议与历史正式结果。workspace 是可写副本，同名 evaluate.py 在研究副本中改动不会改变正式裁判；正式任务始终使用 campaign/source 的脚本。各次提交记录源码和权重身份。
 

@@ -1,6 +1,8 @@
 # LLMGo!：自主国际象棋 RSI
 
-强 Meta-Agent 在自己的远端 **0 GPU devspace** 研究，以 Qwen3.5-4B 为起点，自主修改训练、reward、数据、Harness、prompt、工具、skills 及触发逻辑；计算通过集群 job 执行。当前 HF PPO＋LC0 保留为可选起始配方，不再限制为 RL/skills，也不禁止 SFT。
+强 Meta-Agent 在自己的远端 **0 GPU devspace** 研究，以 Qwen3.5-4B 为起点，**只能通过 RL 和改进 skills 提升能力；禁止 SFT，使用 SFT 最终得0分**。可自主修改 RL 算法、reward、数据、课程，以及支持这两种方法的 Harness、prompt、工具、skills 及触发逻辑；计算通过集群 job 执行。当前 HF PPO＋LC0 保留为可选起始配方。
+
+上述方法与0分规则已写入 Meta-Agent 的 developer prompt、每轮任务 prompt 和研究 skills；当前没有自动识别任意训练代码是否包含 SFT 的检测器，也没有程序自动执行的 SFT 归零逻辑。禁止范围包括 SFT 预热、辅助监督损失、行为克隆及监督蒸馏。离线教师仍可用于 RL 奖励/价值估计、局面分析和提炼 skills，RL 策略梯度及价值函数拟合可用。
 
 最终用独立评测比较不同难度的 Fairy-Stockfish。**没有胜率通关、80%自动升档或必须每轮提升才能继续研究的规则。**只刷最低档不能取得完整成绩。
 
@@ -33,7 +35,7 @@ python3 scripts/rsi.py run chess-autonomous-v2
 | `player` | 候选模型＋候选 Harness＋skills | 主要实际玩家能力 |
 | `model` | 候选模型＋创建 campaign 时固定的参考 Harness/skills | 权重能力对照 |
 
-每档20局、白黑各10局、200半步、thinking=True。每手总生成上限32768 tokens，单请求540秒、整手1800秒；推理请求由评测端执行并记录。候选可自主改变内部阶段、工具及分配，但不能突破外部资源上限。正式下棋不用另一个引擎替代 Qwen 选步；离线教师及训练方案自由。
+每档20局、白黑各10局、200半步、thinking=True。每手总生成上限32768 tokens，单请求540秒、整手1800秒；推理请求由评测端执行并记录。候选可自主改变内部阶段、工具及分配，但不能突破外部资源上限。正式下棋不用另一个引擎替代 Qwen 选步；离线教师与训练方案须遵守上面的 RL/skills 方法边界。
 
 | 难度 | Skill Level | depth | 时间上限/步 |
 |---|---:|---:|---:|

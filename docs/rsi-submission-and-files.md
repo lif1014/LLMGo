@@ -51,7 +51,7 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 | scripts/worker_entry.py | 每个新容器先验证/安装overlay，再启动Worker |
 | scripts/train_ppo.py | 可自由修改的现有HF PPO/LC0起始配方入口 |
 | scripts/package_source.py | 打包、逐文件SHA/大小/权限核验，排除凭证和运行数据 |
-| .agents/skills/rsi-training/SKILL.md | 可选PPO配方说明，不再限制其他训练方式 |
+| .agents/skills/rsi-training/SKILL.md | RL/skills方法边界、SFT禁令与可选PPO配方说明 |
 | tests/test_rsi_worker.py | 任意研究命令、模型回执与幂等恢复检查 |
 | tests/fixtures/qwen_stream_boundaries.json.gz | 独立于runs目录的11条原始GPU流式响应回归样本 |
 | tests/test_rsi_candidate.py | 真子进程、预算、伪造事件、历史、超时和真实Fairy接口检查 |
@@ -61,7 +61,7 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 
 ## 主要修改
 
-- controller/meta/worker：任意研究代码与argv，取消RL-only/SFT禁令、固定提案mode、自动晋级；保留working/best/recommended、完整评测才更新最佳。
+- controller/meta/worker：研究代码与argv保持可配置，不要求固定提案mode、没有自动晋级；prompt要求只用RL/skills，禁止SFT且使用SFT最终得0分。保留working/best/recommended、完整评测才更新最佳；目前没有自动检测SFT或归零机制。
 - ladder/contracts/evaluator：固定L1–L8面板，每档20局、独立轨道和资源约束；对手与正式结果保持外部控制。
 - artifacts/memory：研究源码完整快照、身份、交接与短上下文；历史记录和Executor隔离继续保留。
 - cctl：基底镜像共享overlay入口、任意research资源，仍只用授权集群/池/优先级。

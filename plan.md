@@ -1,8 +1,9 @@
 # 当前实现：自主国际象棋研究与固定评测
 
-此文件替代旧RL-only/自动晋级计划，实际操作以README和docs/rsi-operations.md为准。
+此文件描述当前RL/skills自主研究与固定评测，实际操作以README和docs/rsi-operations.md为准。
 
-- Meta-Agent在0GPU devspace，自主修改训练、reward、数据、Harness、prompt、工具和skills/触发逻辑；SFT与其他算法不再被框架禁止。
+- Meta-Agent在0GPU devspace，只能通过RL和改进skills提升Qwen3.5-4B；禁止SFT，使用SFT最终得0分。可自主修改RL、reward、数据及支持RL/skills的Harness、prompt、工具和skills/触发逻辑。
+- 方法与0分规则通过developer prompt、每轮任务prompt及研究skills传达；尚无任意训练代码的自动SFT检测或归零机制。禁止SFT预热、辅助SFT、行为克隆和监督蒸馏；离线教师可用于RL奖励/价值、分析与提炼skills，RL策略梯度和价值函数拟合可用。
 - 现有HF PPO/LC0保留可选配方，课程单步TD0优势；不是唯一方案。
 - 任意研究任务通过proposal.jobs提交，Executor独立监控。研究失败也是证据，可继续下一轮。
 - 固定裁判控制Fairy、棋规、资源和结果。候选程序独立加载，不在裁判中import可写Harness。

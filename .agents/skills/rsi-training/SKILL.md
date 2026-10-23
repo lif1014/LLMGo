@@ -1,18 +1,16 @@
 ---
 name: rsi-training
-description: 设计RL训练或使用现有HF PPO与LC0配方时，核对方法边界、概率、价值视角和训练证据。
+description: 设计verl PPO与LC0多卡强化学习实验，检查逐步价值视角、采样概率与恢复证据。
 ---
 
-只能通过RL和改进skills提升Qwen3.5-4B，可单独或组合使用。禁止SFT（监督微调），使用SFT最终得0分；包括SFT预热、辅助SFT损失、行为克隆和监督蒸馏。可自主选择PPO或其他RL算法、reward、课程和skills方案，以及支持它们的Harness/prompt/工具。无需沿用此配方；以下说明仅描述仓库保留的初始实现。
+只能通过RL和改进skills提升Qwen3.5-4B。禁止SFT、SFT预热、辅助SFT损失、行为克隆、监督蒸馏；使用SFT最终得0分。离线教师可用于RL奖励/价值估计和提炼skills，不能把教师答案当学生监督目标。可修改RL算法、reward、课程、Harness与skills触发；正式评测不加载教师。
 
-离线教师可用于RL奖励/价值估计、分析和提炼skills，不可把教师走法或思考作为SFT目标。RL策略梯度和价值函数拟合可用；不要把监督微调改名为RL来规避限制。
+先读 docs/rsi-verl-ppo.md。默认入口 scripts/train_ppo.py，配置 ppo.json、curriculum.jsonl、skills.json。真正调用verl 0.8.0 RayPPOTrainer、FSDP2、vLLM，不再默认使用自写HF PPO。GPU任务默认8卡：7卡actor/rollout/reference，1卡LC0；每任务最多8卡，可指定2–8卡（留1卡LC0），单卡需显式CPU教师后端。batch/minibatch必须整除actor并行数，默认自动匹配。
 
-scripts/train_ppo.py 从 ppo.json、curriculum.jsonl、skills.json 读取配方，通过 research job 执行。它调用 llmgo.training.ppo：每批当前策略真实采样、thinking 开启、Lc0 BT4 离线评分、LoRA 多 epoch 逐 token clipped PPO，然后完整 HF 导出。
+非终局A=V_after−V_before，V=P(win)−P(lose)，前后保持同一行棋方视角。终局用胜1/和0/负−1减V_before；非法/生成截断是协议惩罚。gamma1/lambda0，一手一segment，没有对手应手和整盘GAE，也不训练critic。教师V不是学生Vπ；只凭reward/loss不能宣称棋力提升。
 
-初始非终局 A=V_after−V_before，V=P(win)−P(lose)，始终从原行棋方看；gamma=1/lambda=0。after 是学生一步后，没有对手应手和整盘 GAE。终局用胜1/和0/负−1减 V_before；非法/截断是协议惩罚。该 teacher value 不是经过校准的学生 Vπ，不能凭 reward 或 loss 宣称棋力提升。
+自定义lc0_td0估计器使用教师算好的TD误差，不做组归一化；verl使用实际vLLM behavior logprobs作old policy、多epoch clipped PPO，reference KL独立。采样默认temperature1/top_p1/top_k-1；不要改了采样却继续使用错误old logprobs。保留thinking分隔符，截断不做随机后备，教师不输出最佳走法。
 
-现有配方保存实际采样 behavior logprobs、固定 reference、advantages、clip/KL 和真实 optimizer updates；恢复完整 checkpoint，未完成批重新采样。修改 reward/advantage 时检查是否重复计入价值差；修改采样时检查 old policy 概率是否匹配实际分布。不要将随机后备或教师答案说成学生生成。
+样本原文/响应token/LC0前后值/优势在training/lc0，rollouts保存verl行为日志；metrics.jsonl/latest.json和resolved-config.json记录训练。完整分片模型、optimizer、RNG及dataloader checkpoint用于恢复，身份/并行数不同则拒绝。最终合并完整HF模型才写submission.json。旧HF LoRA checkpoint不能作为verl checkpoint。
 
-初始配方的数据校验、超参范围是该实现的接口，不是你研究的权限边界；如需不同RL算法、奖励/价值标注数据或其他设置，可修改研究副本的实现或新增RL trainer。使用 docs/rsi-operations.md 的任意 research 命令提交，不必把新RL方法伪装成 hf_ppo。
-
-训练产物和依赖须可重现。正式评测由独立裁判启动学生，不加载训练用教师；最终比较固定多难度的实战结果，保留每档退步和失败证据。
+训练通过proposal.jobs交给Executor，不反复shell轮询。用request_evaluation.py --level L2 --gpus 8做20局探针；最终需要不同难度的实战证据，只刷最低档无效。所有计算beijing/model-autosft/NORMAL，devspace0GPU，只写/user/lyh4170，不停止他人任务，不改其他环境。

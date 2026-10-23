@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -12,6 +11,8 @@ from pathlib import Path
 
 from llmgo.rsi.artifacts import load_manifest
 from llmgo.rsi.contracts import atomic_json, digest, inside, read_json, utc
+from .cctl_env import cctl_environment, cctl_failure_detail
+from .pools import own_pool_rows, authorized_pool
 
 TERMINAL_FAILURE = {"Failed", "OOMKilled", "ImagePullBackOff", "Invalid", "Killed", "Stopped"}
 
@@ -59,8 +60,9 @@ class CctlExecutor:
         if self.record_commands:
             self.memory.append("command_started", {"argv": command, "operation_id": operation_id, "timeout_sec": timeout})
         try:
+            environment = cctl_environment()
             result = self.runner(command, capture_output=True, text=True, timeout=timeout,
-                                 env={**os.environ, "CCTL_NO_UPDATE_CHECK": "1"})
+                                 env=environment)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if self.record_commands:
                 self.memory.append("command", {"argv": command, "operation_id": operation_id, "error_type": type(exc).__name__,
@@ -71,7 +73,7 @@ class CctlExecutor:
             self.memory.append("command", {"argv": command, "operation_id": operation_id, "returncode": result.returncode,
                 "stdout": result.stdout, "stderr": result.stderr, "seconds": time.monotonic()-started})
         if result.returncode:
-            raise CctlCommandError(f"cctl {' '.join(args[:2])} exited with status {result.returncode}; see executor journal")
+            raise CctlCommandError(f"{cctl_failure_detail(result,environment)}; see executor journal")
         return json.loads(result.stdout) if json_output else result.stdout
 
     def request(self, manifest_path):
@@ -87,8 +89,8 @@ class CctlExecutor:
         resources = {k: site[k] for k in ("gpu_count", "cpu", "memory_gib")}
         resources.update(payload.get("resources", {}))
         gpu = resources["gpu_count"]
-        if type(gpu) is not int or gpu < 0:
-            raise ValueError("gpu_count must be a nonnegative integer")
+        if type(gpu) is not int or not 0 <= gpu <= 8:
+            raise ValueError("gpu_count must be an integer from 0 to 8")
         for key in ("cpu", "memory_gib"):
             if type(resources[key]) is not int or resources[key] < 1:
                 raise ValueError("Worker CPU/memory must be positive integers")
@@ -119,7 +121,7 @@ class CctlExecutor:
                 return intent
             return self.reconcile(intent_path)
         pools = self.command(["pool", "list", "--own"])
-        if not any(p.get("name") == "model-autosft" for p in (pools if isinstance(pools, list) else pools.get("pools", []))):
+        if not authorized_pool(own_pool_rows(pools)):
             raise ValueError("Authorized model-autosft pool is unavailable")
         intent = {"description": description, "request_hash": digest(args), "status": "SUBMITTING",
                   "manifest": str(manifest_path), "created": utc()}

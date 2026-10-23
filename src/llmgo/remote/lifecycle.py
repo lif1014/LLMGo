@@ -29,6 +29,14 @@ class JobExecutor:
         self.interval = max(1., float(site.get("poll_seconds", 120)))
         self.max_interval = max(self.interval, float(site.get("executor_max_poll_seconds", 600)))
 
+    def poll_bounds(self, payload):
+        gpu_count = payload.get("resources", {}).get("gpu_count", self.site.get("gpu_count", 0))
+        if gpu_count > 0:
+            base = min(600., max(300., float(self.site.get("gpu_poll_seconds", 300))))
+            ceiling = min(600., max(base, float(self.site.get("gpu_max_poll_seconds", 600))))
+            return base, ceiling
+        return self.interval, self.max_interval
+
     def report_path(self, job):
         return inside(self.root, self.root / "jobs" / identifier(job["id"]) / "executor/report.json")
 
@@ -65,8 +73,13 @@ class JobExecutor:
             if previous["status"] in FINAL:
                 return previous
             now = self.clock()
+            interval, max_interval = self.poll_bounds(payload)
             due = previous.get("next_check_at", 0)
-            if not force and now < due <= now + self.max_interval:
+            prior_delay = previous.get("interval_seconds", interval)
+            if previous.get("checks") and prior_delay < interval:
+                # Honor the new GPU minimum even when resuming an older report.
+                due = max(due, due-prior_delay+interval)
+            if not force and now < due <= now + max_interval:
                 return previous
             report = {"schema_version": 1, "job_id": job["id"], "manifest_sha256": job["sha256"],
                       "task_id": previous.get("task_id"), "platform_status": previous.get("platform_status"),
@@ -107,7 +120,7 @@ class JobExecutor:
                 self.memory.append("observation_error", {"job_id": job["id"], "error_type": type(exc).__name__, "error": str(exc)})
                 report.update(status="retrying", summary=f"Observation unavailable ({type(exc).__name__}); retain existing task and retry")
             stable = (previous.get("status"), previous.get("platform_status")) == (report["status"], report["platform_status"])
-            delay = min(self.max_interval, previous.get("interval_seconds", self.interval)*1.5) if stable else self.interval
+            delay = min(max_interval, max(interval, previous.get("interval_seconds", interval))*1.5) if stable else interval
             report.update(updated=utc(), interval_seconds=delay, next_check_at=self.clock()+delay)
             atomic_json(self.report_path(job), report)
             self.memory.append("poll_finished", {"job_id": job["id"], "task_id": report["task_id"],

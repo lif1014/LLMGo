@@ -104,7 +104,7 @@ function matrix(rows){
     let total=0,count=0;
     for(let level=1;level<=8;level++){const cell=document.createElement("td"),r=group.levels[level],v=r?.statistics?.score;
       cell.textContent=typeof v==="number"?(v*100).toFixed(1)+"%":"—";
-      if(typeof v==="number"){total+=v;count++;cell.title="胜/和/负 "+[r.statistics.wins,r.statistics.draws,r.statistics.losses].map(show).join("/")+" · 20局";}row.append(cell);}
+      if(typeof v==="number"){total+=v;count++;cell.title="胜/和/负 "+[r.statistics.wins,r.statistics.draws,r.statistics.losses].map(show).join("/")+" · "+(r.statistics.games??20)+"局";}row.append(cell);}
     const score=document.createElement("td");score.textContent=count===8?(total/8*100).toFixed(1)+"%":"部分测试 "+count+"/8";row.append(score);table.append(row);
   }target.append(table);
 }
@@ -132,6 +132,8 @@ async function files(generation){
   const p=data.progress;el("worker-state").textContent="查看任务："+job+"\n阶段："+(p?.stage||"尚无阶段记录")+"\n"+
     (p?.message||"旧版本/尚未启动的Worker可能没有progress.json，按需查看已有日志。")+"\n课程局面："+show(p?.curriculum_records)+
     (p?.backend?"\n训练："+p.backend+" · 批次："+show(p?.batch)+" · 采样："+show(p?.sampled)+" · 评分："+show(p?.labeled)+" · 更新："+show(p?.updates):"")+
+    (p?.parallelism?"\n评测GPU副本："+p.parallelism+"\n"+(p.slots||[]).map(s=>"GPU "+s.gpu+" · "+s.stage+" · 棋局 "+show(s.game_index)+" · 尝试 "+s.attempt).join("\n"):"")+
+    (p?.total_steps?"\nverl PPO："+p.step+"/"+p.total_steps+" · Actor GPU："+p.actor_gpus:"")+
     "\n评测已落盘："+data.game_results+"/"+data.formal_games+"局\n阶段时间："+date(p?.updated);
   el("file-status").textContent=data.files.length+"个已存在文件 · 只在点击时读正文";
   const signature=JSON.stringify(data.files.map(f=>[f.path,f.bytes]));if(el("job-files").dataset.signature===signature)return;

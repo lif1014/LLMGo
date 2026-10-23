@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-10-22T08:35:44.685084+00:00",
+  "checked_at": "2026-10-23T17:24:00.546734+00:00",
   "base_image": "share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb",
   "base_versions": {
     "python": "3.12.13",
@@ -11,7 +11,7 @@
     "tokenizers": "0.22.2"
   },
   "base_qwen35_hf_import": false,
-  "gpu_tested": false,
+  "gpu_tested": true,
   "jobs": [
     {
       "id": 1324638,
@@ -119,12 +119,203 @@
     "cuda_compute_capability": 90,
     "native_wdl_option": true,
     "version_banner": "id name Lc0 v0.32.1+git.unknown",
-    "gpu_tested": false,
+    "gpu_tested": true,
     "build_root": "/user/lyh4170/tools/llmgo-lc0-v0.32.1-20261022",
     "system_packages_modified": false,
     "zlib_development_files": "Extracted to the owned build prefix; no system package installation",
     "build_receipt": "/user/lyh4170/tools/llmgo-lc0-v0.32.1-20261022/build-result.json",
     "uci_receipt": "/user/lyh4170/tools/llmgo-lc0-v0.32.1-20261022/uci-result.json",
-    "asset_installation": "The full upload archive contains LC0/BT4. Run scripts/install_teacher.py after extraction to install into existing site paths."
-  }
+    "asset_installation": "The full upload archive contains LC0/BT4. Run scripts/install_teacher.py after extraction to install into existing site paths.",
+    "gpu_receipt": "/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/result.json"
+  },
+  "codex_meta": {
+    "checked_at": "2026-10-23",
+    "inspection_task": 1342373,
+    "clone_task": 1342414,
+    "probe_task": 1342450,
+    "source_binary": "/user/liyaohu4170/.local/bin/codex",
+    "binary": "/user/lyh4170/tools/codex-reused-20261023/codex-native",
+    "launcher": "/user/lyh4170/tools/bin/codex",
+    "version": "0.162.1",
+    "binary_sha256": "628e35487d888a28f0427fc37501da529dd3d81fcbad7a2c3421c1e8670d92e1",
+    "config_home": "/user/lyh4170/.codex-rsi",
+    "config_matches_source": false,
+    "source_modified": false,
+    "cli_tested": true,
+    "app_server_initialize_tested": true,
+    "thread_start_tested": true,
+    "model": "deepseek-v4.1-flash",
+    "provider": "custom",
+    "inference_succeeded": true,
+    "blocking_environment_name": null,
+    "note": "Server-enforced outer isolation authorized by the user. With externalSandbox, the zero-GPU worker job passed app-server command/exec, real deepseek-v4.1-flash shell file write/read, and a second successful tool turn after restarting Codex and resuming the same thread. GPU training/evaluation is outside this connectivity validation.",
+    "source_base_url": "https://api.deepseek.com/v1",
+    "base_url": "https://yeysai.com/v1",
+    "connection_check": "scripts/check_meta_connection.py",
+    "auth_source": "config.experimental_bearer_token",
+    "last_connection_check": "/user/lyh4170/rsi_readiness/meta-connection/20261023-125946-080b0e63",
+    "last_connection_status": "passed",
+    "api_key_authenticated": true,
+    "model_list_http_status": 200,
+    "responses_compatible": false,
+    "client_api": "responses",
+    "upstream_api": "chat_completions",
+    "upstream_endpoint": "https://yeysai.com/v1/chat/completions",
+    "bridge_venv": "/user/lyh4170/venvs/llmgo-meta-bridge-20261023",
+    "bridge_versions": {
+      "litellm": "1.105.2",
+      "fastapi": "0.161.1",
+      "uvicorn": "0.54.0"
+    },
+    "bridge_install_task": 1343258,
+    "bridge_ready_task": 1343398,
+    "chat_probe_task": 1343203,
+    "chat_tool_roundtrip_tested": true,
+    "agent_tool_execution_tested": true,
+    "agent_thread_resume_tested": true,
+    "agent_probe_task": 1344064,
+    "agent_probe_status": "passed",
+    "local_tests": {
+      "full_suite": {
+        "passed": 190,
+        "skipped": 3
+      },
+      "additional_invalid_mode_regression": {
+        "passed": 1
+      }
+    },
+    "bubblewrap": {
+      "version": "0.6.1",
+      "private_path": "/user/lyh4170/tools/codex-reused-20261023/bin/bwrap",
+      "package_sha256": "706763714e5d19fc7ab2572a6418506e3a4a5d5960e99309707b58117e6b40cb",
+      "install_task": 1343651,
+      "version_passed": true,
+      "initial_mount_probe_passed": false,
+      "initial_mount_probe_error": "bwrap: Failed to make / slave: Permission denied",
+      "native_sandbox_check_task": 1343689,
+      "native_sandbox_check_status": "failed",
+      "native_sandbox_error": "bwrap: Failed to make / slave: Permission denied",
+      "required_in_current_mode": false,
+      "note": "Historical inner-sandbox failure retained as evidence; external mode does not invoke bwrap."
+    },
+    "agent_tool_execution_passed": true,
+    "sandbox_probe_task": 1344064,
+    "sandbox_probe_receipt": "/user/lyh4170/rsi_readiness/codex-reuse-20261023/external-preflight.json",
+    "sandbox_check_command": "python3 scripts/check_meta_connection.py --sandbox-check",
+    "sandbox_probe_scope": "zero-GPU BATCH container using the specified worker image and shared owned Codex config; actual devspace process was not started",
+    "meta_sandbox_mode": "external",
+    "agent_thread_resume_passed": true,
+    "agent_probe_receipt": "/user/lyh4170/rsi_readiness/codex-reuse-20261023/external-agent-probe.json",
+    "agent_probe_memory": "/user/lyh4170/rsi_readiness/codex-reuse-20261023/agent-probe-4c60d45bd8/memory",
+    "agent_probe_command_exit_codes": [
+      0,
+      0
+    ],
+    "devspace_runtime": {
+      "probe_task": 1347656,
+      "probe_error": "SIGSEGV importing ctypes through LiteLLM: copied Worker Python3.12.13 mixed with Ubuntu24.04 host stdlib",
+      "fix_task": 1347678,
+      "status": "installed_and_ready",
+      "prefix": "/user/lyh4170/venvs/llmgo-meta-bridge-devspace-20261023",
+      "runtime_identity": {
+        "python": [
+          3,
+          12,
+          3
+        ],
+        "base_prefix": "/usr",
+        "os_release": {
+          "ID": "ubuntu",
+          "VERSION_ID": "24.04"
+        }
+      },
+      "dependencies_reused_read_only": "/user/lyh4170/venvs/llmgo-meta-bridge-20261023",
+      "shell_execution_passed": true,
+      "inference_passed": true,
+      "reply": "READY",
+      "receipt": "/user/lyh4170/rsi_readiness/codex-reuse-20261023/devspace-bridge-ready.json",
+      "system_environment_modified": false,
+      "other_venvs_modified": false
+    }
+  },
+  "verl_ppo": {
+    "checked_at": "2026-10-24",
+    "environment": "/user/lyh4170/venvs/llmgo-verl-ppo-tf54-20261024",
+    "verl": "0.8.0",
+    "transformers": "5.4.0",
+    "base_gpu_stack_modified": false,
+    "import_and_config_task": 1348059,
+    "actual_qwen_config_compat_check_task": 1350029,
+    "actual_qwen_config_compat_check_passed": true,
+    "allocated_gpu_count": 8,
+    "actor_gpus": 7,
+    "lc0_gpus": 1,
+    "gpu_smoke_attempts": [
+      {
+        "task_id": 1348078,
+        "status": "failed",
+        "cause": "vLLM Qwen3.5 list/set RoPE mismatch; process-local compatibility added"
+      },
+      {
+        "task_id": 1349962,
+        "status": "failed",
+        "cause": "7 samples cannot split into 4 rollout workers; divisor selection added"
+      },
+      {
+        "task_id": 1350249,
+        "status": "failed",
+        "cause": "CUDA illegal memory access during first actor training forward, after rollout and LC0 reward"
+      },
+      {
+        "task_id": 1350597,
+        "status": "failed",
+        "transformers": "5.4.0",
+        "cuda_launch_blocking": true,
+        "cause": "Transformers 5.4 processor imports ReasoningEffort absent from image mistral-common1.9.1"
+      },
+      {
+        "task_id": 1350755,
+        "status": "succeeded",
+        "transformers": "5.4.0",
+        "mistral_common": "1.10.0",
+        "steps": 2,
+        "ppo_epochs": 2,
+        "language_model_only": true,
+        "cuda_launch_blocking": false
+      }
+    ],
+    "end_to_end_gpu_tested": true,
+    "diagnostic_task": 1350451,
+    "diagnostic_scope": "One GPU, replay saved on-policy batch, synchronous CUDA errors, no optimizer update/model export",
+    "diagnostic_result": {
+      "ok": true,
+      "task_id": 1350451,
+      "scope": "One sample from saved batch on one GPU; policy forward/backward only; no optimizer step/export",
+      "gradient_squared_norm": 45196.32135824003
+    },
+    "tf54_environment": "/user/lyh4170/venvs/llmgo-verl-ppo-tf54-20261024",
+    "tf54_import_task": 1350508,
+    "tf54_config_task": 1350527,
+    "tf54_dependency_task": 1350703,
+    "tf54_processor_task": 1350733,
+    "tf54_processor_passed": true,
+    "mistral_common": "1.10.0",
+    "formal_evaluation_gpu_tested": false,
+    "validation": {
+      "task_id": 1350755,
+      "receipt": "/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/result.json",
+      "steps": 2,
+      "ppo_epochs": 2,
+      "generation_cap": 64,
+      "lc0_nodes": 1,
+      "grad_norms": [
+        21.826377868652344,
+        21.163410186767578
+      ],
+      "model_sha256": "c1653aca867a96c9ebff11a776b112d76c6f4b3f9169cc633b36dd683a71b587",
+      "sft_enabled": false,
+      "normal_async_cuda": true
+    }
+  },
+  "gpu_test_scope": "verl PPO+LC0: 8 GPUs, 2 steps, 2 PPO epochs/step, full HF export. Formal multi-difficulty evaluation not rerun."
 }

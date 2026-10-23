@@ -3,6 +3,7 @@ import copy
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import chess
@@ -22,17 +23,17 @@ from llmgo.training.rewards import evaluate_action, terminal_value
 from llmgo.training.rollout import board_from_record, load_curriculum, prompt_for_record, record_identity, write_curriculum
 
 
-def batch(points=.5, **extra):
+def batch(points=.5, *, games_count=20, **extra):
     games = []
-    for pair in range(10):
+    for pair in range(games_count//2):
         for side in ("white", "black"):
             point = points[pair] if isinstance(points, list) else points
             winner = side if point == 1 else ("black" if side == "white" else "white")
             games.append({"game_id": f"g{pair}-{side}", "pair_id": pair, "model_seat": side,
                           "result": "draw" if point == .5 else f"{winner}_win", "result_reason": "checkmate"})
     result = {"games": games, "comparison_id": "same-parent:L1:b0", "opponent_identity": "engine",
-              "protocol_identity": "protocol", "seed_schedule": list(range(10)), **extra}
-    result["statistics"] = batch_stats(result)
+              "protocol_identity": "protocol", "seed_schedule": list(range(games_count//2)), **extra}
+    result["statistics"] = batch_stats(result, expected_games=games_count)
     return result
 
 
@@ -93,7 +94,7 @@ def controller(tmp_path):
 def consume_evaluation(c, points=.5):
     job = c.state["jobs"][c.state["active_job"]]
     payload = read_json(job["manifest"])["payload"]
-    evidence = batch(points, track=payload["track"], candidate_source_identity=payload["candidate_source"]["sha256"], candidate_id=payload["candidate_id"], skills_sha256=payload["skills_sha256"],
+    evidence = batch(points, games_count=payload["protocol"]["games"], track=payload["track"], candidate_source_identity=payload["candidate_source"]["sha256"], candidate_id=payload["candidate_id"], skills_sha256=payload["skills_sha256"],
                      source_identity=payload["source"]["sha256"], comparison_id=payload["comparison_id"],
                      protocol_identity=digest(payload["protocol"]), opponent_identity=digest(payload["engine_identity"]),
                      seed_schedule=payload["seed_schedule"], model_identity={"sha256": "model-a"})
@@ -248,11 +249,62 @@ def test_panel_is_fixed_balanced_and_partial_scores_cannot_win():
 
 def complete_baseline(c):
     c.executor=Platform()
-    for _ in range(8):
-        c.step();consume_evaluation(c,.5);c.step()
+    for level in range(1,5):
+        c.step()
+        payload=read_json(c.state['jobs'][c.state['active_job']]['manifest'])['payload']
+        assert payload['protocol']['games']==10 and len(payload['seed_schedule'])==5
+        assert payload['protocol']['opponent']['level']==level
+        validate_protocol(payload['protocol'],baseline=True)
+        consume_evaluation(c,.5);c.step()
     c.step()
     assert c.state["phase"]=="PLANNING"
-    assert c.state["best"]["score"]==.5
+    assert c.state['best'] is None
+    assert c.state['baseline_panel']['player']['games']==40
+    assert c.state['baseline_panel']['player']['score'] is None
+    assert len(c.state['jobs'])==4
+
+
+def test_short_baseline_does_not_relax_candidate_protocol():
+    from llmgo.rsi.evaluator import evaluate
+    p=protocol(opponent(1),'engine',baseline=True)
+    assert (p['games'],p['white'],p['black'])==(10,5,5)
+    validate_protocol(p,baseline=True)
+    with pytest.raises(ValueError):validate_protocol(p)
+    with pytest.raises(ValueError):validate_protocol(protocol(opponent(1),'engine'),baseline=True)
+    # Rejected before touching model weights, source files or GPU services.
+    with pytest.raises(ValueError):
+        evaluate({'protocol':p,'output':'unused','role':'candidate','seed_schedule':list(range(5))})
+    result=batch([0,0,.5,1,1],games_count=10)
+    stats=batch_stats(result,expected_games=10)
+    assert (stats['wins'],stats['draws'],stats['losses'])==(4,2,4)
+    assert stats['pair_standard_error']==pytest.approx(.05**.5)
+    with pytest.raises(ValueError):batch_stats(result)
+    with pytest.raises(ValueError):batch_stats(batch(),expected_games=10)
+    bad=copy.deepcopy(result);bad['games'][-1]['model_seat']='white'
+    with pytest.raises(ValueError):batch_stats(bad,expected_games=10)
+
+
+def test_legacy_campaign_keeps_its_registered_twenty_game_baseline(controller):
+    c=controller
+    c.state.pop('baseline_games_per_level');c.state.pop('baseline_levels');c.save()
+    c.executor=Platform()
+    for _ in range(8):
+        c.step()
+        payload=read_json(c.state['jobs'][c.state['active_job']]['manifest'])['payload']
+        assert payload['protocol']['games']==20 and len(payload['seed_schedule'])==10
+        assert 'purpose' not in payload['protocol']
+        validate_protocol(payload['protocol'])
+        consume_evaluation(c);c.step()
+    c.step()
+    assert c.state['best']['panel']['player']['games']==160
+
+
+@pytest.mark.parametrize('seeds',[list(range(10)),[1,1,2,3,4],[True,1,2,3,4]])
+def test_baseline_rejects_invalid_pair_schedule_before_compute(seeds):
+    from llmgo.rsi.evaluator import evaluate
+    with pytest.raises(ValueError,match='Seed schedule'):
+        evaluate({'protocol':protocol(opponent(1),'engine',baseline=True),'output':'unused',
+                  'role':'baseline','seed_schedule':seeds})
 
 
 def test_full_panel_baseline_resume_and_partial_candidate_does_not_replace_best(controller):
@@ -269,6 +321,26 @@ def test_full_panel_baseline_resume_and_partial_candidate_does_not_replace_best(
     assert restored.state["best"]==original
     assert restored.state["working"]["id"]!="initial"
     assert restored.state["attempts"][-1]["panel"]["player"]["score"] is None
+
+
+def test_four_level_baseline_enters_meta_then_single_level_interface_completes(controller):
+    c=controller;complete_baseline(c)
+    next_step=c.step()
+    assert next_step['status']=='needs_meta'
+    workspace=Path(next_step['workspace'])
+    command=[sys.executable,str(REPO/'scripts/request_evaluation.py'),'--level','L3',
+             '--hypothesis','Test the current skills against L3']
+    response=subprocess.run(command,cwd=workspace,capture_output=True,text=True,check=True)
+    answer=json.loads(response.stdout)
+    assert answer['status']=='ready'
+    c.prepare(answer['proposal_path']);c.step();c.step()
+    job=c.state['jobs'][c.state['active_job']]
+    payload=read_json(job['manifest'])['payload']
+    assert payload['protocol']['opponent']['level']==3 and payload['protocol']['games']==20
+    consume_evaluation(c,1);c.step();c.step()
+    assert c.state['phase']=='PLANNING' and c.state['active_job'] is None
+    assert len(c.state['jobs'])==5 and c.state['best'] is None
+    assert set(c.state['attempts'][-1]['panel']['player']['levels'])=={'3'}
 
 
 def test_free_form_training_receipt_routes_new_model_to_fixed_panel(controller):
@@ -302,7 +374,7 @@ def test_evaluation_identity_tamper_does_not_update_best(controller):
     artifact=Path(payload["output"])/"metrics.json";atomic_json(artifact,evidence)
     ref={"path":str(artifact),"sha256":file_hash(artifact)}
     with pytest.raises(ValueError,match="registered"):c._consume(job,ref,payload)
-    assert c.state["best"]["score"]==.5
+    assert c.state["best"] is None
 
 
 def test_full_candidate_panel_updates_best_without_mastery_gate(controller):
@@ -315,6 +387,9 @@ def test_full_candidate_panel_updates_best_without_mastery_gate(controller):
     assert c.state["best"]["score"]==.5625
     assert c.state["recommended"]["candidate_id"]==c.state["working"]["id"]
     assert c.state["phase"]=="PLANNING" and "current_level" not in c.state
+    previous=copy.deepcopy(c.state['best'])
+    skill_proposal(c);c.step();c.step();consume_evaluation(c,1);c.step();c.step()
+    assert c.state['best']==previous
 
 
 def test_failed_experiment_is_returned_to_research_instead_of_permanent_stop(controller):
@@ -349,3 +424,32 @@ def test_engine_is_pinned_across_difficulties_and_candidates(controller):
     c.engine_probe=lambda path,spec:{"engine":"changed","spec":spec}
     with pytest.raises(ValueError,match="identity changed"):
         c._new_job("evaluate","baseline",c.state["initial"],level=8)
+
+
+def test_upgrade_preserves_old_manifests_and_retries_with_new_site(controller,monkeypatch):
+    c=controller
+    c.step()
+    old=c.state['jobs'][c.state['active_job']]
+    old_manifest=Path(old['manifest']).read_bytes()
+    original_reference=c.state['initial']['source'].copy()
+    c.state['phase']='NEEDS_INPUT'
+    c.save()
+    calls=[]
+    def confirm(executor,job):
+        payload=read_json(job['manifest'])['payload']
+        assert executor.site==payload['site']
+        calls.append(job['id'])
+    monkeypatch.setattr('llmgo.remote.lifecycle.JobExecutor.confirm_failed',confirm)
+    updated={**c.site,'gpu_count':8}
+    c.upgrade(updated)
+    new=c.state['jobs'][c.state['active_job']]
+    assert new['id']!=old['id']
+    payload=read_json(new['manifest'])['payload']
+    assert payload['resources']['gpu_count']==8
+    assert payload['site']==updated
+    assert payload['resume_from']==str(Path(old['manifest']).parent/'output')
+    assert Path(old['manifest']).read_bytes()==old_manifest
+    assert c.state['initial']['source']==original_reference
+    verify_source(original_reference)
+    assert c.state['working']['source']['sha256']==c.state['source']['sha256']
+    assert calls==[old['id'],old['id']]

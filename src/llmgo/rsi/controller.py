@@ -50,7 +50,8 @@ class Controller:
                    "source": initial_source, "skills_path": str(cards), "skills_sha256": file_hash(cards)}
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
                  "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
-                 "phase": "BASELINE", "round": 0, "active_job": None, "jobs": {},
+                 "phase": "BASELINE", "baseline_games_per_level": 10, "baseline_levels": [1,2,3,4],
+                 "round": 0, "active_job": None, "jobs": {},
                  "candidate": None, "workspace": None, "attempts": [], "meta_stalls": 0,
                  "initial": initial, "incumbent": initial.copy(), "working": initial.copy(),
                  "best": None, "recommended": None, "candidate_step": 0, "evaluation_cursor": 0,
@@ -58,12 +59,42 @@ class Controller:
         memory = MemoryStore(root)
         memory.save_state(state)
         memory.append("campaign_created", {"campaign_id": campaign_id, "source": source["sha256"],
-            "objective": "Open research; fixed L1-L8 evaluation; 20 games per level; no mastery ladder"})
+            "objective": "Open research; L1-L4 baseline 10 games/level, candidate evaluation 20 games/level; final panel L1-L8"})
         return cls(root)
 
     def save(self):
         self.state["updated"] = utc()
         self.memory.save_state(self.state)
+
+    def upgrade(self, site, repo=None):
+        """Explicit operator migration: keep old evidence and initial reference immutable."""
+        if self.state["phase"] not in {"NEEDS_INPUT", "BASELINE", "PLANNING"}:
+            raise ValueError("Upgrade requires an idle controller at a research/baseline boundary")
+        active = self.state.get("active_job")
+        if active:
+            self.lifecycle.confirm_failed(self.state["jobs"][active])
+        if self.state.get("workspace"):
+            raise ValueError("Finish or archive the existing research workspace before upgrading")
+        if site["base_model"] != self.site["base_model"] or site["engine"] != self.site["engine"]:
+            raise ValueError("Upgrade cannot change the benchmark model/engine paths")
+        number = len(self.state.get("upgrades", []))+1
+        folder = self.root/"upgrades"/f"v{number:04d}"
+        atomic_json(folder/"previous-state.json",self.state)
+        snapshot = source_snapshot(Path(repo or site["repo"]),folder/"source")
+        old_source = self.state["source"]
+        working = self.state["working"].copy()
+        working.update(id=f"upgrade-{number}", source=snapshot, parent_id=working["id"])
+        self.state.setdefault("upgrades", []).append({"utc":utc(),"previous_source":old_source,
+            "source":snapshot,"previous_site":self.site,"site":site})
+        self.state.update(site=site,source=snapshot,working=working)
+        self.site = site
+        self.lifecycle = JobExecutor(self.root,site)
+        self.memory.append("pipeline_upgraded", {"source":snapshot["sha256"],"gpu_count":site["gpu_count"],
+            "previous_state":str(folder/"previous-state.json"),"initial_reference_unchanged":True})
+        self.save()
+        if active:
+            self.resume_failed()
+        return {"upgraded":True,"source":snapshot["sha256"],"active_job":self.state.get("active_job")}
 
     def metrics(self, ref):
         if file_hash(ref["path"]) != ref["sha256"]:
@@ -82,16 +113,19 @@ class Controller:
                    "skills_path": candidate["skills_path"], "skills_sha256": candidate["skills_sha256"]}
         if kind == "evaluate":
             spec = opponent(level)
+            # Keep already-created campaigns on their frozen 20-game protocol.
+            short_baseline = role == "baseline" and self.state.get("baseline_games_per_level", 20) == 10
+            batch_protocol = protocol(spec, self.site["engine"], baseline=short_baseline)
             # A panel has matched schedules across candidates; repeats use a new batch index.
             actual_engine = self.engine_probe(self.site["engine"], spec)
             pin = {k:v for k,v in actual_engine.items() if k != "spec"}
             if self.state.get("engine_pin") is not None and self.state["engine_pin"] != pin:
                 raise ValueError("Official opponent binary/NNUE identity changed since campaign baseline")
             self.state["engine_pin"] = pin
-            payload.update(protocol=protocol(spec, self.site["engine"]), track=track, resources={"gpu_count":1},
+            payload.update(protocol=batch_protocol, track=track, resources={"gpu_count":candidate.get("proposal", {}).get("evaluation_gpus", self.site["gpu_count"])},
                 engine_identity=actual_engine,
-                seed_schedule=[100000*level+100*batch_index+i for i in range(10)],
-                comparison_id=f"panel-v2:L{level}:b{batch_index}",
+                seed_schedule=[100000*level+100*batch_index+i for i in range(batch_protocol["games"]//2)],
+                comparison_id=f"{'baseline10-v2' if short_baseline else 'panel-v2'}:L{level}:b{batch_index}",
                 reference_source=self.state["initial"]["source"])
         elif kind == "research":
             payload["command"] = command
@@ -103,6 +137,8 @@ class Controller:
                 payload["resume_from"] = str(inside(self.site["user_root"], resume_from))
         else:
             raise ValueError("Use research jobs for arbitrary training/labeling/conversion")
+        if resume_from:
+            payload["resume_from"] = str(inside(self.site["user_root"], resume_from))
         path = folder/"manifest.json"
         manifest = write_manifest(path, payload)
         job = {"id": job_id, "manifest": str(path), "sha256": manifest["sha256"], "role": role,
@@ -170,7 +206,7 @@ class Controller:
             self.state["phase"] = "EXPERIMENT"
             return
         from .ladder import batch_stats
-        batch_stats(result)
+        statistics = batch_stats(result, expected_games=payload["protocol"]["games"])
         expected = {"candidate_id": payload["candidate_id"], "track": payload["track"],
                     "source_identity": payload["source"]["sha256"], "candidate_source_identity": payload["candidate_source"]["sha256"],
                     "comparison_id": payload["comparison_id"], "protocol_identity": digest(payload["protocol"]),
@@ -181,7 +217,7 @@ class Controller:
             raise ValueError("Evaluated the wrong checkpoint")
         candidate["model_sha256"] = result["model_identity"]["sha256"]
         row = {"ref": ref, "role": job["role"], "candidate_id": candidate["id"], "track": job["track"],
-               "level": job["level"], "statistics": result["statistics"]}
+               "level": job["level"], "statistics": statistics}
         self.memory.append("evaluation", row, event_id="evaluation-"+job["id"])
         self.state["pending_evaluations"].append(row)
         self.state["evaluation_cursor"] += 1
@@ -199,7 +235,7 @@ class Controller:
             shutil.copy2(parent["skills_path"], folder/"skills.json")
         atomic_json(folder/"context.json", self.memory.context())
         atomic_json(folder/"proposal.json", {"hypothesis": "Describe the next experiment", "evidence_refs": [],
-            "jobs": [], "evaluation": evaluation_plan(), "recommend": False})
+            "jobs": [], "evaluation": evaluation_plan({"levels":[1]}), "recommend": False})
         self.state["workspace"] = str(folder)
         self.save()
         return folder
@@ -226,11 +262,14 @@ class Controller:
             if not isinstance(resources,dict) or set(resources)-{"gpu_count","cpu","memory_gib"}:
                 raise ValueError("Invalid job resources")
             for key,value in resources.items():
-                if type(value) is not int or value < (0 if key=="gpu_count" else 1):
+                if type(value) is not int or value < (0 if key=="gpu_count" else 1) or (key=="gpu_count" and value > 8):
                     raise ValueError("Invalid job resources")
             argv = command.get("argv") if isinstance(command, dict) else None
             if not isinstance(argv, list) or not argv or any(not isinstance(x,str) or not x or "\0" in x for x in argv):
                 raise ValueError("Each job requires a nonempty argv string array")
+        evaluation_gpus = proposal.get("evaluation_gpus", self.site["gpu_count"])
+        if type(evaluation_gpus) is not int or not 1 <= evaluation_gpus <= 8:
+            raise ValueError("evaluation_gpus must be an integer from 1 to 8")
         batch = proposal.get("evaluation_batch", 0)
         if type(batch) is not int or batch < 0:
             raise ValueError("evaluation_batch must be a nonnegative integer")
@@ -274,7 +313,7 @@ class Controller:
         panel = panel_summary(rows)
         previous = self.state.get("best")
         score = panel["player"]["score"]
-        improved = score is not None and (previous is None or score > previous["score"])
+        improved = score is not None and (previous is None or previous.get("score") is None or score > previous["score"])
         record = {"candidate_id": candidate["id"], "parent_id": candidate["parent_id"],
                   "hypothesis": candidate["hypothesis"], "fingerprint": candidate["fingerprint"],
                   "panel": panel, "evaluations": rows, "new_best": improved, **(extra or {})}
@@ -306,10 +345,13 @@ class Controller:
             return self._poll()
         phase = self.state["phase"]
         if phase == "BASELINE":
-            if not self._evaluate_next(self.state["initial"], evaluation_plan(), "baseline"):
+            baseline_plan = evaluation_plan({"levels":self.state.get("baseline_levels", list(range(1,9)))})
+            if not self._evaluate_next(self.state["initial"], baseline_plan, "baseline"):
                 panel = panel_summary(self.state["pending_evaluations"])
                 self.state["baseline"] = self.state["pending_evaluations"][:]
-                self.state["best"] = {"candidate": self.state["initial"].copy(), "score": panel["player"]["score"], "panel": panel}
+                self.state["baseline_panel"] = panel
+                self.state["best"] = ({"candidate": self.state["initial"].copy(), "score": panel["player"]["score"], "panel": panel}
+                                      if panel["player"]["complete"] else None)
                 self.state.update(phase="PLANNING", pending_evaluations=[], evaluation_cursor=0)
                 self.save()
         elif phase == "PLANNING":
@@ -340,8 +382,12 @@ class Controller:
         if not job_id:
             raise ValueError("No failed task to resume")
         old = self.state["jobs"][job_id]
-        self.lifecycle.confirm_failed(old)
         payload = read_json(old["manifest"])["payload"]
+        # After an explicit pipeline upgrade, old manifests still retain their
+        # original site identity. Validate the terminal task using that identity.
+        guard = self.lifecycle if payload["site"] == self.site else JobExecutor(
+            self.root, payload["site"], transport=self.executor)
+        guard.confirm_failed(old)
         if old["role"] != "baseline" and not self.state.get("candidate"):
             raise ValueError("Experiment was handed back to Meta-Agent; submit a new proposal with explicit resume paths")
         candidate = self.state["initial"] if old["role"] == "baseline" else self.state["candidate"]
@@ -367,6 +413,10 @@ class Controller:
                         "在此范围内自主修改本研究副本的RL、reward、数据、Harness、prompt、skills、工具或配置，现有 PPO/LC0 只是可用起点。"
                         "教师只能用于RL奖励/价值、分析和提炼skills，不能作为SFT答案目标。最终会对战固定 L1-L8 Fairy-Stockfish，"
                         "最低档仍是 skill -9/depth5/0.05秒；只刷简单档没有用。"
+                        "新campaign只先跑L1-L4基线，每档10局、白黑各5局，共40局；之后进入研究。"
+                        "研究每轮可只测一个难度，后续评测每档20局；不必每次全八档。"
+                        "每任务最多8 GPU，默认8卡评测并行；训练用verl PPO+LC0（默认7卡actor加1卡教师），禁止SFT。可改RL配方。 在workspace运行 python scripts/request_evaluation.py --level L2 --gpus 8 可保留既有训练任务并把proposal.json设为只测L2；"
+                        "再返回ready及proposal绝对路径，由Executor提交。--track model测模型对照，--full-panel登记L1-L8完整评测。"
                         "评测套件/裁判/正式记录不可修改。提交协议及任意计算任务格式见 docs/rsi-operations.md。"
                         "可以通过 research job 调用受保护 source/scripts/evaluate.py 做快速或完整测试。"
                         "不要求本轮成功才能继续。保存实验结论，最后写 proposal.json 并返回路径，或说明缺失项。")

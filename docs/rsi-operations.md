@@ -8,7 +8,7 @@ Meta-Agent 只能通过 RL 和改进 skills 提升 Qwen3.5-4B，可单独或组�
 
 不能改 campaign/source 中的受保护评测副本、正式裁判/引擎/协议与历史正式结果。workspace 是可写副本，同名 evaluate.py 在研究副本中改动不会改变正式裁判；正式任务始终使用 campaign/source 的脚本。各次提交记录源码和权重身份。
 
-最终固定 L1–L8；最低档 -9/depth5/.05秒。每档20局，均分只有全八档才存在。没有自动晋级/通关阈值，没有每轮必须成功的要求；不能把只刷最低档当最终成果。正式玩家必须是 Qwen 玩家，不用另一引擎替它选步。
+最终固定 L1–L8；最低档 -9/depth5/.05秒。初始基线只测L1–L4，每档10局、白黑各5局、共40局；后续正式评测每档20局，均分只有全八档才存在。没有自动晋级/通关阈值，没有每轮必须成功的要求；不能把只刷最低档当最终成果。正式玩家必须是 Qwen 玩家，不用另一引擎替它选步。
 
 ## 2. workspace 与 proposal
 
@@ -22,7 +22,7 @@ Controller 在每轮建立新的源码副本，context.json 给出 Memory、工�
     {
       "label": "任意训练、采样或格式转换",
       "argv": ["{python}", "research/train.py", "--output", "{output}"],
-      "resources": {"gpu_count": 1, "cpu": 16, "memory_gib": 128}
+      "resources": {"gpu_count": 8, "cpu": 64, "memory_gib": 512}
     }
   ],
   "evaluation": {"levels": [1,2,3,4,5,6,7,8], "tracks": ["player","model"]},
@@ -32,7 +32,7 @@ Controller 在每轮建立新的源码副本，context.json 给出 Memory、工�
 }
 ```
 
-jobs 可以为空；无需训练即可提交 Harness/skills 修改。evaluation 可为 false（只研究、不正式测试），也可只测试部分难度；这两种都不会更新最佳完整成绩。默认 evaluation 是 player 全八档。model_path 可指定自己的已有导出模型，省略则沿用工作版本。来源 base_model 只读。
+jobs 可以为空；无需训练即可提交 Harness/skills 修改。evaluation 可为 false（只研究、不正式测试），也可只测试部分难度；这两种都不会更新最佳完整成绩。自动生成的 proposal 默认只测 player L1；手写提案若省略 evaluation 则仍按 player 全八档处理。model_path 可指定自己的已有导出模型，省略则沿用工作版本。来源 base_model 只读。
 
 argv 按数组直接执行，没有隐式 shell。需要 shell 时显式 `["bash","-lc","..."]`，自行正确转义。占位：
 
@@ -58,15 +58,15 @@ argv 按数组直接执行，没有隐式 shell。需要 shell 时显式 `["bash
 
 ## 3. 研究与评测状态
 
-BASELINE：八档初始 player 基线 → PLANNING：Meta-Agent自由研究 → EXPERIMENT：提交任意命令 → EVALUATING：所选档位/轨道逐项测试 → PLANNING。
+BASELINE：L1–L4初始 player 基线（40局） → PLANNING：Meta-Agent自由研究 → EXPERIMENT：提交任意命令 → EVALUATING：所选档位/轨道逐项测试 → PLANNING。
 
-每档评测单独一个 job，20局可逐局查看。player 完整均分超过旧实测最高就记录 new_best；这不是显著性证书。保存 working、best、recommended 三个概念，失败/部分测试也可成为下一轮工作分支。
+每档评测单独一个 job，基线10局、后续20局均可逐局查看。player 完整均分超过旧实测最高就记录 new_best；这不是显著性证书。保存 working、best、recommended 三个概念，失败/部分测试也可成为下一轮工作分支。
 
 训练/候选评测失败：保存日志、失败实验和已完成评测，回到 Meta-Agent，避免永久停在 FAILED；未跑完的玩家面板不能更新 best。初始基线失败：NEEDS_INPUT，先排查环境和路径。复用旧基线成功档位，恢复失败档。
 
 固定评测资源：thinking=True、200半步、32768生成tokens/手、540秒/请求、1800秒/手。完整玩家的内部 Harness 可变化，外部裁判执行真正的推理和合法步判断。model 轨道始终使用创建 campaign 时的参考 Harness，不能把候选 skills 混进去。
 
-20局是十对白黑种子，所有候选按同一 batch-index 对齐。development 成绩会被反复查看，不能当独立盲测或校准 Elo。最终推荐版本使用新 evaluation_batch 复测，并报告各档退步。
+初始10局基线使用五对白黑种子，后续20局使用十对；候选按同一 batch-index 对齐，前五对种子与基线相同。基线与候选的比较标识区分记录，比较时应考虑基线样本更少。development 成绩会被反复查看，不能当独立盲测或校准 Elo。最终推荐版本使用新 evaluation_batch 复测，并报告各档退步。
 
 ## 4. 任意测试调用
 
@@ -78,21 +78,28 @@ BASELINE：八档初始 player 基线 → PLANNING：Meta-Agent自由研究 → 
 
 这类 probe 写自己的 panel.json，不直接进入 campaign 正式最佳榜；要进入正式成绩，使用 proposal.evaluation。不能通过自写 metrics.json 冒充注册评测。完整 both 为320局，可以按研究需求调整测试频率。
 
-## 5. 初始 PPO 配方
 
-可用 CLI 创建课程：`python3 scripts/rsi.py curriculum --count 16 --output curriculum.jsonl`，或从自己的对局 events 提取。课程校验仅针对这个配方，其他训练数据格式可以自由使用。
+## 单难度评测接口
 
-workspace 中新增 ppo.json，例如：
+Meta-Agent 在研究 workspace 执行 `python scripts/request_evaluation.py --level L2`，即可保留既有RL任务并把 proposal.json 设为仅测L2。也接受数字 `--level 2`；`--track model` 测固定Harness模型对照，`--track both` 测两轨，`--full-panel` 登记L1–L8完整面板。后续每档每轨20局。
+
+该命令只准备提案并输出标准 ready JSON；Meta-Agent 将其作为最终答复，Controller/Executor 自动提交和监控GPU任务。它不会在devspace直接推理，也不会让Meta-Agent轮询。可单独评测skills/Harness，也可保留proposal.jobs先训练再评测。`--hypothesis "..."` 更新假设，`--batch-index 1` 选择新复测种子批次。
+
+完成L1–L4初始40局后立即进入研究；基线面板显示为4/8、无完整总分，best暂为空。单难度结果仍会保存并进入Memory，但只有完整L1–L8 player结果才更新完整实测最佳。
+
+## 5. 默认 verl PPO + LC0 配方
+
+详细配置、样例、资源和恢复见 [rsi-verl-ppo.md](rsi-verl-ppo.md)。在workspace准备 curriculum.jsonl、skills.json 和 ppo.json：
 
 ```json
-{"training":{"steps":16,"batch_size":8,"ppo_epochs":4},"reward":{"mode":"lc0_bootstrap","nodes":10000,"backend":"cuda-auto"}}
+{"training":{"backend":"verl_ppo","steps":16,"ppo_epochs":4},"reward":{"mode":"lc0_bootstrap","nodes":10000,"backend":"cuda-auto"}}
 ```
 
-jobs 配成 `{"argv":["{python}","scripts/train_ppo.py"]}`。该实现是课程单步 HF PPO：当前策略采样，Lc0 离线给 V=P(win)−P(lose)，非终局 A=V_after−V_before，终局采用真实结果减 V_before；gamma1/lambda0，无训练critic。标签不进入正式 prompt。
+在proposal.jobs登记 `{"argv":["{python}","scripts/train_ppo.py"],"resources":{"gpu_count":8}}`。默认7卡verl FSDP2 actor/rollout/reference＋1卡LC0。批量自动适配actor卡数（8卡任务batch56/minibatch14）。训练每个样本是一手棋，LC0离线给V=P(win)−P(lose)，非终局A=V_after−V_before，终局真实结果减V_before，gamma1/lambda0，不训练critic、不做GRPO、不做SFT。
 
-初始策略A广播到response tokens，逐tokenclip、每回答平均，behavior/reference/A在同批epochs固定。学生采样→CPU offload→Lc0评分释放→学生更新，最后完整导出。检查采样分布、clip/KL/真实更新及 checkpoint；配方细节见 rsi-training skill。它可修改/替换，不再禁止其他方法。
+该A广播至本次走棋的response tokens，verl负责clipped PPO、多epoch、优化器、分布式同步、checkpoint及HF导出。采样使用temperature1/top_p1/top_k-1，保存vLLM实际behavior logprobs并作为old logprobs，固定reference KL。LC0值已形成TD误差，不再把它叠加到另一个价值差奖励。
 
-LC0/BT4仅这条可选配方需要；不选择它不影响控制器或正式评测。BT4权重 SHA256：e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618。
+每任务最多8GPU；评测默认8副本，可用 `python scripts/request_evaluation.py --level L2 --gpus 4` 调整并行数，比赛数不变。训练产物、教师标注、失败与恢复规则见专文。Meta-Agent可以继续修改RL和skills方案，但禁止SFT、正式评测禁用教师的边界不变。
 
 ## 6. Memory、Executor 与恢复
 

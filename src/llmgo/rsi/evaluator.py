@@ -1,9 +1,11 @@
-"""Frozen 20-game evaluation against Fairy-Stockfish. No teacher/reward access."""
+"""Frozen Fairy-Stockfish referee: 10-game baseline, 20-game candidate evaluation."""
 from __future__ import annotations
 
 import asyncio
 import importlib.util
 import platform
+import shutil
+import traceback
 import time
 import sys
 from pathlib import Path
@@ -14,7 +16,7 @@ from llmgo.harness.skills import validate_cards
 from llmgo.runner.harness_loop import HarnessRunner, HarnessSeat, EngineSeat
 from llmgo.runtime.uci_player import UciPlayer
 from llmgo.store.jsonl import TrajectoryStore
-from .contracts import atomic_json, digest, file_hash, model_identity, read_json, validate_protocol
+from .contracts import atomic_json, digest, file_hash, model_identity, read_json, validate_protocol, utc, inside
 from .ladder import batch_stats
 from .candidate import CandidateSeat
 from .artifacts import verify_source
@@ -45,21 +47,55 @@ def runtime_helpers(source_root=None):
     return service
 
 
-async def play_batch(payload, url, cards, output):
+def evaluation_key(payload):
+    """Exclude scheduling and output paths; include every chess-affecting identity."""
+    return digest({k:payload.get(k) for k in (
+        "protocol", "seed_schedule", "comparison_id", "track", "skills_sha256",
+        "expected_model_sha256", "engine_identity") } | {
+        "candidate_source":payload.get("candidate_source", {}).get("sha256"),
+        "reference_source":payload.get("reference_source", {}).get("sha256"),
+        "source":payload.get("source", {}).get("sha256"),
+        "evaluator_version":"parallel-v1"})
+
+
+def checked_game(path, payload, index):
+    row = read_json(path)
+    unsigned = {k:v for k,v in row.items() if k != "integrity"}
+    pair = index//2
+    if (row.get("integrity") != digest(unsigned) or row.get("evaluation_key") != evaluation_key(payload)
+            or row.get("index") != index or row.get("pair_id") != pair
+            or row.get("seed") != payload["seed_schedule"][pair]
+            or row.get("model_seat") != ("black" if index%2 else "white")):
+        raise ValueError(f"Game resume identity/integrity mismatch: {path}")
+    # Diagnostics are evidence, not optional caches.
+    for key in ("raw_events", "short_events"):
+        artifact = inside(payload["site"]["user_root"], row[key])
+        if not artifact.is_file() or file_hash(artifact) != row["event_hashes"][key]:
+            raise ValueError(f"Completed game evidence changed: {artifact}")
+    return row
+
+
+async def play_batch(payload, url, cards, output, *, indices=None):
     p = payload["protocol"]
     cfg = HarnessConfig.from_dict(p["harness"])
     games = []
     for pair_id, seed in enumerate(payload["seed_schedule"]):
         for side in ("white", "black"):
             index = pair_id * 2 + (side == "black")
+            if indices is not None and index not in indices:
+                continue
             game_id = f"{payload['job_id']}-{index:02d}"
             result_path = output / "game_results" / f"{index:02d}.json"
             if result_path.exists():
-                games.append(read_json(result_path))
+                games.append(checked_game(result_path, payload, index))
                 continue
             game_root = output / "harness_runs" / game_id
             if game_root.exists():
-                raise RuntimeError(f"Unfinished game retained at {game_root}; do not silently replay it")
+                # Keep every incomplete trace; each retry starts a fresh, deterministic game.
+                archive = output/"incomplete_games"
+                archive.mkdir(exist_ok=True)
+                number = sum(1 for _ in archive.glob(game_id+".*"))
+                game_root.rename(archive/f"{game_id}.{number:04d}")
             store = TrajectoryStore(game_root)
             store.write_config({"id": game_id, "game": "chess", "model_seat": side,
                                 "protocol": p, "candidate_id": payload["candidate_id"],
@@ -96,6 +132,9 @@ async def play_batch(payload, url, cards, output):
                    "seconds": time.monotonic()-start, "diagnostics": summary, "engine_nodes": nodes,
                    "raw_events": str(game_root / "events.jsonl"),
                    "short_events": str(game_root / "short_events.jsonl")}
+            row.update(index=index, evaluation_key=evaluation_key(payload), event_hashes={
+                key:file_hash(row[key]) for key in ("raw_events", "short_events")})
+            row["integrity"] = digest(row)
             atomic_json(result_path, row)
             games.append(row)
     return games
@@ -103,7 +142,12 @@ async def play_batch(payload, url, cards, output):
 
 def evaluate(payload):
     p, output = payload["protocol"], Path(payload["output"])
-    validate_protocol(p)
+    baseline = payload.get("role") == "baseline" and p.get("purpose") == "baseline"
+    validate_protocol(p, baseline=baseline)
+    seeds = payload["seed_schedule"]
+    if (not isinstance(seeds, list) or len(seeds) != p["games"]//2
+            or any(type(seed) is not int for seed in seeds) or len(set(seeds)) != len(seeds)):
+        raise ValueError("Seed schedule must contain one unique integer seed per white/black pair")
     verify_source(payload["source"])
     verify_source(payload["candidate_source"])
     # Model control uses the original reference skill library, never candidate cards.
@@ -123,16 +167,12 @@ def evaluate(payload):
     gpus = helpers.visible_gpu_ids()
     if not gpus:
         raise RuntimeError("Official evaluation must run in a GPU job")
-    port = helpers._pick_ports(8000, 1)[0]
-    service = helpers.VllmServer(Path(payload["model_path"]), p, output / "vllm.log", port, gpus[0], python=payload["site"].get("inference_python"))
-    try:
-        service.start()
-        error = helpers._wait_servers([service], 1800)
-        if error:
-            raise RuntimeError(error)
-        games = asyncio.run(play_batch(payload, service.base_url, cards, output))
-    finally:
-        service.stop()  # only the child service created by this evaluator
+    count = payload.get("resources", {}).get("gpu_count", payload["site"]["gpu_count"])
+    if type(count) is not int or not 1 <= count <= 8 or len(gpus) < count:
+        raise RuntimeError(f"Evaluation requires 1-8 allocated GPUs; requested={count}, visible={len(gpus)}")
+    # Pin the actual initial-model hash too, before any completed game can be reused.
+    payload = {**payload, "expected_model_sha256":identity["sha256"]}
+    games = asyncio.run(parallel_batch(payload, cards, output, helpers, gpus[:count]))
     metrics = {
         "schema_version": 1, "candidate_id": payload["candidate_id"],
         "comparison_id": payload["comparison_id"], "seed_schedule": payload["seed_schedule"],
@@ -144,7 +184,7 @@ def evaluate(payload):
         "model_identity": identity, "engine_identity": actual_engine, "protocol": p,
         "host": platform.node(), "games": games,
     }
-    metrics["statistics"] = batch_stats(metrics)
+    metrics["statistics"] = batch_stats(metrics, expected_games=p["games"])
     metrics["primary_score"] = metrics["statistics"]["score"]
     # Do not publish if candidate execution changed the protected source/engine.
     verify_source(payload["source"])
@@ -155,3 +195,95 @@ def evaluate(payload):
         raise ValueError("Student weights changed during evaluation")
     atomic_json(output / "metrics.json", metrics)
     return output / "metrics.json"
+
+
+async def parallel_batch(payload, cards, output, helpers, gpus):
+    """One owned vLLM replica per GPU, resumable games, bounded per-game retries."""
+    output.mkdir(parents=True, exist_ok=True)
+    expected = payload["protocol"]["games"]
+    if payload.get("resume_from"):
+        prior = inside(payload["site"]["user_root"], payload["resume_from"])
+        skipped = []
+        for index in range(expected):
+            source = prior/"game_results"/f"{index:02d}.json"
+            dest = output/"game_results"/source.name
+            if source.is_file() and not dest.exists():
+                legacy = read_json(source)
+                if "integrity" not in legacy and "evaluation_key" not in legacy:
+                    skipped.append({"index":index,"path":str(source),"reason":"legacy_unverified_receipt"})
+                    continue
+                atomic_json(dest, checked_game(source, payload, index))
+        if skipped:
+            atomic_json(output/"resume-skipped.json", {"previous_output":str(prior), "games":skipped,
+                "message":"旧版本棋局缺少可核验回执；保留原证据，在新任务重新评测。"})
+    completed = {}
+    for index in range(expected):
+        path = output/"game_results"/f"{index:02d}.json"
+        if path.exists():
+            completed[index] = checked_game(path, payload, index)
+    queue = asyncio.Queue()
+    for index in range(expected):
+        if index not in completed:
+            queue.put_nowait(index)
+    ports = helpers._pick_ports(8000, len(gpus))
+    slots = [{"slot":i, "gpu":gpu, "stage":"pending", "game_index":None, "attempt":0}
+             for i,gpu in enumerate(gpus)]
+    failures = []
+    def progress():
+        atomic_json(output/"progress.json", {"stage":"evaluating", "updated":utc(),
+            "message":f"并行评测：{len(completed)}/{expected}局，{len(gpus)}个GPU副本",
+            "completed_games":len(completed), "total_games":expected,
+            "parallelism":len(gpus), "slots":slots, "failures":failures[-8:]})
+    progress()
+    async def worker(slot):
+        state = slots[slot]
+        service = None
+        try:
+            while True:
+                try:
+                    index = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    state.update(stage="completed", game_index=None)
+                    progress()
+                    return
+                state.update(game_index=index)
+                for attempt in range(1, 4):
+                    state.update(attempt=attempt, stage="starting" if service is None else "playing")
+                    progress()
+                    try:
+                        if service is None:
+                            service = helpers.VllmServer(Path(payload["model_path"]), payload["protocol"],
+                                output/f"gpu-{slot}"/f"vllm-{index:02d}-{attempt}.log", ports[slot], gpus[slot],
+                                python=payload["site"].get("inference_python"))
+                            service.start()
+                            error = await asyncio.to_thread(helpers._wait_servers, [service], 1800)
+                            if error:
+                                raise RuntimeError(error)
+                        state["stage"] = "playing"
+                        progress()
+                        rows = await play_batch(payload, service.base_url, cards, output, indices={index})
+                        completed[index] = rows[0]
+                        progress()
+                        break
+                    except Exception as exc:
+                        detail = {"slot":slot,"game_index":index,"attempt":attempt,
+                                  "error":str(exc),"traceback":traceback.format_exc(),"utc":utc()}
+                        atomic_json(output/"attempts"/f"game-{index:02d}-{attempt}.json", detail)
+                        failures.append({k:v for k,v in detail.items() if k != "traceback"})
+                        state["stage"] = "retrying" if attempt < 3 else "failed"
+                        progress()
+                        if service is not None:
+                            await asyncio.to_thread(service.stop)
+                            service = None
+                        if attempt == 3:
+                            raise
+        finally:
+            if service is not None:
+                await asyncio.to_thread(service.stop)
+    results = await asyncio.gather(*(worker(i) for i in range(len(gpus))), return_exceptions=True)
+    errors = [r for r in results if isinstance(r, BaseException)]
+    if errors:
+        raise RuntimeError(f"Parallel evaluation incomplete; {len(completed)}/{expected} games retained. {errors[0]}") from errors[0]
+    if sorted(completed) != list(range(expected)):
+        raise RuntimeError("Refusing to merge an incomplete evaluation")
+    return [completed[i] for i in range(expected)]

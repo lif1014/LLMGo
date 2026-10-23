@@ -226,6 +226,11 @@ def job_files(name: str, job_id: str):
     # Candidate import/runtime failures get a lazy file link too; inspect at most20.
     for candidate_log in islice((job/"output/harness_runs").glob("*/candidate.log"),20):
         names += (candidate_log.relative_to(job).as_posix(),)
+    # Bounded listing: raw rollout/teacher/shard logs are fetched only on click.
+    for pattern in ("output/gpu-*/*.log", "output/attempts/*.json", "output/training/lc0/*.json", "output/training/rollouts/*.jsonl"):
+        for artifact in islice((job).glob(pattern), 8):
+            names += (artifact.relative_to(job).as_posix(),)
+    names += ("output/training/model-preflight.json", "output/training/resolved-config.json", "output/training/identity.json", "output/training/teacher.json", "output/training/training-result.json", "output/training/batch-latest.json", "output/training/metrics.jsonl")
     files = []
     for name in names:
         path = inside(root, job/name)
@@ -234,7 +239,10 @@ def job_files(name: str, job_id: str):
             files.append({"path": path.relative_to(root).as_posix(), "bytes": stat.st_size, "modified": stat.st_mtime})
     results = list(islice((job/"output/game_results").glob("*.json"), 21))
     progress = limited_json(job/"output/progress.json", 16384)
-    return {"files": files, "game_results": len(results), "formal_games": 20, "progress": progress}
+    manifest = limited_json(job/"manifest.json", 262144) or {}
+    payload = manifest.get("payload", {})
+    expected = payload.get("protocol", {}).get("games", 20) if isinstance(payload, dict) else 20
+    return {"files": files, "game_results": len(results), "formal_games": expected, "progress": progress}
 
 
 @router.get("/campaigns/{name}/evaluations")

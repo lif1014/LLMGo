@@ -34,10 +34,13 @@ def evaluation_plan(data=None):
     return {"levels": sorted(levels), "tracks": tracks}
 
 
-def batch_stats(metrics):
+def batch_stats(metrics, *, expected_games=20):
+    if type(expected_games) is not int or expected_games not in (10, 20):
+        raise ValueError("Supported batches contain 10 baseline or 20 evaluation games")
+    pair_count = expected_games//2
     games = metrics.get("games", [])
-    if len(games) != 20:
-        raise ValueError("A formal batch must contain exactly 20 games")
+    if len(games) != expected_games:
+        raise ValueError(f"A batch must contain exactly {expected_games} games")
     ids, pairs = set(), {}
     wins = draws = losses = 0
     by_side = {"white": [], "black": []}
@@ -56,16 +59,16 @@ def batch_stats(metrics):
         losses += point == 0
         by_side[side].append(point)
         key = game.get("pair_id")
-        if type(key) is not int or not 0 <= key < 10 or (key, side) in pairs:
-            raise ValueError("Formal batches require ten unique white/black seed pairs")
+        if type(key) is not int or not 0 <= key < pair_count or (key, side) in pairs:
+            raise ValueError(f"Batches require {pair_count} unique white/black seed pairs")
         pairs[key, side] = point
-    if any(len(points) != 10 for points in by_side.values()):
-        raise ValueError("Expected 10 white and 10 black games")
-    scores = [(pairs[i, "white"]+pairs[i, "black"])/2 for i in range(10)]
+    if any(len(points) != pair_count for points in by_side.values()):
+        raise ValueError(f"Expected {pair_count} white and {pair_count} black games")
+    scores = [(pairs[i, "white"]+pairs[i, "black"])/2 for i in range(pair_count)]
     m = mean(scores)
     # Descriptive uncertainty only; repeated development tests are adaptive.
-    se = math.sqrt(sum((x-m)**2 for x in scores)/9/10)
-    return {"wins": wins, "draws": draws, "losses": losses, "score": m,
+    se = math.sqrt(sum((x-m)**2 for x in scores)/(pair_count-1)/pair_count)
+    return {"games": expected_games, "wins": wins, "draws": draws, "losses": losses, "score": m,
             "white_score": mean(by_side["white"]), "black_score": mean(by_side["black"]),
             "pair_scores": scores, "pair_standard_error": se,
             "truncated": sum(g.get("result_reason") == "truncated" for g in games)}
@@ -79,5 +82,6 @@ def panel_summary(rows):
         complete = set(latest) == set(LEVELS)
         result[track] = {"complete": complete, "levels": {str(k): v["statistics"] for k,v in sorted(latest.items())},
                          "score": mean(x["statistics"]["score"] for x in latest.values()) if complete else None,
-                         "games": 20*len(latest), "note": "Development results are adaptive, not calibrated Elo."}
+                         "games": sum(x["statistics"].get("games", 20) for x in latest.values()),
+                         "note": "Development results are adaptive, not calibrated Elo; initial baseline has fewer games."}
     return result

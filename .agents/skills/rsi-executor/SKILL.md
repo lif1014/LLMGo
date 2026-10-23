@@ -18,3 +18,8 @@ description: 在国际象棋 RSI 的任务交接或异常恢复时读取独立 E
 独立`external`模式下，运维进程运行`executor run CAMPAIGN`；Controller只读其报告。`embedded`模式由单个`run CAMPAIGN`托管同一组件。不要在Meta-Agent turn内启动第二个Controller或循环执行step。
 
 详细文件布局、启动与恢复见工作目录`docs/rsi-executor.md`；cctl原始操作约束见同级`cctl/SKILL.md`。资源固定beijing/model-autosft/NORMAL、devspace0GPU，只写自己的`/user/lyh4170`，不得停止他人任务。
+
+
+默认多卡（2026-10-23）：每项任务最多8 GPU，site默认8；评测为每卡独立Qwen副本并行棋局，`request_evaluation.py --level L2 --gpus N`可选1–8卡。默认训练已改为verl PPO+LC0，8卡任务使用7卡actor/rollout/reference＋1卡LC0，详见docs/rsi-verl-ppo.md。逐局回执核验后恢复，完整批次才合并成正式成绩。轮询仍由Executor处理，网页只读进度摘要和按需日志。已有campaign需显式upgrade，不重写历史快照。
+
+GPU任务提交后只每5–10分钟查询一次（默认300秒，稳定后450/600秒）；纯CPU任务可较频繁查询。交给Executor处理，不用Meta-Agent重复shell轮询。

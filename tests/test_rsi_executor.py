@@ -27,7 +27,7 @@ class Clock:
     def __call__(self):
         return self.value
 
-    def advance(self, seconds=121):
+    def advance(self, seconds=601):
         self.value += seconds
 
 
@@ -82,13 +82,13 @@ def prepared(tmp_path, request):
 def result_for(c, job):
     payload = read_json(job["manifest"])["payload"]
     games = [{"game_id": f"{pair}-{side}", "model_seat": side, "pair_id": pair, "result": "draw"}
-             for pair in range(10) for side in ("white", "black")]
+             for pair in range(len(payload["seed_schedule"])) for side in ("white", "black")]
     from llmgo.rsi.ladder import batch_stats
     metrics = {"track":payload["track"],"candidate_source_identity":payload["candidate_source"]["sha256"],"games": games, "candidate_id": payload["candidate_id"], "skills_sha256": payload["skills_sha256"],
                "source_identity": payload["source"]["sha256"], "comparison_id": payload["comparison_id"],
                "protocol_identity": digest(payload["protocol"]), "opponent_identity": digest(payload["engine_identity"]),
                "seed_schedule": payload["seed_schedule"], "model_identity": {"sha256": "fixture-model"}}
-    metrics["statistics"] = batch_stats(metrics)
+    metrics["statistics"] = batch_stats(metrics, expected_games=payload["protocol"]["games"])
     path = Path(payload["output"])/"metrics.json"
     atomic_json(path, metrics)
     atomic_json(path.with_name("result.json"), {"manifest_sha256": job["sha256"], "artifact": str(path),
@@ -175,7 +175,7 @@ def test_poll_backoff_persists_without_requerying_or_doubling_submissions(prepar
     for _ in range(10):
         c.lifecycle.advance(job)
     assert transport.gets == 1
-    clock.advance(30)
+    clock.advance(300)
     second = c.lifecycle.advance(job)
     assert second["interval_seconds"] > first["interval_seconds"]
     restarted = JobExecutor(c.root, c.site, transport=transport, clock=clock)
@@ -382,12 +382,14 @@ def test_task_get_rejects_wrong_id_even_with_matching_description_and_resources(
         transport.get({'task_id':12,'description':'same'})
 
 
-def test_submission_accepts_resource_name_and_remains_idempotent(tmp_path,monkeypatch):
+@pytest.mark.parametrize('wrapped',[False,True])
+def test_submission_accepts_resource_name_and_remains_idempotent(tmp_path,monkeypatch,wrapped):
     calls=[]
     def runner(argv,**kwargs):
         calls.append(argv[1:3])
         if argv[1:3]==['pool','list']:
             result=[{'name':'model-autosft'}]
+            if wrapped:result={'success':True,'data':result}
         else:
             assert argv[1:3]==['job','create']
             result={'name':'tasks/44','status':'Queued'}
@@ -398,3 +400,37 @@ def test_submission_accepts_resource_name_and_remains_idempotent(tmp_path,monkey
     assert transport.submit(path)['task_id']==44
     assert transport.submit(path)['task_id']==44
     assert calls.count(['job','create'])==1
+
+
+
+def test_gpu_polls_back_off_from_five_to_ten_minutes(prepared):
+    c,job,transport,clock=prepared
+    first=c.lifecycle.advance(job)
+    assert first['interval_seconds']==300
+    for _ in range(4):
+        clock.advance(60)
+        c.lifecycle.advance(job)
+    assert transport.gets==1
+    clock.advance(60)
+    second=c.lifecycle.advance(job)
+    assert second['interval_seconds']==450 and transport.gets==2
+    clock.advance(450)
+    third=c.lifecycle.advance(job)
+    assert third['interval_seconds']==600 and transport.gets==3
+    clock.advance(599)
+    c.lifecycle.advance(job)
+    assert transport.gets==3
+
+
+def test_cpu_jobs_keep_short_poll_interval(prepared):
+    from llmgo.rsi.artifacts import write_manifest
+    c,job,transport,clock=prepared
+    wrapper=read_json(job['manifest'])
+    wrapper['payload']['resources']['gpu_count']=0
+    updated=write_manifest(job['manifest'],wrapper['payload'])
+    job['sha256']=updated['sha256']
+    first=c.lifecycle.advance(job)
+    assert first['interval_seconds']==30
+    clock.advance(30)
+    second=c.lifecycle.advance(job)
+    assert transport.gets==2 and second['interval_seconds']==45

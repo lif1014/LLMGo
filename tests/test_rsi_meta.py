@@ -12,6 +12,7 @@ from llmgo.rsi.meta import CodexBackend
 
 SERVER = r'''
 import json, sys
+expected_mode = "workspace-write" if "inner" in sys.argv else "danger-full-access"
 def emit(obj):
     print(json.dumps(obj), flush=True)
 for line in sys.stdin:
@@ -23,8 +24,14 @@ for line in sys.stdin:
     if method == "initialize":
         emit({"id":rid,"result":{}})
     elif method in ("thread/start", "thread/resume"):
+        if request["params"].get("sandbox") != expected_mode:
+            emit({"id":rid,"error":{"code":-32600,"message":"Invalid SandboxMode"}})
+            continue
         emit({"id":rid,"result":{"thread":{"id":"thread-one", "turns":[]}}})
     elif method == "turn/start":
+        policy=request["params"]["sandboxPolicy"]
+        assert policy["type"] == ("workspaceWrite" if "inner" in sys.argv else "externalSandbox")
+        assert policy["networkAccess"] == (True if "inner" in sys.argv else "enabled")
         emit({"id":rid,"result":{"turn":{"id":"turn-one"}}})
         emit({"method":"item/agentMessage/delta","params":{"turnId":"turn-one","delta":"visible analysis"}})
         emit({"method":"thread/tokenUsage/updated","params":{"threadId":"thread-one","tokenUsage":{"total":{"inputTokens":100,"outputTokens":20},"last":{"totalTokens":120}}}})
@@ -35,7 +42,8 @@ for line in sys.stdin:
 '''
 
 
-def test_codex_jsonl_resume_visible_events_and_crash_result_reuse(tmp_path):
+@pytest.mark.parametrize("isolation", ["external", "workspace-write"])
+def test_codex_jsonl_resume_visible_events_and_crash_result_reuse(tmp_path, isolation):
     server = tmp_path/"fake-server.py"
     server.write_text(SERVER)
     workspace = tmp_path/"workspace"
@@ -43,11 +51,12 @@ def test_codex_jsonl_resume_visible_events_and_crash_result_reuse(tmp_path):
     atomic_json(workspace/"context.json", {"round": 1})
     memory = MemoryStore(tmp_path/"memory")
     site = {"user_root": str(tmp_path), "codex_home": str(tmp_path/"codex"), "codex_bin": "fake"}
+    site["meta_sandbox_mode"] = isolation
     calls = []
     def popen(argv, **kwargs):
         calls.append(argv)
         assert kwargs["env"]["CODEX_HOME"] == site["codex_home"]
-        return subprocess.Popen([sys.executable, str(server)], **kwargs)
+        return subprocess.Popen([sys.executable, str(server), *(["inner"] if isolation=="workspace-write" else [])], **kwargs)
     backend = CodexBackend(site, memory, popen=popen)
     first = backend.turn(workspace, "prepare")
     assert first["status"] == "ready"
@@ -61,12 +70,40 @@ def test_codex_jsonl_resume_visible_events_and_crash_result_reuse(tmp_path):
     assert any(e.get("method") == "thread/resume" for e in sends)
     assert memory.search("visible analysis")
     assert read_json(memory.root/"meta-session.json")["process"] is None
+    assert read_json(memory.root/"meta-session.json")["sandbox_mode"] == isolation
     assert read_json(memory.root/"meta-session.json")["token_usage"]["total"]["inputTokens"] == 100
     with pytest.raises(RuntimeError, match="turn failed"):
         restored.turn(workspace, "fail")
     assert read_json(memory.root/"meta-session.json")["status"] == "failed"
     assert memory.recent(1, "meta_failure")[0]["body"]["error_type"] == "RuntimeError"
     assert memory.recent(1, "meta_status")[0]["body"]["status"] == "failed"
+
+
+def test_config_token_reaches_meta_child_without_leaking_to_journal(tmp_path):
+    home=tmp_path/'codex-home';home.mkdir()
+    (home/'config.toml').write_text('model_provider="custom"\n[model_providers.custom]\n'
+        'env_key="OPENAI_API_KEY"\nexperimental_bearer_token="opaque-meta-test-secret"\n')
+    server=tmp_path/'server.py'
+    server.write_text('import os,sys\nprint(os.environ["OPENAI_API_KEY"],file=sys.stderr,flush=True)\n'+SERVER)
+    workspace=tmp_path/'workspace';workspace.mkdir()
+    memory=MemoryStore(tmp_path/'memory')
+    site={'user_root':str(tmp_path),'codex_home':str(home),'codex_bin':'fake'}
+    def popen(argv,**kwargs):
+        assert kwargs['env']['OPENAI_API_KEY']=='opaque-meta-test-secret'
+        return subprocess.Popen([sys.executable,str(server)],**kwargs)
+    result=CodexBackend(site,memory,popen=popen).turn(workspace,'prepare')
+    assert result['status']=='ready'
+    assert 'opaque-meta-test-secret' not in memory.events.read_text()
+
+
+def test_unknown_isolation_mode_fails_before_starting_codex(tmp_path):
+    site={'user_root':str(tmp_path),'codex_home':str(tmp_path/'home'),
+          'codex_bin':'fake','meta_sandbox_mode':'externla'}
+    def forbidden(*args,**kwargs):
+        raise AssertionError('Invalid isolation must not start a process')
+    backend=CodexBackend(site,MemoryStore(tmp_path/'memory'),popen=forbidden)
+    with pytest.raises(ValueError,match='meta_sandbox_mode'):
+        backend.turn(tmp_path,'prepare')
 
 
 

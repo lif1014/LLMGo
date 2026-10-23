@@ -30,7 +30,7 @@ def training_config(config):
         raise ValueError("Unknown RL configuration; arbitrary trainer commands are not accepted")
     result = {**defaults, **config}
     if result["backend"] != "hf_ppo":
-        raise ValueError("Only hf_ppo supports the frozen Lc0 critic; old GRPO/verl configurations must be migrated explicitly")
+        raise ValueError("Legacy HF test implementation only; the default train_ppo.py entry uses llmgo.training.verl_ppo. Migrate configs explicitly")
     for key, low, high in (("batch_size", 1, 256), ("steps", 1, 100000),
                            ("ppo_epochs", 1, 16), ("minibatch_size", 1, 256),
                            ("lora_rank", 1, 256), ("max_response_tokens", 16, 32768),

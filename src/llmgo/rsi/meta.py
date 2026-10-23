@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Protocol
 
 from .contracts import atomic_json, digest, file_hash, inside, read_json, utc, worker_environment
+from .codex_auth import runtime_auth, scrub_known
+from .codex_sandbox import sandbox_mode, thread_sandbox, turn_sandbox
 
 
 class MetaAgentBackend(Protocol):
@@ -47,6 +49,7 @@ class CodexBackend:
         self.proc = None
         self.responses = {}
         self.notifications = deque()
+        self._secrets = ()
 
     def _save(self, **changes):
         old_status = self.session.get("status")
@@ -75,14 +78,14 @@ class CodexBackend:
     def _record(self, channel, value):
         """Persist a received message independently of active RPC dispatch."""
         self.memory.append("meta_event" if channel == "protocol" else "meta_stderr",
-                           {"message": value, "thread_id": self.session.get("thread_id")})
+                           {"message": scrub_known(value, self._secrets), "thread_id": self.session.get("thread_id")})
         if channel == "protocol" and isinstance(value, dict) and value.get("method") == "thread/tokenUsage/updated":
             usage = value.get("params", {}).get("tokenUsage")
             if isinstance(usage, dict):
                 self._save(token_usage=usage, updated=utc())
 
     def _send(self, value):
-        self.memory.append("meta_send", {"message": value, "thread_id": self.session.get("thread_id")})
+        self.memory.append("meta_send", {"message": scrub_known(value, self._secrets), "thread_id": self.session.get("thread_id")})
         self.proc.stdin.write(json.dumps(value) + "\n")
         self.proc.stdin.flush()
 
@@ -120,10 +123,11 @@ class CodexBackend:
             self._pump(timeout=min(30, max(.1, deadline-time.monotonic())))
         response = self.responses.pop(rid)
         if "error" in response:
-            raise RuntimeError(f"Codex {method}: {response['error']}")
+            raise RuntimeError(f"Codex {method}: {scrub_known(response['error'], self._secrets)}")
         return response["result"]
 
     def turn(self, workspace, prompt):
+        isolation = sandbox_mode(self.site)
         root = self.site["user_root"]
         workspace = inside(root, workspace)
         context = workspace / "context.json"
@@ -141,16 +145,21 @@ class CodexBackend:
         self.notifications = deque()
         env = worker_environment(self.site)
         env["CODEX_HOME"] = str(inside(root, self.site["codex_home"]))
+        env, self._secrets = runtime_auth(self.site, env)
         instructions = (
             "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
             "每轮先读持久 Memory、失败记录与跨难度评测。只能通过强化学习（RL）和改进skills这两种方法提升Qwen3.5-4B，可以单独使用或组合。"
             "禁止使用SFT（监督微调），包括SFT预热、辅助SFT损失、行为克隆和对教师答案的监督蒸馏；使用SFT，最终得分为0分。"
-            "可自主修改RL算法、reward、数据、课程，以及为RL和skills服务的Harness、prompt、工具、skills内容/触发/选择、研究流程；不要求沿用现有PPO。"
+            "可自主修改RL算法、reward、数据、课程，以及为RL和skills服务的Harness、prompt、工具、skills内容/触发/选择、研究流程；默认训练入口scripts/train_ppo.py现为verl 0.8.0 PPO+LC0，可研究修改，不要求沿用现有PPO。"
             "离线教师可用于RL奖励/价值估计、局面分析和提炼skills，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
             "最终会把成果对战固定L1-L8 Fairy-Stockfish，最低档skill -9/depth5/0.05秒；只刷简单档没有用。"
+            "新campaign先做L1-L4基线，每档10局、白黑各5局，共40局，然后开始研究；初始基线不是完整八档成绩。"
+            "每项计算任务最多8 GPU，默认8卡。评测每卡一个Qwen副本并行棋局；可用request_evaluation.py --level L2 --gpus 4改并行数。verl PPO默认7卡actor/rollout/ref加1卡LC0，单卡时需CPU LC0后端。不要在devspace使用GPU。每次研究可只测一个难度，不必每次全八档；后续单档评测20局，比较时注意样本量差异。"
+            "在workspace运行 python scripts/request_evaluation.py --level L2 即可更新proposal.json为只测L2，保留已有训练任务；"
+            "再返回ready和proposal绝对路径，由Executor提交及监控。--track model选择固定Harness模型对照，--full-panel请求L1-L8完整评测。"
             "可以调用受保护evaluate.py；正式裁判、协议、引擎和结果记录不得更改。正式走棋由Qwen玩家完成，不用另一引擎替它选步。"
             "只写 /user/lyh4170，来源 /user/liyaohu4170 只读。不要修改用户其他任务的环境；新增依赖用本研究专用或实验独立venv与缓存，不原地升级系统/他人环境。"
-            "只用 beijing/model-autosft/NORMAL；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
+            "GPU任务提交后每5–10分钟查询一次，纯CPU任务可较频繁查询，常规监控交给Executor。只用 beijing/model-autosft/NORMAL；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
             "指定workspace是自由研究副本，任意修改其内容。用proposal.json登记任意计算命令和评测计划；"
             "Controller/Executor会快照和提交，避免重复提交同一实验。可以自行研究提交命令，遵守资源授权。"
             "没有研究总时间上限。失败也记录并继续，不要求每轮成功。"
@@ -160,7 +169,7 @@ class CodexBackend:
         command = [self.site["codex_bin"], "app-server"]
         self.proc = self.popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
-        self._save(process=_process_identity(self.proc.pid), cwd=str(workspace))
+        self._save(process=_process_identity(self.proc.pid), cwd=str(workspace), sandbox_mode=isolation)
         readers = []
         for stream, channel in ((self.proc.stdout, "stdout"), (self.proc.stderr, "stderr")):
             thread = threading.Thread(target=self._reader, args=(stream, channel, self.events), daemon=True)
@@ -169,7 +178,7 @@ class CodexBackend:
         try:
             self._rpc("initialize", {"clientInfo": {"name": "llmgo-rsi", "title": "LLMGo RSI", "version": "1.0.0"}})
             self._send({"method": "initialized", "params": {}})
-            params = {"cwd": str(workspace), "approvalPolicy": "never", "sandbox": "workspaceWrite",
+            params = {"cwd": str(workspace), "approvalPolicy": "never", "sandbox": thread_sandbox(self.site),
                       "developerInstructions": instructions}
             if self.site.get("meta_model"):
                 params["model"] = self.site["meta_model"]
@@ -202,8 +211,7 @@ class CodexBackend:
                 "threadId": thread_id, "cwd": str(workspace),
                 "input": [{"type": "text", "text": prompt}],
                 "approvalPolicy": "never",
-                "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [root],
-                                  "networkAccess": True, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True},
+                "sandboxPolicy": turn_sandbox(self.site),
                 "outputSchema": FINAL_SCHEMA,
             })
             turn_id = result["turn"]["id"]
@@ -225,7 +233,7 @@ class CodexBackend:
                         status = p["turn"]["status"]
                         self._save(status=status, updated=utc())
                         if status != "completed":
-                            raise RuntimeError(f"Codex turn {status}: {p['turn'].get('error')}")
+                            raise RuntimeError(f"Codex turn {status}: {scrub_known(p['turn'].get('error'), self._secrets)}")
                         texts = [i.get("text", "") for i in p["turn"].get("items", []) if i.get("type") == "agentMessage"]
                         for text in reversed(texts or list(items)):
                             answer = self._answer(text)
@@ -236,7 +244,7 @@ class CodexBackend:
                 self._pump()  # no total teacher turn/research timeout
         except BaseException as exc:
             self._save(status="failed", updated=utc())
-            self.memory.append("meta_failure", {"error_type": type(exc).__name__, "error": str(exc),
+            self.memory.append("meta_failure", {"error_type": type(exc).__name__, "error": scrub_known(str(exc), self._secrets),
                 "thread_id": self.session.get("thread_id"), "turn_id": self.session.get("turn_id")})
             raise
         finally:

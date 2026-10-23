@@ -48,7 +48,7 @@ def execute(manifest_path, expected_sha=None):
         try:
             if payload["kind"] == "evaluate":
                 from .evaluator import evaluate
-                progress("evaluating", "受保护裁判执行单档20局，研究方法和候选Harness不受限")
+                progress("evaluating", f"受保护裁判执行单档{payload['protocol']['games']}局，研究方法和候选Harness不受限")
                 artifact = evaluate(payload)
             elif payload["kind"] == "research":
                 candidate = inside(site["user_root"], payload["candidate_source"]["root"])

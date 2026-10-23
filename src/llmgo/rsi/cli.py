@@ -7,11 +7,15 @@ import json
 import os
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 from .contracts import REPO, inside, load_site, read_json
+from .codex_auth import resolve_auth
 from .controller import Controller
 from .memory import MemoryStore
+from llmgo.remote.cctl_env import cctl_environment, cctl_failure_detail
+from llmgo.remote.pools import own_pool_rows, authorized_pool, pool_summary
 
 
 def doctor(site, *, worker=False, platform=False, codex_auth=False, ppo=False):
@@ -37,23 +41,39 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False, ppo=False):
         check("cctl_program", shutil.which(site["cctl_bin"]), site["cctl_bin"])
         if codex_auth:
             try:
-                result = subprocess.run([site["codex_bin"], "login", "status"], capture_output=True, text=True,
-                    timeout=30, cwd=site["user_root"], env={**os.environ, "CODEX_HOME": site["codex_home"]})
-                check("codex_login_status", result.returncode == 0,
-                      f"CLI login status exited {result.returncode}; no model request tested; raw output withheld")
-            except (OSError, subprocess.TimeoutExpired) as exc:
+                config_path = Path(site["codex_home"])/"config.toml"
+                config = tomllib.loads(config_path.read_text()) if config_path.is_file() else {}
+                auth_env, auth, _ = resolve_auth(config, {**os.environ, "CODEX_HOME": site["codex_home"]})
+                if auth["api_key_present"]:
+                    # Inline/custom-provider credentials need no CLI OAuth login.
+                    # Presence is a configuration check, not an authentication test.
+                    check("codex_provider_credentials", True,
+                          f"Configured via {auth['auth_source']}; run check_meta_connection.py to verify inference")
+                else:
+                    result = subprocess.run([site["codex_bin"], "login", "status"], capture_output=True, text=True,
+                        timeout=30, cwd=site["user_root"], env=auth_env)
+                    check("codex_login_status", result.returncode == 0,
+                          f"CLI login status exited {result.returncode}; no model request tested; raw output withheld")
+            except (OSError, subprocess.TimeoutExpired, ValueError, TypeError) as exc:
                 check("codex_login_status", False, type(exc).__name__)
         if platform and shutil.which(site["cctl_bin"]):
             try:
+                cctl_env = cctl_environment()
+                check("cctl_server", True, cctl_env.get("CCTL_SERVER", "CLI default configuration"))
                 result = subprocess.run([site["cctl_bin"], "pool", "list", "--own", "--no-input", "-o", "json"],
                                         capture_output=True, text=True, timeout=90,
-                                        env={**os.environ, "CCTL_NO_UPDATE_CHECK": "1"})
+                                        env=cctl_env)
                 pools = json.loads(result.stdout) if result.returncode == 0 else []
-                rows = pools if isinstance(pools, list) else pools.get("pools", [])
-                check("cctl_auth_and_pool", result.returncode == 0 and any(p.get("name") == "model-autosft" for p in rows),
-                      "Authenticated own-pool lookup" if result.returncode == 0 else "cctl authentication/lookup failed")
+                rows = own_pool_rows(pools)
+                allowed = authorized_pool(rows)
+                detail = ("Authenticated own-pool lookup" if allowed else
+                          "model-autosft not found in own pools; returned: "+pool_summary(rows)) if result.returncode == 0 else cctl_failure_detail(result,cctl_env)
+                if result.returncode == 0 and not rows:
+                    detail = ("cctl returned [] for own pools. Check cctl profile current/list and the logged-in account's "
+                              "pool membership on this server; do not bypass the model-autosft permission check.")
+                check("cctl_auth_and_pool", result.returncode == 0 and allowed, detail)
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-                check("cctl_auth_and_pool", False, type(exc).__name__)
+                check("cctl_auth_and_pool", False, str(exc) if isinstance(exc,ValueError) else type(exc).__name__)
     return {"ok": all(c["ok"] for c in checks), "checks": checks, "inference_tested": False,
             "note": "CLI login status is optional and does not verify model inference; custom providers may use their own credentials. No inference, training or submission performed. Remote paths are expected to be absent on the development machine."}
 
@@ -66,10 +86,10 @@ def parser():
     d.add_argument("--worker", action="store_true")
     d.add_argument("--ppo", action="store_true", help="Also check optional Lc0 PPO assets")
     d.add_argument("--platform", action="store_true")
-    d.add_argument("--codex-auth", action="store_true", help="Check configured Codex CLI login status, without inference")
+    d.add_argument("--codex-auth", action="store_true", help="Check provider credential configuration or CLI login status, without inference")
     init = sub.add_parser("init")
     init.add_argument("campaign")
-    for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "index-activity"):
+    for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "index-activity", "upgrade"):
         cmd = sub.add_parser(name)
         cmd.add_argument("campaign")
         if name == "prepare":
@@ -128,7 +148,7 @@ def main(argv=None):
             if not root.is_dir():
                 raise FileNotFoundError(f"Unknown campaign: {root}")
             controller = Controller(root)
-            if site != controller.site:
+            if site != controller.site and args.command != "upgrade":
                 raise ValueError("Campaign site is frozen; use its original site profile")
             if args.command == "index-activity":
                 # Constructor replay indexes legacy records once, outside HTTP.
@@ -168,7 +188,10 @@ def main(argv=None):
                 result = controller.run(max_steps=args.steps)
             else:
                 with controller.memory.lock():
-                    if args.command == "step":
+                    if args.command == "upgrade":
+                        with controller.lifecycle.memory.lock("service"):
+                            result = controller.upgrade(site)
+                    elif args.command == "step":
                         result = controller.step()
                     elif args.command == "workspace":
                         if controller.state["phase"] != "PLANNING":

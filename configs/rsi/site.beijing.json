@@ -22,14 +22,18 @@
   "lc0_bin": "/user/lyh4170/tools/bin/lc0",
   "reward_weights": "/user/lyh4170/reward_models/lc0/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz",
   "gpu_model": "h800",
-  "gpu_count": 1,
-  "cpu": 16,
-  "memory_gib": 128,
+  "gpu_count": 8,
+  "cpu": 64,
+  "memory_gib": 512,
   "meta_model": null,
+  "meta_sandbox_mode": "external",
   "poll_seconds": 120,
   "executor_mode": "embedded",
   "executor_max_poll_seconds": 600,
   "worker_venv": "/user/lyh4170/venvs/llmgo-rsi-20261022",
   "inference_python": "/user/lyh4170/venvs/llmgo-rsi-20261022-inference/bin/python",
-  "runtime_root": "/user/lyh4170/llmgo-rsi-runtime-20261022"
+  "runtime_root": "/user/lyh4170/llmgo-rsi-runtime-20261022",
+  "verl_venv": "/user/lyh4170/venvs/llmgo-verl-ppo-tf54-20261024",
+  "gpu_poll_seconds": 300,
+  "gpu_max_poll_seconds": 600
 }

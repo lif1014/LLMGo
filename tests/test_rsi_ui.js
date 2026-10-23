@@ -33,7 +33,7 @@ function body(url){
     return {available:true,events:records,cursor:records.at(-1)?.ordinal||Number(cursor)||high,older_cursor:records[0]?.ordinal,has_older:records[0]?.ordinal>1,head:high};
   }
   if(u.pathname.endsWith('/evaluations'))return evaluations;
-  if(u.pathname.endsWith('/job-files'))return {files:[],game_results:1,formal_games:20,progress:{stage:'training',curriculum_records:64}};
+  if(u.pathname.endsWith('/job-files'))return {files:[],game_results:1,formal_games:10,progress:{stage:'training',curriculum_records:64}};
   if(u.pathname.endsWith('/games'))return [{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}];
   if(u.pathname.endsWith('/game-events')){const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;}
   if(u.pathname.endsWith('/artifact'))return {text:'raw '+u.searchParams.get('path')+' '+u.searchParams.get('offset')};
@@ -59,8 +59,13 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   assert.equal(el('coach').children[0].children[1].textContent,'','closed detail bodies are lazy');
   const student=el('student-events').children.at(-1);student.open=true;student.ontoggle();assert.match(student.textContent,/tool_library/);
   assert.match(el('executor-state').textContent,/4170/);assert.match(el('worker-state').textContent,/training/);
+  assert.match(el('worker-state').textContent,/1\/10局/);
   assert.match(el('results').textContent,/75.0%/);
   assert.match(el('matrix').textContent,/部分测试 1\/8/);
+  run('results([{candidate_id:"baseline",track:"player",level:1,statistics:{score:.5,games:10,wins:4,draws:2,losses:4}},{candidate_id:"candidate",track:"player",level:1,statistics:{score:.5,games:20,wins:8,draws:4,losses:8}}])');
+  const cellTitles=n=>[n.title||'',...n.children.flatMap(cellTitles)];
+  assert(cellTitles(el('matrix')).some(t=>t.endsWith('10局')));
+  assert(cellTitles(el('matrix')).some(t=>t.endsWith('20局')));
   run('results(Array.from({length:8},(_,i)=>({candidate_id:"complete",track:"player",level:i+1,statistics:{score:.5,wins:5,draws:10,losses:5}})).concat([{candidate_id:"complete",track:"model",level:1,statistics:{score:1}}]))');
   assert.match(el('matrix').textContent,/50.0%/);assert.match(el('matrix').textContent,/模型对照/);
   assert.match(el('matrix').textContent,/部分测试 1\/8/);

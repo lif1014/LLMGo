@@ -12,7 +12,7 @@ import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
 FOLDERS=('src','scripts','configs','.agents','docs','tests','engines')
-TOP=('README.md','plan.md','skills_docs.md','requirements-rsi-control.txt','requirements-rsi-worker.txt','.gitignore','.gitattributes')
+TOP=('README.md','plan.md','skills_docs.md','requirements-rsi-control.txt','requirements-rsi-worker.txt','requirements-rsi-verl.txt','.gitignore','.gitattributes')
 
 
 def sha(path):

@@ -125,7 +125,8 @@ async def choose_move(*args,**kwargs):
     asyncio.run(run())
 
 
-def test_real_fairy_referee_batch_with_both_seats_and_child_adapter(tmp_path,monkeypatch):
+@pytest.mark.parametrize('baseline',[False,True])
+def test_real_fairy_referee_batch_with_both_seats_and_child_adapter(tmp_path,monkeypatch,baseline):
     # Two-ply fixture keeps this an integration check, not a strength measurement.
     from llmgo.rsi import evaluator
     from llmgo.runner.harness_loop import HarnessRunner
@@ -139,11 +140,12 @@ async def choose_move(board,history,ask,emit,**kwargs):
     monkeypatch.setattr(evaluator,'VllmAsker',lambda *a,**kw:Asker())
     monkeypatch.setattr(evaluator,'HarnessRunner',lambda w,b,s,**kw:HarnessRunner(w,b,s,max_plies=2))
     output=tmp_path/'output';output.mkdir()
-    payload={'protocol':protocol(opponent(1),str(engine)), 'seed_schedule':list(range(10)), 'job_id':'batch',
+    count=10 if baseline else 20
+    payload={'protocol':protocol(opponent(1),str(engine),baseline=baseline), 'seed_schedule':list(range(count//2)), 'job_id':'batch',
              'candidate_id':'fixture','skills_sha256':None,'comparison_id':'fixture','model_path':'fixture',
              'candidate_source':{'root':str(root)},'track':'player','site':{'python':sys.executable}}
     games=asyncio.run(evaluator.play_batch(payload,'fixture',None,output))
-    assert batch_stats({'games':games})['draws']==20
+    assert batch_stats({'games':games},expected_games=count)['draws']==count
     assert {g['model_seat'] for g in games}=={'white','black'}
     assert all(g['result_reason']=='truncated' for g in games)
 
@@ -157,14 +159,20 @@ async def choose_move(board,history,ask,emit,**kwargs):
     from llmgo.harness.streaming import StreamCancelled
     events=[]
     class Slow:
+        entered=False
         async def stream(self,prompt,cap,emit):
+            self.entered=True
             try:await asyncio.sleep(60)
             except asyncio.CancelledError:
                 raise StreamCancelled(AskResult('',2,reasoning='partial thought',raw_response='partial raw stream',tokens_exact=False))
     async def emit(e):events.append(e)
     async def run():
-        seat=CandidateSeat('white',Slow(),root,tmp_path/'log',turn_timeout=.5)
+        # Include cold child startup without expiring before inference begins.
+        # The assertions below still require cancellation of an active request.
+        asker=Slow()
+        seat=CandidateSeat('white',asker,root,tmp_path/'log',turn_timeout=3)
         with pytest.raises(TimeoutError):await seat.choose(chess.Board(),[],emit)
+        assert asker.entered
         assert seat.proc is None
     asyncio.run(run())
     row=next(e for e in events if e.get('cancelled'))

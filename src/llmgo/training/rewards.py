@@ -37,7 +37,7 @@ def terminal_value(board, actor):
 
 
 class Lc0Reward:
-    """Lazy engine: actor is offloaded before scoring and Lc0 quits each batch."""
+    """Lazy offline engine; the caller owns its lifecycle and GPU placement."""
     def __init__(self, site, config):
         if os.environ.get("LLMGO_RSI_WORKER") != "1":
             raise RuntimeError("Lc0 reward is only enabled inside offline compute workers")

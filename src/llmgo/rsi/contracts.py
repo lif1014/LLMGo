@@ -83,6 +83,8 @@ def finite(value, name: str, low=0.0, high=None) -> float:
 
 def load_site(path: str | Path) -> dict:
     site = read_json(path)
+    from .codex_sandbox import sandbox_mode
+    sandbox_mode(site)
     if site.get("schema_version") != SCHEMA:
         raise ValueError("Unsupported site schema")
     if (site["cluster"], site["resource_pool"], site["priority"]) != ("beijing", "model-autosft", "NORMAL"):
@@ -91,18 +93,22 @@ def load_site(path: str | Path) -> dict:
         raise ValueError("Remote writable root must be /user/lyh4170")
     for key in ("repo", "codex_home", "campaign_root", "worktree_root", "checkpoint_root", "reward_weights", "engine", "lc0_bin", "codex_bin"):
         inside(site["user_root"], site[key])
-    if type(site.get("gpu_count")) is not int or site["gpu_count"] < 1:
-        raise ValueError("Default worker gpu_count must be positive; research jobs may override it")
+    if type(site.get("gpu_count")) is not int or not 1 <= site["gpu_count"] <= 8:
+        raise ValueError("Default worker gpu_count must be an integer from 1 to 8")
     if site.get("executor_mode", "embedded") not in {"embedded", "external"}:
         raise ValueError("executor_mode must be embedded or external")
     if site.get("runtime_root"):
         inside(site["user_root"], site["runtime_root"])
     if site.get("worker_venv"):
         inside(site["user_root"], site["worker_venv"])
+    if site.get("verl_venv"):
+        inside(site["user_root"], site["verl_venv"])
     if site.get("inference_python"):
         inside(site["user_root"], site["inference_python"])
     base_poll = finite(site.get("poll_seconds", 120), "poll_seconds", 1, 3600)
     finite(site.get("executor_max_poll_seconds", max(600, base_poll)), "executor_max_poll_seconds", base_poll, 3600)
+    gpu_poll = finite(site.get("gpu_poll_seconds", 300), "gpu_poll_seconds", 300, 600)
+    finite(site.get("gpu_max_poll_seconds", 600), "gpu_max_poll_seconds", gpu_poll, 600)
     for key in ("cpu", "memory_gib"):
         if type(site.get(key)) is not int or site[key] < 1:
             raise ValueError(f"Invalid Worker {key}")
@@ -128,10 +134,11 @@ def worker_environment(site: dict) -> dict:
     return env
 
 
-def protocol(opponent: dict, engine: str, seed: int = 0) -> dict:
-    return {
+def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False) -> dict:
+    games = 10 if baseline else 20
+    result = {
         "game": "chess", "framework": "harness", "enable_thinking": True,
-        "games": 20, "white": 10, "black": 10, "max_plies": 200, "max_tokens": 32768,
+        "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 32768,
         "model_name": "Qwen3.5-4B", "temperature": 0.9, "top_p": 0.95, "top_k": 20,
         "presence_penalty": 0.0, "seed": seed, "engine": engine,
         "harness": {"move_tokens": 32768, "attempts_per_choice": 2, "request_timeout_sec": 540.0,
@@ -139,17 +146,21 @@ def protocol(opponent: dict, engine: str, seed: int = 0) -> dict:
         "opponent": opponent, "skill": opponent["skill"], "depth": opponent.get("depth"),
         "movetime_sec": opponent.get("movetime_sec"), "nodes": opponent.get("nodes"),
     }
+    if baseline:
+        result["purpose"] = "baseline"
+    return result
 
 
-def validate_protocol(p: dict) -> None:
+def validate_protocol(p: dict, *, baseline=False) -> None:
+    games = 10 if baseline else 20
     required = {"game": "chess", "framework": "harness", "enable_thinking": True,
-                "games": 20, "white": 10, "black": 10, "max_plies": 200, "max_tokens": 32768}
+                "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 32768}
     for key, value in required.items():
         if p.get(key) != value or type(p.get(key)) is not type(value):
             raise ValueError(f"Official RSI protocol requires {key}={value!r}")
     # Candidate settings are editable. These external resource ceilings are not.
     from .ladder import opponent
-    expected = protocol(opponent(p["opponent"]["level"]), p["engine"])
+    expected = protocol(opponent(p["opponent"]["level"]), p["engine"], baseline=baseline)
     if p != expected:
         raise ValueError("Official evaluation protocol or opponent was changed")
 

@@ -5,6 +5,8 @@ description: 为本项目在 Cybertron 查询自己的资源和任务，按用�
 
 本项目操作摘要依据用户提供的 `/home/lif/.local/bin/.cursor/skills/cctl/SKILL.md`（v0.0.22）与已成功任务整理；原机器路径不要求在 devspace 存在。
 
+完整原文见 [references/cctl-full.md](references/cctl-full.md)，按源文件逐字保留。登录、profile、任务参数、镜像、文件系统等操作细节可按需查阅对应章节；原文中的通用示例仍须遵守下面的本项目资源与目录约束。
+
 **固定约束：** cluster `beijing`、资源池 `model-autosft`、priority `NORMAL`；新建 devspace 必须 GPU=0。GPU 通过 job/pytorchjob。本期 Controller 使用单 GPU job。不得停止、删除、抢占他人任务。
 只写 `/user/lyh4170`；现有模型和已获许可的来源配置只读。不改 `$HOME`，也不打印认证材料。
 

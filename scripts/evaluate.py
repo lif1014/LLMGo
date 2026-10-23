@@ -20,6 +20,7 @@ def main(argv=None):
     p.add_argument("--track", choices=("player", "model", "both"), default="player")
     p.add_argument("--levels", default="1,2,3,4,5,6,7,8", help="Subset is a probe, never a full score")
     p.add_argument("--batch-index", type=int, default=0)
+    p.add_argument("--gpus", type=int, default=8, choices=range(1,9), help="Parallel Qwen replicas; allocate this many GPUs in the job")
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args(argv)
     if args.batch_index < 0:
@@ -43,7 +44,7 @@ def main(argv=None):
         for level in plan["levels"]:
             spec = opponent(level)
             folder = output/f"{track}-L{level}"
-            payload = {"site":site, "source":protected, "candidate_source":candidate, "reference_source":protected,
+            payload = {"resources":{"gpu_count":args.gpus}, "site":site, "source":protected, "candidate_source":candidate, "reference_source":protected,
                 "job_id":f"probe-{track}-L{level}", "candidate_id":candidate["sha256"][:12], "track":track,
                 "output":str(folder), "model_path":str(Path(args.model_path).resolve()),
                 "expected_model_sha256":identity["sha256"], "skills_path":str(cards) if cards.is_file() else None, "skills_sha256":file_hash(cards) if cards.is_file() else None,

@@ -101,7 +101,8 @@ def test_length_without_final_is_not_guessed_from_thoughts():
 
 def test_timeout_is_reported_and_does_not_loop():
     async def asleep(prompt, cap): await asyncio.sleep(1); return AskResult('{"move":"e2e4"}',1)
-    decision, events = decide(asleep, config=HarnessConfig(request_timeout_sec=.01,turn_timeout_sec=.05))
+    # Allow static position/skill preparation; isolate the request deadline.
+    decision, events = decide(asleep, config=HarnessConfig(request_timeout_sec=.01,turn_timeout_sec=1))
     assert decision.source=='random' and decision.diagnostics['fallback_reason']=='request_timeout'
     assert decision.diagnostics['request_count']==1
 

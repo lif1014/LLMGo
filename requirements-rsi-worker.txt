@@ -6,4 +6,4 @@ transformers==5.2.0
 peft>=0.18,<1
 accelerate>=1.12,<2
 safetensors>=0.6,<1
-# Existing HF PPO is optional; Meta-Agent may add other trainers, including verl.
+# Evaluation/control overlay only. train_ppo.py uses a separate requirements-rsi-verl.txt environment.

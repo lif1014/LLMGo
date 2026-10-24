@@ -60,7 +60,7 @@ def failure_hint(message):
     return "查看测试目录的 trace.jsonl，检查 Codex 协议及本地转接服务的错误。"
 
 
-def check_connection(site, output, *, offline=False, timeout=180, env=None, sandbox_check=False):
+def check_connection(site, output, *, offline=False, timeout=180, env=None, sandbox_check=False, tools_check=False):
     if not math.isfinite(timeout) or not 1 <= timeout <= 1800:
         raise ValueError("timeout must be between 1 and 1800 seconds")
     environment = dict(os.environ if env is None else env)
@@ -179,8 +179,15 @@ def check_connection(site, output, *, offline=False, timeout=180, env=None, sand
                 if shell.get("exitCode") != 0 or shell.get("stdout", "").strip() != "READY":
                     raise ProtocolError("Sandbox command failed: " + shell.get("stderr", ""))
                 result["shell_execution_tested"] = True
+            instructions = "Connectivity test only. Do not use tools, run commands, read files or modify files. Return the requested JSON with summary READY."
+            nonce = uuid.uuid4().hex
+            if tools_check:
+                (output / "tool-input.txt").write_text(nonce)
+                instructions = ("Connectivity tool test only. Execute the requested command using exec_command. "
+                    "Do not merely promise to run it. Access only this test directory; submit no jobs. "
+                    "After successful execution return the requested JSON with summary READY.")
             params = {"cwd": str(output), "approvalPolicy": "never", "sandbox": thread_sandbox(site), "ephemeral": True,
-                      "developerInstructions": "Connectivity test only. Do not use tools, run commands, read files or modify files. Return the requested JSON with summary READY."}
+                      "developerInstructions": instructions}
             if site.get("meta_model"):
                 params["model"] = site["meta_model"]
             thread = rpc("thread/start", params, deadline)
@@ -188,17 +195,31 @@ def check_connection(site, output, *, offline=False, timeout=180, env=None, sand
             if offline:
                 result.update(ok=True, status="offline_passed", note="CLI and app-server protocol passed; no API request was made")
             else:
-                turn = rpc("turn/start", {"threadId": thread["thread"]["id"], "cwd": str(output),
+                prompt = 'Do not use tools. Return exactly {"status":"needs_input","summary":"READY","proposal_path":null}.'
+                if tools_check:
+                    prompt = ("Use exec_command now to execute this command in the current directory:\n"
+                        "python3 -c \"from pathlib import Path; "
+                        "Path('tool-output.txt').write_text(Path('tool-input.txt').read_text()); print('READY')\"\n"
+                        "Only after the tool returns successfully, return exactly "
+                        '{"status":"needs_input","summary":"READY","proposal_path":null}.')
+                turn_params = {"threadId": thread["thread"]["id"], "cwd": str(output),
                     "approvalPolicy": "never", "sandboxPolicy": turn_sandbox(site),
-                    "outputSchema": FINAL_SCHEMA,
-                    "input": [{"type": "text", "text": 'Do not use tools. Return exactly {"status":"needs_input","summary":"READY","proposal_path":null}.'}]}, deadline)
+                    "input": [{"type": "text", "text": prompt}]}
+                if not tools_check:
+                    turn_params["outputSchema"] = FINAL_SCHEMA
+                turn = rpc("turn/start", turn_params, deadline)
                 turn_id = turn["turn"]["id"]
                 answers = []
+                command_succeeded = False
                 while True:
                     event = pending.popleft() if pending else receive(deadline)
                     params = event.get("params", {})
+                    if params.get("turnId") not in (None, turn_id):
+                        continue
                     if event.get("method") == "item/completed":
                         item = params.get("item", {})
+                        if item.get("type") == "commandExecution" and item.get("exitCode") == 0:
+                            command_succeeded = True
                         if item.get("type") == "agentMessage":
                             answers.append(item.get("text", ""))
                     if event.get("method") == "turn/completed" and params.get("turn", {}).get("id") == turn_id:
@@ -215,6 +236,14 @@ def check_connection(site, output, *, offline=False, timeout=180, env=None, sand
                             valid = valid or value == {"status": "needs_input", "summary": "READY", "proposal_path": None}
                         if not valid:
                             raise ProtocolError("Completed turn did not return the required READY JSON")
+                        if tools_check:
+                            command_succeeded = command_succeeded or any(
+                                item.get("type") == "commandExecution" and item.get("exitCode") == 0
+                                for item in completed.get("items", []))
+                            proof = output / "tool-output.txt"
+                            if not command_succeeded or not proof.is_file() or proof.read_text() != nonce:
+                                raise ProtocolError("Model tool check failed: requires a successful command event and matching output file")
+                            result["model_tool_calls_tested"] = True
                         result.update(ok=True, status="passed", inference_tested=True, reply="READY")
                         break
         except Exception as error:
@@ -254,12 +283,13 @@ def main(argv=None):
     parser.add_argument("--offline", action="store_true", help="Check CLI and app-server protocol without an API key or model request")
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--sandbox-check", action="store_true", help="Also execute a harmless shell command through app-server using the research isolation policy; does not test model tool selection")
+    parser.add_argument("--tools-check", action="store_true", help="Require the model itself to execute a tool and copy a test file; uses the research turn transport")
     args = parser.parse_args(argv)
     site = load_site(args.site)
     name = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
     output = Path(site["user_root"]) / "rsi_readiness/meta-connection" / name
     try:
-        result = check_connection(site, output, offline=args.offline, timeout=args.timeout, sandbox_check=args.sandbox_check)
+        result = check_connection(site, output, offline=args.offline, timeout=args.timeout, sandbox_check=args.sandbox_check, tools_check=args.tools_check)
     except Exception as error:
         result = {"ok": False, "status": "configuration_error", "error": type(error).__name__,
                   "detail": scrub(str(error), os.environ.get("OPENAI_API_KEY", ""))}

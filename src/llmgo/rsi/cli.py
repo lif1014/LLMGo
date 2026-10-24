@@ -212,12 +212,6 @@ def main(argv=None):
                         controller.resume_failed()
                         result = {"phase": controller.state["phase"], "job_id": controller.state["active_job"]}
                     elif args.command == "resume":
-                        if controller.state["phase"] != "NEEDS_INPUT":
-                            raise ValueError("resume only clears an explicitly resolved NEEDS_INPUT state")
-                        controller.state["active_job"] = None
-                        controller.state.update(phase=controller.state.get("resume_phase", "PLANNING"),
-                                                needs_input=None, meta_stalls=0)
-                        controller.save()
-                        result = {"phase": controller.state["phase"]}
+                        result = controller.resume()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if args.command == "doctor" and not result["ok"] else 0

@@ -453,3 +453,28 @@ def test_upgrade_preserves_old_manifests_and_retries_with_new_site(controller,mo
     verify_source(original_reference)
     assert c.state['working']['source']['sha256']==c.state['source']['sha256']
     assert calls==[old['id'],old['id']]
+
+
+def test_explicit_resume_changes_meta_request_preserves_workspace_and_evidence(controller):
+    c=controller
+    workspace=Path(c.site['worktree_root'])/'existing'
+    workspace.mkdir(parents=True)
+    (workspace/'research.txt').write_text('keep analysis')
+    c.state.update(phase='NEEDS_INPUT',resume_phase='PLANNING',needs_input="I'll start reading.",
+                   workspace=str(workspace),baseline=[{'keep':'completed baseline'}],round=1)
+    c.save()
+    assert c.resume()=={'phase':'PLANNING'}
+    assert c.state['meta_request_revision']==1
+    assert c.state['baseline']==[{'keep':'completed baseline'}]
+    assert (workspace/'research.txt').read_text()=='keep analysis'
+    class Backend:
+        def turn(self, folder, prompt):
+            assert folder==workspace
+            assert '操作员恢复版本：1' in prompt
+            return {'status':'needs_input','summary':'A real unresolved operator question','proposal_path':None}
+    c.run(backend=Backend(),max_steps=1)
+    assert c.state['phase']=='NEEDS_INPUT'
+    c.resume()
+    assert c.state['meta_request_revision']==2
+    with pytest.raises(ValueError,match='explicitly resolved'):
+        c.resume()

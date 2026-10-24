@@ -33,7 +33,15 @@ for line in sys.stdin:
         assert request['params']['sandbox']=='danger-full-access'
         emit({'id':rid,'result':{'thread':{'id':'thread-test'}}})
     elif method=='turn/start':
-        assert request['params']['outputSchema']['required']==['status','summary','proposal_path']
+        tool_test='outputSchema' not in request['params']
+        if not tool_test:
+            assert request['params']['outputSchema']['required']==['status','summary','proposal_path']
+        elif os.environ.get('FAKE_MODE')!='no_tool':
+            from pathlib import Path
+            cwd=Path(request['params']['cwd'])
+            if os.environ.get('FAKE_MODE')!='wrong_proof':
+                (cwd/'tool-output.txt').write_text((cwd/'tool-input.txt').read_text())
+            emit({'method':'item/completed','params':{'turnId':'turn-test','item':{'type':'commandExecution','exitCode':0}}})
         assert request['params']['sandboxPolicy']=={'type':'externalSandbox','networkAccess':'enabled'}
         if os.environ.get('FAKE_MODE')=='timeout':
             time.sleep(30)
@@ -162,3 +170,12 @@ def test_doctor_accepts_config_token_without_cli_oauth_login(connection_site,tmp
     assert next(c for c in result['checks'] if c['name']=='codex_provider_credentials')['ok']
     assert result['inference_tested'] is False
     assert 'opaque-doctor-secret' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('mode,passed',[('',True),('no_tool',False),('wrong_proof',False)])
+def test_model_tools_check_requires_event_and_real_file_proof(connection_site,tmp_path,mode,passed):
+    result=check_connection(connection_site,tmp_path/'tool-proof',tools_check=True,env=environment(mode))
+    assert result['ok'] is passed
+    assert result['model_tool_calls_tested'] is passed
+    if not passed:
+        assert 'Model tool check failed' in result['detail']

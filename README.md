@@ -20,6 +20,10 @@ bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --web
 
 查看状态：`bash scripts/start_rsi.sh --status`；跟随日志：`bash scripts/start_rsi.sh --logs`，Ctrl-C只退出日志查看。Controller日志在campaign目录的 `controller.log`；网页日志在站点runtime_root下 `launcher/web-7860.log`。需要选择其他控制解释器时设置 `RSI_PYTHON`，不改变系统或其他环境。
 
+若停在 `NEEDS_INPUT`，先查看具体原因并修复，再执行 `bash scripts/start_rsi.sh --resume --web`。这会保留已完成基线、研究副本和原会话，用新的请求版本继续 Meta 工作，避免直接重放此前缓存的 `needs_input`。它不会升级冻结的评测源码，不与 `--upgrade` 同用。当前只修复 Meta 提前结束时，无需重跑40局基线或重新 init。
+
+启动检查现在包含 `--sandbox-check --tools-check`：不仅验证 API 返回 READY，还要求模型亲自调用 `exec_command`，产生成功命令事件并正确复制一个随机测试文件。普通 `--sandbox-check` 单独使用仍只证明客户端可以运行命令。研究请求不强制每次上游响应都采用最终JSON schema；模型可正常连续调用工具，结束时仍必须返回有效JSON。若没有任何工具动作就返回 `needs_input`，同一会话会追加一次澄清；真正的用户问题仍可暂停。无效最终JSON也只补正一次，所有续行和原始事件保留，研究本身没有总时长限制。
+
 `init`只执行一次，恢复时沿用原campaign。已有campaign保持冻结设置，旧自动晋级campaign请另起名称，不原地混用旧状态。手动CLI操作见[首次部署](docs/rsi-first-run.md)。
 
 启动前可单独验证 Meta-Agent：在远端配置 `OPENAI_API_KEY`，或在当前 provider 的 `experimental_bearer_token` 填入 key 后，运行 `python3 scripts/check_meta_connection.py`。配置内 token 优先，测试与正式 Meta-Agent 使用相同解析逻辑；即使旧 env_key 行仍在，也无需再次 export。它使用站点配置中的 Codex、模型和独立 CODEX_HOME，通过 app-server 请求结构化 READY；只有真实模型请求成功才通过。`--offline` 仅检查本地程序与协议，不证明认证有效。每次测试的脱敏原始事件和结果保存在自己目录 `rsi_readiness/meta-connection/`。目前自己的 provider 使用 `https://yeysai.com/v1`、模型 `deepseek-v4.1-flash`，已真实通过 READY 请求。独立 Chat 转接层保留 Codex 工具和会话，将 Codex Responses 请求转为上游 `/v1/chat/completions`；无需让该站点支持 Responses。完整 endpoint 也会被规范化，避免重复拼接。安装与配置见[首次部署](docs/rsi-first-run.md)。 服务器已限制可写目录，因此 RSI 使用 `meta_sandbox_mode: "external"`，由外层容器/服务器提供隔离，避免容器中再次建立 bubblewrap 沙箱。正式会话、会话恢复和检查脚本使用相同策略；可运行 `python3 scripts/check_meta_connection.py --sandbox-check` 验证 shell 和模型连接。 已在指定镜像的0GPU job验证真实模型工具写入/读取文件，以及重启 Codex 后恢复同一会话继续执行工具；原始事件保留在自己目录 readiness/Memory 中。

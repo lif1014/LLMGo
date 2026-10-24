@@ -163,6 +163,11 @@ class CodexBackend:
             "指定workspace是自由研究副本，任意修改其内容。用proposal.json登记任意计算命令和评测计划；"
             "Controller/Executor会快照和提交，避免重复提交同一实验。可以自行研究提交命令，遵守资源授权。"
             "没有研究总时间上限。失败也记录并继续，不要求每轮成功。"
+            "收到研究请求就立即使用工具读取证据并开展工作，不要把‘我将开始读取/研究’作为最终回答。"
+            "只有确实缺少用户才能提供的信息或权限时才返回needs_input，summary必须写清实际阻碍和具体问题。"
+            "可自行阅读文件、运行CPU命令、修改研究副本或登记计算任务的事项，不是缺少用户输入。"
+            "研究过程中正常使用工具；完成后才输出一个JSON对象，字段为status、summary、proposal_path。"
+            "status=ready时proposal_path须指向已写好的proposal.json；需要用户输入时status=needs_input且proposal_path=null。"
             "参阅本目录docs/rsi-operations.md、.agents/skills中的Memory、提交和Executor说明。"
         )
 
@@ -182,66 +187,70 @@ class CodexBackend:
                       "developerInstructions": instructions}
             if self.site.get("meta_model"):
                 params["model"] = self.site["meta_model"]
+            recovered = None
+            same_request = self.session.get("request_key") == request_key
             if self.session.get("thread_id"):
                 result = self._rpc("thread/resume", {**params, "threadId": self.session["thread_id"]})
                 prior_turns = result.get("thread", {}).get("turns", [])
                 if any(t.get("status") == "inProgress" for t in prior_turns):
                     raise RuntimeError("Resumed thread still has an in-progress turn; reconcile before continuing")
-                if self.session.get("request_key") == request_key:
+                if same_request:
                     for turn in prior_turns:
                         known_turn = turn.get("id") == self.session.get("turn_id")
                         ack_lost = (self.session.get("status") == "starting"
                                     and not self.session.get("turn_id")
                                     and turn.get("id") not in self.session.get("previous_turn_ids", []))
                         if (known_turn or ack_lost) and turn.get("status") == "completed":
-                            for item in reversed(turn.get("items", [])):
-                                if item.get("type") == "agentMessage":
-                                    answer = self._answer(item.get("text", ""))
-                                    if answer:
-                                        self._save(answer=answer, status="completed", turn_id=turn["id"])
-                                        self.memory.append("meta_recovered", {"turn_id": turn["id"]})
-                                        return answer
+                            recovered = turn
             else:
                 result = self._rpc("thread/start", params)
                 prior_turns = result.get("thread", {}).get("turns", [])
             thread_id = result["thread"]["id"]
-            self._save(thread_id=thread_id, turn_id=None, status="starting", request_key=request_key,
-                       previous_turn_ids=[t["id"] for t in prior_turns], answer=None, updated=utc())
-            result = self._rpc("turn/start", {
-                "threadId": thread_id, "cwd": str(workspace),
-                "input": [{"type": "text", "text": prompt}],
-                "approvalPolicy": "never",
-                "sandboxPolicy": turn_sandbox(self.site),
-                "outputSchema": FINAL_SCHEMA,
-            })
-            turn_id = result["turn"]["id"]
-            self._save(turn_id=turn_id, status="running")
-            # Full events are already durable in Memory. Retain only a small
-            # final-message window in RAM during an unbounded research turn.
-            items = deque(maxlen=16)
+            turn_ids = [t["id"] for t in prior_turns]
+            review = self.session.get("review", {}) if same_request else {}
+            next_prompt = self.session.get("pending_prompt", prompt) if same_request else prompt
+            self._save(thread_id=thread_id, request_key=request_key, answer=None, updated=utc())
             while True:
-                while self.notifications:
-                    event = self.notifications.popleft()
-                    p = event.get("params", {})
-                    if p.get("turnId") not in (None, turn_id):
-                        continue
-                    if event.get("method") == "item/completed":
-                        item = p["item"]
-                        if item.get("type") == "agentMessage":
-                            items.append(item.get("text", ""))
-                    if event.get("method") == "turn/completed" and p["turn"]["id"] == turn_id:
-                        status = p["turn"]["status"]
-                        self._save(status=status, updated=utc())
-                        if status != "completed":
-                            raise RuntimeError(f"Codex turn {status}: {scrub_known(p['turn'].get('error'), self._secrets)}")
-                        texts = [i.get("text", "") for i in p["turn"].get("items", []) if i.get("type") == "agentMessage"]
-                        for text in reversed(texts or list(items)):
-                            answer = self._answer(text)
-                            if answer:
-                                self._save(answer=answer)
-                                return answer
-                        raise ValueError("Codex completed without the required structured result")
-                self._pump()  # no total teacher turn/research timeout
+                if recovered is not None:
+                    completed = recovered
+                    texts = [i.get("text", "") for i in completed.get("items", []) if i.get("type") == "agentMessage"]
+                    acted = any(self._is_action(i) for i in completed.get("items", []))
+                    recovered = None
+                    self.memory.append("meta_recovered", {"turn_id": completed["id"], "review_pending": True})
+                else:
+                    self._save(turn_id=None, status="starting", previous_turn_ids=turn_ids,
+                               pending_prompt=next_prompt, review=review)
+                    result = self._rpc("turn/start", {
+                        "threadId": thread_id, "cwd": str(workspace),
+                        "input": [{"type": "text", "text": next_prompt}],
+                        "approvalPolicy": "never", "sandboxPolicy": turn_sandbox(self.site),
+                    })
+                    turn_id = result["turn"]["id"]
+                    self._save(turn_id=turn_id, status="running")
+                    completed, texts, acted = self._wait_turn(turn_id)
+                    turn_ids.append(turn_id)
+                review = {**review, "acted": bool(review.get("acted") or acted)}
+                answer = next((value for text in reversed(texts) if (value := self._answer(text))), None)
+                if answer is None:
+                    if review.get("format_retry"):
+                        raise ValueError("Codex completed without the required structured result after clarification")
+                    review["format_retry"] = True
+                    reason = "invalid_final_result"
+                    next_prompt = ("上一轮结束时缺少有效的最终JSON。如果尚未完成研究，请继续使用工具。"
+                        "完成后返回且只返回JSON对象，包含status（ready或needs_input）、summary和proposal_path。"
+                        "ready必须给出实际proposal路径；needs_input必须明确用户需要解决的问题，proposal_path=null。")
+                elif answer["status"] == "needs_input" and not review["acted"] and not review.get("action_retry"):
+                    review["action_retry"] = True
+                    reason = "needs_input_without_actions"
+                    next_prompt = ("上一轮没有任何工具执行记录就返回了needs_input。请继续原研究任务，立即用工具读取context.json和Memory。"
+                        "‘我将开始读取/研究’不是缺少输入。无需用户批准已授权的读取、CPU分析、skills修改或登记计算任务。"
+                        "如果确实存在只有用户能解决的障碍，请明确写出具体障碍和需要用户回答的问题，再返回needs_input。"
+                        "否则继续研究，写好proposal.json后返回ready及绝对路径。最终返回JSON对象，字段status、summary、proposal_path。")
+                else:
+                    self._save(answer=answer, status="completed", turn_id=completed["id"], review=review)
+                    return answer
+                self.memory.append("meta_continuation", {"reason": reason, "turn_id": completed["id"],
+                    "previous_answer": answer, "review": review})
         except BaseException as exc:
             self._save(status="failed", updated=utc())
             self.memory.append("meta_failure", {"error_type": type(exc).__name__, "error": scrub_known(str(exc), self._secrets),
@@ -271,6 +280,34 @@ class CodexBackend:
                 if channel != "eof":
                     self._record(channel, value)
             self._save(process=None)
+
+    @staticmethod
+    def _is_action(item):
+        return item.get("type") in {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch"}
+
+    def _wait_turn(self, turn_id):
+        # Full events are durable; retain a bounded message window in RAM.
+        items = deque(maxlen=16)
+        acted = False
+        while True:
+            while self.notifications:
+                event = self.notifications.popleft()
+                p = event.get("params", {})
+                if p.get("turnId") not in (None, turn_id):
+                    continue
+                if event.get("method") == "item/completed":
+                    item = p["item"]
+                    acted = acted or self._is_action(item)
+                    if item.get("type") == "agentMessage":
+                        items.append(item.get("text", ""))
+                if event.get("method") == "turn/completed" and p["turn"]["id"] == turn_id:
+                    turn = p["turn"]
+                    self._save(status=turn["status"], updated=utc())
+                    if turn["status"] != "completed":
+                        raise RuntimeError(f"Codex turn {turn['status']}: {scrub_known(turn.get('error'), self._secrets)}")
+                    texts = [i.get("text", "") for i in turn.get("items", []) if i.get("type") == "agentMessage"]
+                    return turn, texts or list(items), acted or any(self._is_action(i) for i in turn.get("items", []))
+            self._pump()  # no total teacher turn/research timeout
 
     @staticmethod
     def _answer(text):

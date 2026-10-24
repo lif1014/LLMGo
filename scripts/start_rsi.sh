@@ -5,15 +5,17 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 campaign=chess-autonomous-v2
 web=false
 upgrade=false
+resume=false
 action=start
 usage() {
   cat <<'HELP'
-用法：bash scripts/start_rsi.sh [--web] [--upgrade] [--campaign NAME]
+用法：bash scripts/start_rsi.sh [--web] [--upgrade | --resume] [--campaign NAME]
       bash scripts/start_rsi.sh --status
       bash scripts/start_rsi.sh --logs
 默认检查环境和Meta连接，首次初始化，然后后台启动/恢复同名loop。
 --web 同时后台启动网页，端口默认7860；重复执行不会重启已有loop。
 --upgrade 在旧任务已终止且loop退出后升级现有campaign，保留全部历史。
+--resume 修复NEEDS_INPUT原因后显式恢复；保留基线、研究副本和会话，开启新的Meta请求。
 --status 查看持久状态；--logs 跟随Controller日志，Ctrl-C不停止loop。
 可用 RSI_PYTHON 指定控制环境解释器，默认沿用已安装的远端专用环境。
 HELP
@@ -22,6 +24,7 @@ while (($#)); do
   case "$1" in
     --web) web=true; shift ;;
     --upgrade) upgrade=true; shift ;;
+    --resume) resume=true; shift ;;
     --campaign) [[ $# -ge 2 ]] || { usage; exit 2; }; campaign="$2"; shift 2 ;;
     --status) action=status; shift ;;
     --logs) action=logs; shift ;;
@@ -29,6 +32,7 @@ while (($#)); do
     *) usage; exit 2 ;;
   esac
 done
+[[ "$upgrade" == false || "$resume" == false ]] || { echo '--upgrade与--resume不能同时使用' >&2; exit 2; }
 [[ "$campaign" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$ ]] || { echo 'campaign名称无效' >&2; exit 2; }
 rsi_python="${RSI_PYTHON:-/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python}"
 [[ -x "$rsi_python" ]] || { echo "控制Python不存在：$rsi_python；请在远端devspace执行。" >&2; exit 1; }
@@ -62,6 +66,10 @@ if [[ "$action" == status ]]; then
   exec "$rsi_python" scripts/rsi.py --site "$site" status "$campaign"
 elif [[ "$action" == logs ]]; then
   exec tail -n 60 -f "$campaign_root/controller.log"
+fi
+if [[ "$resume" == true && ! -f "$campaign_root/campaign.json" ]]; then
+  echo '要恢复的campaign不存在；首次启动请不要使用--resume。' >&2
+  exit 1
 fi
 command -v flock >/dev/null || { echo '缺少flock命令' >&2; exit 1; }
 mkdir -p "$runtime"
@@ -120,11 +128,15 @@ if [[ -f "$campaign_root/campaign.json" ]] && ! flock -n "$campaign_root/control
 fi
 echo '检查控制环境、集群认证与Meta-Agent连接……'
 "$rsi_python" scripts/rsi.py --site "$site" doctor --platform --codex-auth
-"$rsi_python" scripts/check_meta_connection.py --site "$site" --sandbox-check
+"$rsi_python" scripts/check_meta_connection.py --site "$site" --sandbox-check --tools-check
 if [[ ! -f "$campaign_root/campaign.json" ]]; then
   "$rsi_python" scripts/rsi.py --site "$site" init "$campaign" >"$runtime/$campaign-init.json"
   echo '已创建campaign：L1–L4，每档10局，共40局初始基线。'
 else
+  if [[ "$resume" == true ]]; then
+    "$rsi_python" scripts/rsi.py --site "$site" resume "$campaign" >"$runtime/$campaign-resume.json"
+    echo "已恢复暂停的campaign，保留基线和研究副本：$campaign"
+  fi
   if [[ "$upgrade" == true ]]; then
     "$rsi_python" scripts/rsi.py --site "$site" upgrade "$campaign" >"$runtime/$campaign-upgrade.json"
     echo "已升级现有campaign，保留旧任务、基线及参考Harness：$campaign"

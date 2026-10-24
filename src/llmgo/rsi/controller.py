@@ -396,6 +396,19 @@ class Controller:
                       track=old.get("track") or "player", command=payload.get("command"),
                       batch_index=old["batch_index"], resume_from=payload["output"])
 
+    def resume(self):
+        """An explicit operator resume authorizes a new Meta turn, not cached output."""
+        if self.state["phase"] != "NEEDS_INPUT":
+            raise ValueError("resume only clears an explicitly resolved NEEDS_INPUT state")
+        self.memory.append("operator_resume", {"previous_reason": self.state.get("needs_input"),
+            "previous_phase": self.state.get("resume_phase", "PLANNING"),
+            "meta_request_revision": self.state.get("meta_request_revision", 0) + 1})
+        self.state.update(phase=self.state.get("resume_phase", "PLANNING"), active_job=None,
+                          needs_input=None, meta_stalls=0,
+                          meta_request_revision=self.state.get("meta_request_revision", 0) + 1)
+        self.save()
+        return {"phase": self.state["phase"]}
+
     def run(self, *, backend=None, max_steps=None, poll_seconds=None):
         with self.memory.lock():
             iterations = 0
@@ -419,7 +432,10 @@ class Controller:
                         "再返回ready及proposal绝对路径，由Executor提交。--track model测模型对照，--full-panel登记L1-L8完整评测。"
                         "评测套件/裁判/正式记录不可修改。提交协议及任意计算任务格式见 docs/rsi-operations.md。"
                         "可以通过 research job 调用受保护 source/scripts/evaluate.py 做快速或完整测试。"
-                        "不要求本轮成功才能继续。保存实验结论，最后写 proposal.json 并返回路径，或说明缺失项。")
+                        "不要求本轮成功才能继续。请现在实际调用工具读取文件并开展研究，不要仅宣布准备开始就结束。"
+                        "保存实验结论，最后写 proposal.json 并返回JSON：status=ready、summary和proposal_path绝对路径；"
+                        "只有确实需要用户补充信息或权限时返回needs_input，并明确说明实际障碍和需要回答的问题。"
+                        f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")
                     answer = backend.turn(workspace, prompt)
                     self.memory.append("meta_result", answer)
                     if answer["status"] == "needs_input":

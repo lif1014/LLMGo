@@ -142,3 +142,69 @@ print("shutdown diagnostic Bearer abcdef0123456789", file=sys.stderr, flush=True
     assert len(updates) == 2
     assert len({e["id"] for e in updates}) == 2
     assert len(memory.search("late/serverRequest")) == 1
+
+
+@pytest.mark.parametrize('mode', ['progress', 'blocked', 'malformed'])
+def test_premature_completion_is_clarified_once_in_same_thread(tmp_path, mode):
+    server = tmp_path/'server.py'
+    server.write_text(r'''
+import json,sys
+counter=0
+def emit(v):print(json.dumps(v),flush=True)
+for line in sys.stdin:
+ r=json.loads(line);m=r.get('method')
+ if 'id' not in r:continue
+ if m=='initialize':emit({'id':r['id'],'result':{}})
+ elif m in ('thread/start','thread/resume'):
+  emit({'id':r['id'],'result':{'thread':{'id':'thread-test','turns':[]}}})
+ elif m=='turn/start':
+  assert 'outputSchema' not in r['params']
+  counter+=1;t='t'+str(counter)
+  emit({'id':r['id'],'result':{'turn':{'id':t}}})
+  if counter==1:
+   a={'status':'needs_input','summary':"I'll start reading.",'proposal_path':None}
+   text='Let me begin' if sys.argv[1]=='malformed' else json.dumps(a)
+  else:
+   if sys.argv[1]=='blocked':a={'status':'needs_input','summary':'The authorized dataset is missing; please provide its path.','proposal_path':None}
+   else:
+    emit({'method':'item/completed','params':{'turnId':t,'item':{'type':'commandExecution','exitCode':0}}})
+    a={'status':'ready','summary':'Analyzed actual data','proposal_path':'proposal.json'}
+   text=json.dumps(a)
+  emit({'method':'item/completed','params':{'turnId':t,'item':{'type':'agentMessage','text':text}}})
+  emit({'method':'turn/completed','params':{'turn':{'id':t,'status':'completed','items':[]}}})
+''')
+    memory=MemoryStore(tmp_path/'memory')
+    site={'user_root':str(tmp_path),'codex_home':str(tmp_path/'home'),'codex_bin':'fake'}
+    calls=[]
+    def popen(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.Popen([sys.executable,str(server),mode],**kwargs)
+    backend=CodexBackend(site,memory,popen=popen)
+    answer=backend.turn(tmp_path,'Research now')
+    assert answer['status']==('needs_input' if mode=='blocked' else 'ready')
+    sends=[e['body']['message'] for e in memory.recent(100,'meta_send')]
+    assert sum(e.get('method')=='turn/start' for e in sends)==2
+    assert len(memory.recent(100,'meta_continuation'))==1
+    assert backend.session['turn_id']=='t2'
+    assert CodexBackend(site,memory,popen=popen).turn(tmp_path,'Research now')==answer
+    assert len(calls)==1
+
+
+def test_unreviewed_crash_recovery_does_not_accept_no_action_result(tmp_path):
+    memory=MemoryStore(tmp_path/'memory')
+    context=tmp_path/'context.json';atomic_json(context,{'round':1})
+    from llmgo.rsi.contracts import digest,file_hash
+    answer={'status':'needs_input','summary':"I'll start reading.",'proposal_path':None}
+    previous={'id':'prior-turn','status':'completed','items':[{'type':'agentMessage','text':json.dumps(answer)}]}
+    atomic_json(memory.root/'meta-session.json',{'thread_id':'thread-one','turn_id':'prior-turn',
+        'request_key':digest({'workspace':str(tmp_path),'prompt':'prepare','context':file_hash(context)}),
+        'status':'running','process':None})
+    server=tmp_path/'server.py'
+    server.write_text(SERVER.replace('"turns":[]', '"turns":'+repr([previous])))
+    site={'user_root':str(tmp_path),'codex_home':str(tmp_path/'home'),'codex_bin':'fake'}
+    def popen(argv,**kwargs):return subprocess.Popen([sys.executable,str(server)],**kwargs)
+    backend=CodexBackend(site,memory,popen=popen)
+    result=backend.turn(tmp_path,'prepare')
+    assert result['status']=='ready'
+    assert memory.recent(10,'meta_continuation')[0]['body']['reason']=='needs_input_without_actions'
+    assert memory.recent(10,'meta_recovered')[0]['body']['review_pending']

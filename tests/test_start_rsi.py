@@ -113,3 +113,21 @@ def test_failed_web_start_is_reported_without_stopping_controller(launcher):
     result=run('--web',extra={'LLMGO_WEB_PORT':str(port)})
     assert result.returncode==1 and '网页启动失败' in result.stderr
     assert calls(root).count('run')==1 and (root/'run.pid').exists()
+
+
+def test_explicit_resume_runs_before_controller_without_upgrading(launcher):
+    root,site,config,run=launcher
+    campaign=root/'campaigns/chess-autonomous-v2'
+    campaign.mkdir(parents=True)
+    (campaign/'campaign.json').write_text('{"phase":"NEEDS_INPUT"}')
+    result=run('--resume')
+    assert result.returncode==0,result.stderr
+    assert calls(root)==['doctor','resume','run']
+    assert '已恢复暂停' in result.stdout
+
+
+def test_upgrade_and_resume_are_mutually_exclusive(launcher):
+    root,site,config,run=launcher
+    result=run('--upgrade','--resume')
+    assert result.returncode==2
+    assert not (root/'calls.jsonl').exists()

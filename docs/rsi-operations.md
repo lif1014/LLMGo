@@ -115,4 +115,10 @@ python3 scripts/rsi.py note CAMPAIGN --text '证据、假设、反证与下一�
 
 基线任务确认失败后可以 `resume-failed CAMPAIGN`；NEEDS_INPUT 修复后可 `resume CAMPAIGN` 重建该档任务，不会复用失败 intent。候选失败已交回研究，下一次提案在 argv 中显式指定旧checkpoint路径恢复，不盲目重跑旧训练。观察失败和 submission_uncertain 不是任务失败，不重复提交。
 
+研究阶段的 `NEEDS_INPUT` 经操作员修复后，用 `bash scripts/start_rsi.sh --resume --web` 恢复默认campaign；其他名称加 `--campaign NAME`。CLI `resume` 会记录 `operator_resume` 并增加 `meta_request_revision`，使同一workspace开启新的Meta请求，保留thread、基线和所有历史。普通重启仍会恢复已完成请求的结果，避免Controller崩溃后重复研究或提交；不要删除 `meta-session.json` 来绕过这个机制。已有研究workspace时不需要也不能用 `--upgrade` 代替恢复。
+
+Meta研究不向上游强制最终JSON schema，最终JSON仍在本地验证。没有工具动作的 `needs_input` 会收到一次 `meta_continuation` 提醒，要求实际执行已授权工作或说明明确的用户问题；再次确有问题时正常暂停，不无限重试。无效最终JSON最多补正一次。这些是结束协议补正次数，不是研究时间限制。原始回答、后续turn、工具及Token用量均保留在Memory和原会话中。
+
+连接验收：`python3 scripts/check_meta_connection.py --sandbox-check --tools-check`。`model_tool_calls_tested=true` 要求模型产生真实成功命令事件和随机测试文件的正确副本，仅返回READY无法通过；启动器默认执行这项检查。`--offline` 不调用模型，不能验证模型工具选择。
+
 旧自动晋级 state 不迁移，新建 campaign，旧证据保留。只写 /user/lyh4170、NORMAL/beijing/model-autosft、devspace0GPU、不停止别人任务的约束继续有效。

@@ -197,3 +197,112 @@ async def choose_move(board,history,ask,emit,**kwargs):
     assert result.diagnostics['tokens_exact'] is False
     assert result.diagnostics['completion_tokens']==2
     assert result.diagnostics['budget_tokens_charged']==4
+
+
+def test_large_raw_response_survives_real_child_roundtrip_without_truncation(tmp_path):
+    root=tmp_path/'candidate';shutil.copytree(REPO/'src',root/'src')
+    raw='原始SSE'*1200000  # exceeds the previous 4 MiB JSONL reader limit
+    events=[]
+    class Large(Asker):
+        async def stream(self,prompt,cap,emit):
+            result=await super().stream(prompt,cap,emit)
+            result.raw_response=raw
+            return result
+    async def collect(e):events.append(e)
+    async def run():
+        seat=CandidateSeat('white',Large(),root,tmp_path/'log',turn_timeout=20)
+        try:return await seat.choose(chess.Board(),[],collect)
+        finally:await seat.close()
+    result=asyncio.run(run())
+    assert result.uci=='e2e4' and result.source=='model'
+    assert next(e for e in events if e.get('authoritative') and e.get('status')=='finished')['raw_response']==raw
+    assert next(e for e in events if e.get('type')=='model_request' and e.get('status')=='finished')['raw_response']==raw
+
+
+def test_duplex_stream_larger_than_pipe_buffers_is_drained_during_inference(tmp_path):
+    root=fixture_candidate(tmp_path,"""
+async def choose_move(board,history,ask,emit,**kwargs):
+ async def forward(event): await emit({'type':'token',**event})
+ await ask.stream('stream',32768,forward)
+ return Decision('e2e4','model')
+""")
+    count=0
+    class Many:
+        async def stream(self,prompt,cap,emit):
+            for i in range(256):
+                await emit({'channel':'reasoning','text':'x'*65536,'chunk_index':i})
+            return AskResult('e2e4',256,finish_reason='stop')
+    async def collect(e):
+        nonlocal count
+        if e.get('type')=='candidate_event':count+=1
+    async def run():
+        seat=CandidateSeat('white',Many(),root,tmp_path/'log',turn_timeout=20)
+        try:return await seat.choose(chess.Board(),[],collect)
+        finally:await seat.close()
+    assert asyncio.run(run()).uci=='e2e4'
+    assert count==256
+
+
+def test_shutdown_is_bounded_even_when_child_will_not_read_stdin(tmp_path):
+    from llmgo.rsi.candidate_bridge import read_message
+    import time
+    root=fixture_candidate(tmp_path,"""
+async def choose_move(board,history,ask,emit,**kwargs):
+ await emit({'type':'ready'})
+ import time
+ time.sleep(60)
+""")
+    async def run():
+        seat=CandidateSeat('white',Asker(),root,tmp_path/'log')
+        await seat.start();proc=seat.proc
+        await seat.send({'op':'choose','fen':chess.STARTING_FEN,'history':[],
+                         'seat':'white','seed':0,'budget':32768})
+        ready=await asyncio.wait_for(read_message(proc.stdout),5)
+        assert ready['event']['type']=='ready'
+        proc.stdin.write(b'x'*(8*1024*1024))
+        started=time.monotonic()
+        await asyncio.wait_for(seat.close(),5)
+        assert time.monotonic()-started<5
+        assert proc.returncode is not None and seat.proc is None and seat.log is None
+    asyncio.run(run())
+
+
+def test_candidate_program_failure_aborts_and_never_becomes_a_chess_loss(tmp_path):
+    root=fixture_candidate(tmp_path,"""
+async def choose_move(*args,**kwargs):raise RuntimeError('transport fixture')
+""")
+    from llmgo.runner.harness_loop import HarnessRunner,EngineSeat
+    from llmgo.store.jsonl import TrajectoryStore
+    class Engine:
+        seat='black';name='fixture'
+    async def run():
+        seat=CandidateSeat('white',Asker(),root,tmp_path/'log')
+        try:return await HarnessRunner(seat,EngineSeat(Engine()),TrajectoryStore(tmp_path/'game')).run(ignore)
+        finally:await seat.close()
+    summary=asyncio.run(run())
+    assert summary['result']=='aborted' and summary['result_reason']=='harness_error'
+    games=[{'game_id':str(i),'pair_id':i//2,'model_seat':'black' if i%2 else 'white',
+            'result':'black_win','result_reason':'harness_error'} for i in range(10)]
+    with pytest.raises(ValueError,match='Infrastructure'):
+        batch_stats({'games':games},expected_games=10)
+
+
+def test_referee_does_not_publish_a_receipt_for_candidate_program_failure(tmp_path,monkeypatch):
+    from llmgo.rsi import evaluator
+    import json
+    engine=REPO/'engines/fairy-stockfish'
+    if not engine.is_file():pytest.skip('Fairy binary not present')
+    root=fixture_candidate(tmp_path,"""
+async def choose_move(*args,**kwargs):raise RuntimeError('transport fixture')
+""")
+    output=tmp_path/'output'
+    monkeypatch.setattr(evaluator,'VllmAsker',lambda *a,**kw:Asker())
+    payload={'protocol':protocol(opponent(1),str(engine),baseline=True),'seed_schedule':list(range(5)),
+             'job_id':'batch','candidate_id':'fixture','skills_sha256':None,'comparison_id':'fixture',
+             'model_path':'fixture','candidate_source':{'root':str(root)},'track':'player',
+             'site':{'python':sys.executable}}
+    with pytest.raises(RuntimeError,match='aborted: harness_error'):
+        asyncio.run(evaluator.play_batch(payload,'fixture',None,output,indices={0}))
+    assert not (output/'game_results/00.json').exists()
+    summary=json.loads((output/'harness_runs/batch-00/summary.json').read_text())
+    assert summary['result']=='aborted'

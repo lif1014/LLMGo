@@ -22,6 +22,13 @@ from .candidate import CandidateSeat
 from .artifacts import verify_source
 
 
+INFRASTRUCTURE_REASONS = {"engine_error", "harness_error", "cancelled", "aborted"}
+
+
+def infrastructure_failure(row):
+    return row.get("result") == "aborted" or row.get("result_reason") in INFRASTRUCTURE_REASONS
+
+
 def engine_identity(engine_path, spec):
     player = engine_player("black", engine_path, spec)
     try:
@@ -55,11 +62,13 @@ def evaluation_key(payload):
         "candidate_source":payload.get("candidate_source", {}).get("sha256"),
         "reference_source":payload.get("reference_source", {}).get("sha256"),
         "source":payload.get("source", {}).get("sha256"),
-        "evaluator_version":"parallel-v1"})
+        "evaluator_version":"parallel-v2"})
 
 
 def checked_game(path, payload, index):
     row = read_json(path)
+    if infrastructure_failure(row):
+        raise ValueError(f"Infrastructure failure is not completed evaluation evidence: {path}")
     unsigned = {k:v for k,v in row.items() if k != "integrity"}
     pair = index//2
     if (row.get("integrity") != digest(unsigned) or row.get("evaluation_key") != evaluation_key(payload)
@@ -127,6 +136,8 @@ async def play_batch(payload, url, cards, output, *, indices=None):
                 engine.close()
                 if isinstance(student, CandidateSeat):
                     await student.close()
+            if infrastructure_failure(summary):
+                raise RuntimeError(f"Game {game_id} aborted: {summary.get('result_reason')}; see its saved trace")
             row = {"game_id": game_id, "pair_id": pair_id, "seed": seed, "model_seat": side,
                    "result": summary["result"], "result_reason": summary.get("result_reason"),
                    "seconds": time.monotonic()-start, "diagnostics": summary, "engine_nodes": nodes,
@@ -212,14 +223,25 @@ async def parallel_batch(payload, cards, output, helpers, gpus):
                 if "integrity" not in legacy and "evaluation_key" not in legacy:
                     skipped.append({"index":index,"path":str(source),"reason":"legacy_unverified_receipt"})
                     continue
+                if infrastructure_failure(legacy):
+                    skipped.append({"index":index,"path":str(source),"reason":"infrastructure_failure"})
+                    continue
+                if legacy.get("evaluation_key") != evaluation_key(payload):
+                    skipped.append({"index":index,"path":str(source),"reason":"evaluation_identity_changed"})
+                    continue
                 atomic_json(dest, checked_game(source, payload, index))
         if skipped:
             atomic_json(output/"resume-skipped.json", {"previous_output":str(prior), "games":skipped,
-                "message":"旧版本棋局缺少可核验回执；保留原证据，在新任务重新评测。"})
+                "message":"旧棋局缺少有效回执或与当前评测不匹配；保留原证据，在新任务重新评测。"})
     completed = {}
     for index in range(expected):
         path = output/"game_results"/f"{index:02d}.json"
         if path.exists():
+            if infrastructure_failure(read_json(path)):
+                archive = output/"invalid_game_results"
+                archive.mkdir(exist_ok=True)
+                path.rename(archive/f"{index:02d}-{time.time_ns()}.json")
+                continue
             completed[index] = checked_game(path, payload, index)
     queue = asyncio.Queue()
     for index in range(expected):

@@ -126,8 +126,7 @@ class HarnessRunner:
                 if isinstance(player, EngineSeat):
                     result, reason = "aborted", "engine_error"
                 else:
-                    winner = self.rules.opponent(seat)
-                    result, reason = f"{winner}_win", "harness_error"
+                    result, reason = "aborted", "harness_error"
                 break
             move = Move(decision.uci)
             verdict = pos.classify(move)

@@ -139,5 +139,7 @@ bash scripts/start_rsi.sh --upgrade --web
 
 从旧eager推理版本恢复也必须先执行一次上述 `--upgrade --web`，将新的服务启动参数纳入campaign源码快照；只覆盖仓库并运行普通 `--web` 不会更新冻结的评测源码。升级后日常恢复改用 `bash scripts/start_rsi.sh --web`。现有Web进程仍需单独重启才能加载Python网页接口更新，启动器不会自动重启已占用端口上的服务。
 
+候选进程通讯采用长度前缀JSON，并在模型生成期间持续读取子进程事件，支持完整长输出回传；单条消息上限64MiB，超过上限会明确中止并保留裁判原始记录。关闭过程包含管道排空和有界等待，避免异常后一直占用GPU。`harness_error`、引擎异常和中断均属于未完成评测，不记为正常败局、不发布正式成绩；单局失败由Worker尝试重跑，最多3次。恢复时跳过程序错误回执与旧评测身份，重跑相应棋局，不复用不兼容日志。真实非法走子仍按原协议判负。旧campaign同样需要一次 `--upgrade --web` 才能采用此修复。
+
 
 8GPU训练验收已通过（任务1350755）：7卡PPO＋1卡LC0，2个训练步、每步2个PPO epoch，第二步重新采样，非零有限梯度、完整分片checkpoint与HF导出均完成。正式评测的多难度完整比赛尚未重跑；这次短验收不代表棋力提升。回执在 `/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/`，详细证据见 `docs/environment-status.json`。

@@ -1,4 +1,4 @@
-"""Candidate-side JSONL adapter, launched as a separate process by the evaluator.
+"""Candidate adapter with length-framed JSON, launched by the evaluator.
 
 This is a process/API boundary, not an OS security sandbox for hostile code.
 """
@@ -8,27 +8,69 @@ import dataclasses
 import inspect
 import json
 import random
+import struct
 import sys
 from pathlib import Path
+
+
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
+def encode_message(value):
+    data = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if not 0 < len(data) <= MAX_MESSAGE_BYTES:
+        raise ValueError("Candidate protocol message exceeds 64 MiB")
+    return struct.pack(">I", len(data)) + data
+
+
+async def read_message(reader):
+    try:
+        header = await reader.readexactly(4)
+    except asyncio.IncompleteReadError as exc:
+        if not exc.partial:
+            return None
+        raise ValueError("Incomplete candidate protocol header") from exc
+    size = struct.unpack(">I", header)[0]
+    if not 0 < size <= MAX_MESSAGE_BYTES:
+        raise ValueError("Invalid candidate protocol message length")
+    value = json.loads(await reader.readexactly(size))
+    if not isinstance(value, dict):
+        raise ValueError("Candidate protocol message must be an object")
+    return value
+
+
+def receive_message(stream):
+    header = stream.read(4)
+    if not header:
+        raise EOFError("Evaluator closed the candidate channel")
+    if len(header) != 4:
+        raise ValueError("Incomplete evaluator protocol header")
+    size = struct.unpack(">I", header)[0]
+    if not 0 < size <= MAX_MESSAGE_BYTES:
+        raise ValueError("Invalid evaluator protocol message length")
+    data = stream.read(size)
+    if len(data) != size:
+        raise EOFError("Incomplete evaluator protocol message")
+    value = json.loads(data)
+    if not isinstance(value, dict):
+        raise ValueError("Evaluator protocol message must be an object")
+    return value
 
 
 def main():
     candidate = Path(sys.argv[1]).resolve()
     # Only the child imports editable student code. Keep stdout for the protocol.
-    wire = sys.stdout
+    wire = sys.stdout.buffer
     sys.stdout = sys.stderr
     sys.path.insert(0, str(candidate / "src"))
     import chess
     from llmgo.harness.agent import choose_move, AskResult
     from llmgo.harness.config import HarnessConfig
     def send(value):
-        wire.write(json.dumps(value, ensure_ascii=False)+"\n")
+        wire.write(encode_message(value))
         wire.flush()
     def receive():
-        line = sys.stdin.readline()
-        if not line:
-            raise EOFError("Evaluator closed the candidate channel")
-        return json.loads(line)
+        return receive_message(sys.stdin.buffer)
     class Ask:
         async def __call__(self, prompt, max_tokens):
             return await self.stream(prompt, max_tokens, None)

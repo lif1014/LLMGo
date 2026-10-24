@@ -56,7 +56,7 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 | scripts/start_rsi.sh、tests/test_start_rsi.py | 一条短命令检查、初始化、后台启动/恢复loop与可选网页，验证重复启动和端口占用处理 |
 | scripts/evaluate.py | 受保护L1–L8评测入口，player/model两轨与完整面板 |
 | src/llmgo/rsi/candidate.py | 裁判侧候选进程代理，执行推理与外部预算 |
-| src/llmgo/rsi/candidate_bridge.py | 候选侧JSONL适配，加载自由修改的Harness |
+| src/llmgo/rsi/candidate_bridge.py | 候选侧长度前缀JSON通讯，加载自由修改的Harness；完整长输出和事件通过独立管道接收 |
 | src/llmgo/rsi/service.py | 从旧入口提取的vLLM生命周期，无隐式安装或另一路评测 |
 | scripts/bootstrap_worker.py | 在用户指定镜像安装自己的共享overlay，保存约束和环境回执 |
 | scripts/worker_entry.py | 每个新容器先验证/安装overlay，再启动Worker |

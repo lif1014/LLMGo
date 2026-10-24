@@ -51,7 +51,7 @@ def batch_stats(metrics, *, expected_games=20):
         ids.add(gid)
         if result not in ("white_win", "black_win", "draw"):
             raise ValueError("Incomplete/aborted game cannot be scored")
-        if game.get("result_reason") in ("engine_error", "cancelled", "aborted"):
+        if game.get("result_reason") in ("engine_error", "harness_error", "cancelled", "aborted"):
             raise ValueError("Infrastructure failures cannot be scored")
         point = .5 if result == "draw" else float(result == f"{side}_win")
         wins += point == 1

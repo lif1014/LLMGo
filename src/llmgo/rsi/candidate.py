@@ -2,13 +2,13 @@
 from __future__ import annotations
 import asyncio
 from dataclasses import asdict
-import json
 import os
 from pathlib import Path
 import sys
 import time
 
 from llmgo.harness.agent import Decision
+from .candidate_bridge import encode_message, read_message
 
 
 class CandidateSeat:
@@ -33,33 +33,64 @@ class CandidateSeat:
         self.proc = await asyncio.create_subprocess_exec(
             self.python, "-I", str(Path(__file__).with_name("candidate_bridge.py")), str(self.root),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=self.log,
-            cwd=self.root, env=env, limit=4*1024*1024)
+            cwd=self.root, env=env, limit=65536)
 
     async def send(self, message):
-        self.proc.stdin.write((json.dumps(message, ensure_ascii=False)+"\n").encode())
-        await self.proc.stdin.drain()
+        self.proc.stdin.write(encode_message(message))
+        await asyncio.wait_for(self.proc.stdin.drain(), 30)
 
     async def choose(self, board, history, emit):
         try:
             return await asyncio.wait_for(self._choose(board, history, emit), self.timeout)
         except BaseException:
-            await self.close()
+            await self.close(force=True)
             raise
 
     async def _choose(self, board, history, emit):
         await self.start()
-        spent, requests, prompt_tokens = 0, 0, 0
-        actual_tokens, exact, errors, lengths = 0, True, 0, 0
-        started, finishes = time.monotonic(), []
+        started = time.monotonic()
         await self.send({"op": "choose", "fen": board.fen(), "history": history,
                          "seat": self.seat, "seed": self.seed, "budget": self.budget})
         async def traced(event):
             await emit({**event, "seat": self.seat, "ply": len(history)})
+        messages = asyncio.Queue(maxsize=64)
+
+        async def receive():
+            try:
+                while True:
+                    message = await read_message(self.proc.stdout)
+                    if message is None:
+                        raise RuntimeError("Candidate process exited; see candidate.log")
+                    if message.get("op") == "event":
+                        event = message.get("event")
+                        if not isinstance(event, dict):
+                            raise ValueError("Invalid candidate event")
+                        if event.get("type") in {"position", "attempt", "game_finished", "engine_search", "summary", "token"}:
+                            await traced({"type": "candidate_event", "payload": event, "origin": "candidate"})
+                        else:
+                            await traced({**event, "origin": "candidate", "authoritative": False})
+                    else:
+                        await messages.put(message)
+            except Exception as exc:
+                await messages.put(exc)
+
+        # Drain child output during inference too: the child forwards stream events
+        # while consuming stdin. Sequential reads can deadlock both OS pipes.
+        receiver = asyncio.create_task(receive())
+        try:
+            return await self._dialog(messages, traced, history, started)
+        finally:
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+
+    async def _dialog(self, messages, traced, history, started):
+        spent, requests, prompt_tokens = 0, 0, 0
+        actual_tokens, exact, errors, lengths = 0, True, 0, 0
+        finishes = []
         while True:
-            line = await self.proc.stdout.readline()
-            if not line:
-                raise RuntimeError("Candidate process exited; see candidate.log")
-            message = json.loads(line)
+            message = await messages.get()
+            if isinstance(message, Exception):
+                raise message
             op = message.get("op")
             if op == "ask":
                 n, prompt = message.get("max_tokens"), message.get("prompt")
@@ -98,15 +129,6 @@ class CandidateSeat:
                 await traced({"type": "request", "status": "finished", "request_id": rid,
                               **asdict(response), "charged_tokens": charge, "authoritative": True})
                 await self.send({"op": "response", "result": asdict(response)})
-            elif op == "event":
-                event = message.get("event")
-                if not isinstance(event, dict):
-                    raise ValueError("Invalid candidate event")
-                # Candidate diagnostics are retained, but cannot forge referee positions/results.
-                if event.get("type") in {"position", "attempt", "game_finished", "engine_search", "summary", "token"}:
-                    await traced({"type": "candidate_event", "payload": event, "origin": "candidate"})
-                else:
-                    await traced({**event, "origin": "candidate", "authoritative": False})
             elif op == "decision":
                 d = message.get("decision")
                 if not isinstance(d, dict) or not isinstance(d.get("uci"), str):
@@ -122,16 +144,40 @@ class CandidateSeat:
             else:
                 raise ValueError("Unknown candidate protocol operation")
 
-    async def close(self):
-        if self.proc and self.proc.returncode is None:
-            try:
-                await self.send({"op": "close"})
-                await asyncio.wait_for(self.proc.wait(), 2)
-            except (BrokenPipeError, ConnectionResetError, asyncio.TimeoutError):
-                if self.proc.returncode is None:
-                    self.proc.kill()
-                    await self.proc.wait()
-        self.proc = None
-        if self.log:
-            self.log.close()
-            self.log = None
+    async def close(self, *, force=False):
+        proc, self.proc = self.proc, None
+        log, self.log = self.log, None
+        if proc is None:
+            if log:
+                log.close()
+            return
+
+        async def discard():
+            while await proc.stdout.read(65536):
+                pass
+
+        # Waiting for a subprocess with a full stdout pipe can itself hang.
+        drainer = asyncio.create_task(discard())
+        try:
+            if proc.returncode is None and not force:
+                try:
+                    async with asyncio.timeout(2):
+                        proc.stdin.write(encode_message({"op": "close"}))
+                        await proc.stdin.drain()
+                        await proc.wait()
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    force = True
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            async with asyncio.timeout(2):
+                await proc.wait()
+        finally:
+            if proc.stdin and not proc.stdin.is_closing():
+                proc.stdin.transport.abort()
+            drainer.cancel()
+            await asyncio.gather(drainer, return_exceptions=True)
+            if log:
+                log.close()

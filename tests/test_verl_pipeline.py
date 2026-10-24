@@ -157,3 +157,27 @@ def test_parallel_upgrade_keeps_legacy_evidence_but_reruns_unverified_games(tmp_
     assert sorted(called)==list(range(10)) and len(rows)==10
     assert (old/'game_results/00.json').read_bytes()==original
     assert json.loads((output/'resume-skipped.json').read_text())['games'][0]['reason']=='legacy_unverified_receipt'
+
+
+def test_upgrade_skips_failed_receipts_and_changed_evaluator_without_touching_history(tmp_path,monkeypatch):
+    old=tmp_path/'old';output=tmp_path/'new'
+    failed={'integrity':'old','evaluation_key':'old','result':'black_win','result_reason':'harness_error'}
+    changed={'integrity':'old','evaluation_key':'old','result':'white_win','result_reason':'checkmate'}
+    atomic_json(old/'game_results/00.json',failed);atomic_json(old/'game_results/01.json',changed)
+    class Server:
+        def __init__(self,*a,**kw):self.base_url='url'
+        def start(self):pass
+        def stop(self):pass
+    helpers=SimpleNamespace(_pick_ports=lambda p,n:list(range(n)),VllmServer=Server,_wait_servers=lambda *a:None)
+    called=[]
+    async def play(*args,indices,**kwargs):
+        index=next(iter(indices));called.append(index);return [{'index':index}]
+    monkeypatch.setattr(evaluator,'play_batch',play)
+    payload={'protocol':{'games':10},'site':{'user_root':str(tmp_path)},'model_path':'model','resume_from':str(old)}
+    asyncio.run(evaluator.parallel_batch(payload,None,output,helpers,['0']))
+    assert called==list(range(10))
+    skips=json.loads((output/'resume-skipped.json').read_text())['games']
+    assert [x['reason'] for x in skips]==['infrastructure_failure','evaluation_identity_changed']
+    assert json.loads((old/'game_results/00.json').read_text())==failed
+    with pytest.raises(ValueError,match='Infrastructure'):
+        evaluator.checked_game(old/'game_results/00.json',payload,0)

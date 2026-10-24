@@ -7,8 +7,10 @@ description: 为本项目在 Cybertron 查询自己的资源和任务，按用�
 
 完整原文见 [references/cctl-full.md](references/cctl-full.md)，按源文件逐字保留。登录、profile、任务参数、镜像、文件系统等操作细节可按需查阅对应章节；原文中的通用示例仍须遵守下面的本项目资源与目录约束。
 
-**固定约束：** cluster `beijing`、资源池 `model-autosft`、priority `NORMAL`；新建 devspace 必须 GPU=0。GPU 通过 job/pytorchjob。本期 Controller 使用单 GPU job。不得停止、删除、抢占他人任务。
+**固定约束：** cluster `beijing`、资源池 `model-autosft`、priority `NORMAL`；新建 devspace 必须 GPU=0。GPU 通过 job/pytorchjob，每项任务最多8 GPU；GPU任务默认8卡，Meta-Agent可按需选择1–8卡，纯CPU任务使用0卡。不得停止、删除、抢占他人任务。
 只写 `/user/lyh4170`；现有模型和已获许可的来源配置只读。不改 `$HOME`，也不打印认证材料。
+
+评测默认8个单卡Qwen副本，每卡TP=1，同时进行8局；`python scripts/request_evaluation.py --level L2 --gpus 4` 可改为4卡，不改变正式比赛数。verl PPO+LC0默认7卡actor/rollout/reference加1卡LC0；若只申请1卡，需显式使用CPU教师后端。GPU任务交给Executor每5–10分钟查询一次，纯CPU任务可较频繁查询。
 
 先 `CCTL_NO_UPDATE_CHECK=1 cctl pool list --own --no-input -o json`。
 训练/评测优先交给 `scripts/rsi.py` 的冻结 manifest 与防重机制；一般不手写第二套提交。

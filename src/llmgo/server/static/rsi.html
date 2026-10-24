@@ -2,10 +2,22 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLMGo! RSI</title><link rel="stylesheet" href="/static/rsi.css?v=game-replay-1">
+  <script>
+    (() => {
+      const mount = location.pathname.replace(/\/rsi\/?$/, "").replace(/\/$/, "");
+      const base = document.createElement("base");
+      base.href = location.origin + mount + "/";
+      document.head.append(base);
+      const stylesheet = document.createElement("link");
+      stylesheet.rel = "stylesheet";
+      stylesheet.href = "static/rsi.css?v=proxy-path-2";
+      document.head.append(stylesheet);
+    })();
+  </script>
+  <title>LLMGo! RSI</title>
 </head>
 <body>
-  <header><a href="/rsi">研究面板</a><h1>国际象棋 RSI</h1>
+  <header><a href="rsi">研究面板</a><h1>国际象棋 RSI</h1>
     <label>研究 <select id="campaign"></select></label><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
   <p id="overview">上传框架并创建 campaign 后，这里显示远端研究状态。</p>
   <div class="status-grid">
@@ -61,5 +73,9 @@
       <p id="cost"></p><div id="results" class="feed"></div></section>
   </main>
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
-  <script src="/static/rsi.js?v=game-replay-1" defer></script>
+  <script>
+    const dashboard = document.createElement("script");
+    dashboard.src = "static/rsi.js?v=proxy-path-2";
+    document.body.append(dashboard);
+  </script>
 </body></html>

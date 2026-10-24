@@ -21,7 +21,8 @@ from llmgo.store.jsonl import TrajectoryStore
 
 
 @pytest.mark.skipif(os.environ.get("LLMGO_BROWSER_TEST") != "1", reason="opt-in Chromium integration")
-def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path):
+@pytest.mark.parametrize("mount_path", ["", "/beijing/job/1309690/expose"])
+def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path, mount_path):
     playwright = pytest.importorskip("playwright.sync_api")
     root = tmp_path/"campaigns/demo"
     memory = MemoryStore(root)
@@ -68,10 +69,25 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path):
         port = sock.getsockname()[1]
     env = {**os.environ, "LLMGO_RSI_ROOT": str(root.parent), "LLMGO_RUNS": str(tmp_path/"runs")}
     repo = Path(__file__).resolve().parents[1]
+    # Simulate the platform proxy stripping its URL prefix without providing
+    # root_path or forwarded-prefix headers to the application.
+    proxy = tmp_path/"proxy_app.py"
+    proxy.write_text("from llmgo.server.app import app as inner\n"
+        f"PREFIX = {mount_path!r}\n"
+        "async def app(scope, receive, send):\n"
+        "    if scope['type'] == 'http':\n"
+        "        path = scope['path']\n"
+        "        if PREFIX and path != PREFIX and not path.startswith(PREFIX+'/'):\n"
+        "            await send({'type':'http.response.start','status':404,'headers':[]})\n"
+        "            await send({'type':'http.response.body','body':b'Outside service prefix'})\n"
+        "            return\n"
+        "        scope = {**scope, 'path':path[len(PREFIX):] or '/', 'raw_path':(path[len(PREFIX):] or '/').encode()}\n"
+        "    await inner(scope, receive, send)\n")
+    env["PYTHONPATH"] = str(tmp_path)+os.pathsep+str(repo/"src")
     with (tmp_path/"server.log").open("w") as log:
-        process = subprocess.Popen([sys.executable, "-m", "uvicorn", "llmgo.server.app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=repo, env=env, stdout=log, stderr=log)
+        process = subprocess.Popen([sys.executable, "-m", "uvicorn", "proxy_app:app", "--host", "127.0.0.1", "--port", str(port)], cwd=repo, env=env, stdout=log, stderr=log)
         try:
-            base = f"http://127.0.0.1:{port}"
+            base = f"http://127.0.0.1:{port}"+mount_path
             for _ in range(120):
                 try:
                     with urlopen(base+"/api/rsi/campaigns", timeout=.3):
@@ -86,8 +102,10 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path):
                 errors, requests = [], []
                 page.on("pageerror", lambda e: errors.append(str(e)))
                 page.on("request", lambda r: requests.append(r.url))
-                page.goto(base+"/rsi")
+                page.goto(base if mount_path else base+"/rsi")
                 page.wait_for_function("document.querySelector('#board').children.length===64")
+                assert page.locator("header a").get_attribute("href") == "rsi"
+                assert page.locator("header a").evaluate("e=>e.href") == base+"/rsi"
                 page.wait_for_function("document.querySelector('#coach').children.length===80")
                 assert "training" in page.locator("#worker-state").inner_text()
                 assert "4170" in page.locator("#executor-state").inner_text()
@@ -156,6 +174,8 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path):
                 assert page.evaluate("document.documentElement.scrollWidth<=window.innerWidth+1")
                 page.screenshot(path=str(tmp_path/"rsi-mobile.png"), full_page=True)
                 assert not errors, errors
+                if mount_path:
+                    assert all(url.startswith(base+"/") or url == base for url in requests), requests
                 browser.close()
         finally:
             process.terminate()  # only our local test server, never a cluster job

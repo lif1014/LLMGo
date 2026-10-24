@@ -18,4 +18,6 @@ Meta-Agent日志是协议实际提供的可见文字/摘要、命令与事件，
 
 默认绑定0.0.0.0:7860，由平台自己的端口转发访问。此服务无独立认证，不应暴露为公共互联网端口；无需为了看面板运行GPU。
 
+支持平台路径转发，例如 `/beijing/job/1309690/expose`（带或不带末尾斜杠）及其 `/rsi` 页面。页面根据浏览器地址确定服务基底，CSS、JavaScript、导航和API均走同一转发前缀，不请求Cybertron主站的 `/static` 或 `/api/rsi`。本机根路径访问同样有效。更新静态文件后刷新页面即可加载该路径修复，无需重启评测或升级campaign。
+
 启动入口仍为 `bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --web`。更新Python网页接口后，已有Web进程需要单独重启才能加载新接口；启动器会复用已运行的服务。无需升级campaign或重启Controller、Executor、训练/评测任务。

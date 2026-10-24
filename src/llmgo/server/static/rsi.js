@@ -7,7 +7,8 @@ const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLAN
   EVALUATING:"固定评测",NEEDS_INPUT:"等待缺失项处理"};
 const show=v=>v==null?"未提供":String(v);
 const date=v=>{if(v==null)return "未记录";const d=new Date(typeof v==="number"?v*1000:v);return Number.isNaN(d.getTime())?show(v):d.toLocaleString();};
-const api=(suffix="")=>"/api/rsi/campaigns/"+encodeURIComponent(state.campaign)+suffix;
+const apiRoot=new URL("api/rsi/campaigns",document.baseURI||"http://localhost/").pathname;
+const api=(suffix="")=>apiRoot+"/"+encodeURIComponent(state.campaign)+suffix;
 async function json(url){
   const c=new AbortController();state.requests.add(c);const timer=setTimeout(()=>c.abort(),15000);
   try{const r=await fetch(url,{signal:c.signal,cache:"no-store"});if(!r.ok)throw Error(r.status+": "+(await r.text()).slice(0,500));return await r.json();}
@@ -344,7 +345,7 @@ el("close-raw").onclick=()=>{state.raw=null;el("raw").close();};
 el("raw-prev").onclick=()=>{if(state.raw){state.raw.relative=Math.max(0,state.raw.relative-65536);rawPage();}};
 el("raw-next").onclick=()=>{if(state.raw){state.raw.relative=Math.min(Math.max(0,state.raw.length-1),state.raw.relative+65536);rawPage();}};
 async function list(){
-  try{const rows=await json("/api/rsi/campaigns");options("campaign",rows,state.campaign,c=>c.campaign_id,c=>c.campaign_id);
+  try{const rows=await json(apiRoot);options("campaign",rows,state.campaign,c=>c.campaign_id,c=>c.campaign_id);
     if(!state.campaign&&rows.length){el("campaign").value=rows.at(-1).campaign_id;selectCampaign();}else if(!rows.length)el("connection").textContent="尚无campaign";
   }catch(e){if(e.name!=="AbortError")el("connection").textContent=e.message;}
 }

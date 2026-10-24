@@ -108,6 +108,8 @@ share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb
 
 `worker_entry.py` 在这个镜像内使用专属 Worker overlay `/user/lyh4170/venvs/llmgo-rsi-20261022`；正式推理使用独立 inference overlay（Transformers 4.57.6）。默认 verl PPO 另用 `/user/lyh4170/venvs/llmgo-verl-ppo-tf54-20261024`，固定 verl 0.8.0、Transformers 5.4.0、mistral-common 1.10.0，保留原镜像 Torch/CUDA/vLLM。所有安装、缓存和临时文件在本研究自己的目录；安装器有归属标记、文件锁、基础栈约束和导入回执，不修改系统或其他任务环境。依赖从中科大镜像下载。
 
+正式评测使用已通过H800测速的vLLM设置：每卡独立副本、TP=1、BF16、`--max-num-seqs 8`，启用默认编译/CUDA Graph，不使用 `--enforce-eager`。仍默认8卡同时进行8局；max-num-seqs是单服务容量上限，不把对局数改成64局。任务1354496在546-token输入、固定生成512 tokens、开启thinking下，暖机后单请求约212 tokens/s（eager约29），单卡4请求合计约721 tokens/s；长对局速度仍以实际日志为准。首次请求可能需要额外暖机时间。回执：`/user/lyh4170/rsi_readiness/inference-speed-v3-20261024/gpu-result.json`。
+
 ## 本地检查与重新打包
 
 ```bash
@@ -134,6 +136,8 @@ bash scripts/start_rsi.sh --upgrade --web
 ```
 
 脚本自动使用已安装的控制环境Python。upgrade保留旧任务、原始基线和参考Harness，新增版本快照，升级默认8卡并为失败基线登记新任务。失败旧版本没有可验证的逐局回执时，不复用其未核验结果。正式比赛数和协议不变：初始L1–L4每档10局，之后单档20局。
+
+从旧eager推理版本恢复也必须先执行一次上述 `--upgrade --web`，将新的服务启动参数纳入campaign源码快照；只覆盖仓库并运行普通 `--web` 不会更新冻结的评测源码。升级后日常恢复改用 `bash scripts/start_rsi.sh --web`。现有Web进程仍需单独重启才能加载Python网页接口更新，启动器不会自动重启已占用端口上的服务。
 
 
 8GPU训练验收已通过（任务1350755）：7卡PPO＋1卡LC0，2个训练步、每步2个PPO epoch，第二步重新采样，非零有限梯度、完整分片checkpoint与HF导出均完成。正式评测的多难度完整比赛尚未重跑；这次短验收不代表棋力提升。回执在 `/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/`，详细证据见 `docs/environment-status.json`。

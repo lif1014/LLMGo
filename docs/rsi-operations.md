@@ -101,6 +101,8 @@ Meta-Agent 在研究 workspace 执行 `python scripts/request_evaluation.py --le
 
 每任务最多8GPU；评测默认8副本，可用 `python scripts/request_evaluation.py --level L2 --gpus 4` 调整并行数，比赛数不变。训练产物、教师标注、失败与恢复规则见专文。Meta-Agent可以继续修改RL和skills方案，但禁止SFT、正式评测禁用教师的边界不变。
 
+正式评测的vLLM副本采用TP=1、BF16、max-num-seqs=8和默认编译/CUDA Graph（不传enforce-eager），沿用原上下文长度、thinking与生成预算。每卡仍一次进行一局。该推理配置已在H800任务1354496完成单请求及4请求测速，未验证长棋局等比例提速；首次请求可能有编译/内核暖机等待。训练rollout的配置仍由verl训练配方独立管理。从旧eager版本恢复现有campaign，先确认旧任务和Controller已停止，再运行一次 `bash scripts/start_rsi.sh --upgrade --web`；后续普通恢复无需反复upgrade。
+
 ## 6. Memory、Executor 与恢复
 
 run 重启从持久日志恢复，真实进程锁防双重 Controller，提交 intent 防重复任务。长期研究没有总 turn timeout，RPC 确认仍有界；Executor退避轮询独立于LLM上下文。

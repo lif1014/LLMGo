@@ -1,7 +1,7 @@
 "use strict";
 const el=id=>document.getElementById(id), freshStream=()=>({cursor:null,before:null,follow:true,request:0,recent:[]});
 const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set(),cards:new Map(),streams:{research:freshStream(),executor:freshStream()},
-  evaluations:[],totalHours:0,evaluationRefresh:0,job:"",autoJob:true,game:"",autoGame:true,gameCursor:0,channels:{reasoning:"",content:""},raw:null};
+  evaluations:[],totalHours:0,evaluationRefresh:0,job:"",autoJob:true,game:"",autoGame:true,viewer:null,raw:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
 const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
   EVALUATING:"固定评测",NEEDS_INPUT:"等待缺失项处理"};
@@ -71,11 +71,13 @@ async function returnLive(source){
   state.streams[source]=freshStream();for(const target of source==="research"?["coach","memory"]:["executor-events"])clearFeed(target);
   try{await readActivity(source);}catch(e){el("connection").textContent=e.message;}
 }
-function board(fen){
+function board(fen,move){
   el("board").replaceChildren();fen.split(" ")[0].split("/").forEach((rank,row)=>{let col=0;
     for(const char of rank)for(let i=0,n=/[1-8]/.test(char)?Number(char):1;i<n;i++,col++){
-      const d=document.createElement("div"),c=document.createElement("span");d.className="square "+((row+col)%2?"dark":"");d.textContent=pieces[char]||"";
-      c.className="coordinate";c.textContent="abcdefgh"[col]+(8-row);d.append(c);el("board").append(d);}});
+      const d=document.createElement("div"),square="abcdefgh"[col]+(8-row);d.className="square "+((row+col)%2?"dark":"");d.textContent=pieces[char]||"";
+      if(pieces[char])d.className+=char===char.toUpperCase()?" white-piece":" black-piece";
+      if(move?.slice(0,2)===square)d.className+=" move-from";if(move?.slice(2,4)===square)d.className+=" move-to";
+      d.title=square;el("board").append(d);}});
 }
 function curve(){
   const svg=el("curve"),ns="http://www.w3.org/2000/svg";svg.replaceChildren();
@@ -141,26 +143,161 @@ async function files(generation){
   for(const file of data.files){const b=document.createElement("button");b.textContent=file.path.split("/").slice(-2).join("/")+" · "+(file.bytes/1024).toFixed(1)+"KiB";
     b.title=file.path+"\n更新："+date(file.modified);b.onclick=()=>openRaw({path:file.path,offset:0,length:file.bytes},true);el("job-files").append(b);}
 }
+const seatName=seat=>seat==="white"?"白方":seat==="black"?"黑方":"学生";
+const blankTurn=()=>({prompt:"",reasoning:"",content:"",events:[],eventBytes:0,request:null});
+function stopPlayback(r=state.viewer){if(r?.timer)clearInterval(r.timer);if(r)r.timer=null;el("replay-play").textContent="播放";}
+function resetGame(){
+  stopPlayback();state.viewer=null;state.game="";
+  for(const id of ["board","thinking","student-output","student-prompt","moves"])el(id).replaceChildren();
+  clearFeed("student-events");el("student-seat").textContent="学生";el("game-summary").textContent="尚未选择对局";
+  el("game-state").textContent="此范围尚无对局，可选择历史任务查看";el("game-loading").textContent="";
+  playbackControls();
+}
+function openGame(game){
+  resetGame();state.game=game.folder;
+  const r={folder:game.folder,generation:state.generation,info:game,frames:[],index:0,follow:true,timer:null,
+    cursor:0,source:"compact",rawCursor:0,reading:false,loading:true,latest:blankTurn(),pending:null,summary:game.summary};
+  state.viewer=r;el("game-loading").textContent="正在载入对局…";return r;
+}
+function excerpt(value){
+  if(!value)return "";
+  return (value.head||"")+(value.omitted?"\n[…省略 "+value.omitted+" "+(value.unit==="tokens"?"tokens":"字符")+"；可读取原文…]\n":"")+(value.tail||"");
+}
+function traceRow(r,row,source){
+  const ref=row.event.raw_ref;
+  return {...row,path:r.folder+"/"+(ref?"events.jsonl":source),offset:ref?.offset??row.offset,length:ref?.length??row.length};
+}
+function keepTrace(turn,row){
+  if(turn.events.some(old=>old.path===row.path&&old.offset===row.offset))return;
+  const cost=JSON.stringify(row.event).length;
+  turn.events.push(row);turn.eventBytes+=cost;
+  while(turn.events.length>40||turn.eventBytes>96000&&turn.events.length>1)turn.eventBytes-=JSON.stringify(turn.events.shift().event).length;
+}
+function ingestGame(r,row,source){
+  const e=row.event,type=e.type,student=e.seat==null||e.seat===r.info.model_seat;
+  if(type==="position"){
+    if(!e.fen)return;
+    const frame={position:e,view:r.pending||r.latest,label:e.last_move?seatName(e.last_move.seat)+" "+e.last_move.uci:"开局"};
+    // Freeze the student's turn at its resulting position; engine moves reuse it.
+    r.latest=frame.view;r.pending=null;r.frames.push(frame);
+    const button=document.createElement("button"),index=r.frames.length-1;
+    button.textContent=index===0?"开局":index+". "+frame.label;button.onclick=()=>showFrame(index);
+    el("moves").append(button);return;
+  }
+  if(type==="game_finished"){r.summary=e.summary||r.summary;r.finished=e;return;}
+  if(type==="engine_search")return;
+  // The referee's raw stream is authoritative. Candidate-forwarded copies
+  // remain on disk, but must not replace requests/tools in the bounded feed.
+  if(type==="candidate_event"&&e.payload?.type==="token")return;
+  if(type==="turn_started"&&student)r.pending=blankTurn();
+  if(!student)return;
+  if(!r.pending)r.pending=blankTurn();const turn=r.pending;
+  if(e.prompt)turn.prompt=e.prompt.slice(0,20000);
+  if(["model_request","request"].includes(type)){
+    if(e.status==="started"){
+      turn.request=e.request_id;turn.reasoning="";turn.content="";turn.compact=false;
+      if(source==="short_events.jsonl")turn.inflightOffset=e.raw_ref?.offset;
+    }else if(["finished","streaming"].includes(e.status)){
+      if(e.status==="finished")turn.inflightOffset=null;
+      if(e.reasoning)turn.reasoning=e.reasoning.slice(-20000);
+      else if(e.output_excerpt)turn.reasoning=excerpt(e.output_excerpt).slice(-20000);
+      else if(e.output&&!turn.reasoning)turn.reasoning=e.output.slice(-20000);
+      if(e.text)turn.content=e.text.slice(-20000);
+      turn.compact=source==="short_events.jsonl";
+    }
+  }
+  if(type==="token"){
+    if(turn.compact){turn.reasoning="";turn.content="";turn.compact=false;}
+    const channel=e.channel==="reasoning"?"reasoning":"content";
+    turn[channel]=(e.replace?e.text:turn[channel]+(e.text||"")).slice(-20000);
+  }
+  if(type==="choice"&&e.status==="answered"&&e.uci)turn.content=e.uci;
+  if(type==="attempt"){
+    if(e.reasoning&&!turn.reasoning)turn.reasoning=e.reasoning.slice(-20000);
+    if(e.content)turn.content=e.content.slice(-20000);
+  }
+  if(["turn_started","choice","tool_call","model_request","request","fallback","attempt","candidate_event"].includes(type)||e.display_truncated)
+    keepTrace(turn,traceRow(r,row,source));
+}
+function playbackControls(){
+  const r=state.viewer,last=(r?.frames.length||0)-1;
+  el("replay-prev").disabled=!r||r.index<=0;el("replay-next").disabled=!r||r.index>=last;
+  el("replay-play").disabled=last<1;el("replay-restart").disabled=last<1;
+  const range=el("replay-range");range.max=Math.max(0,last);range.value=r?.index||0;range.disabled=last<1;
+  el("replay-label").textContent=last<0?"尚无可回放的走子":(r.follow?"直播":"复盘")+" · "+r.index+" / "+last+" 半步"+(r.loading?" · 历史仍在载入":"");
+  for(const [index,node] of Array.from(el("moves").children).entries())node.setAttribute("aria-current",index===r?.index?"step":"false");
+}
+function renderGame(r){
+  if(state.viewer!==r)return;
+  const frame=r.frames[r.index],view=r.follow?(r.pending||r.latest):(frame?.view||blankTurn());
+  if(frame){board(frame.position.fen,frame.position.last_move?.uci);
+    el("game-state").textContent=(r.follow?"直播":"复盘")+" · "+frame.label+" · 轮到"+seatName(frame.position.side)+(frame.position.in_check?"，正在被将军":"");}
+  el("student-seat").textContent="学生 · 执"+seatName(r.info.model_seat);
+  el("student-prompt").textContent=view.prompt;el("thinking").textContent=view.reasoning;el("student-output").textContent=view.content;
+  const signature=JSON.stringify(view.events.map(row=>[row.path,row.offset,row.length,row.event.status]));
+  if(r.traceSignature!==signature){r.traceSignature=signature;clearFeed("student-events");
+    for(const row of view.events){const e=row.event;detail("student-events",e.type+" "+(e.status||"")+" "+(e.tool||e.reason||e.finish_reason||""),e,row);}}
+  const s=r.summary;
+  el("game-summary").textContent="对局："+r.info.id+"\n学生执"+seatName(r.info.model_seat)+"\n"+(s?
+    "结果："+show(s.result)+" / "+show(s.result_reason)+"\n模型选步："+show(s.model_decisions)+" · 强制步："+show(s.forced_moves)+
+    "\n随机后备："+show(s.random_moves)+" · 请求："+show(s.request_count)+"\n生成："+show(s.completion_tokens)+" tokens"+"\n后备原因："+JSON.stringify(s.fallback_reasons||{}):"尚无最终结果；显示已记录的局面与请求");
+  playbackControls();
+}
+function showFrame(index){
+  const r=state.viewer;if(!r?.frames.length)return;stopPlayback(r);
+  r.follow=false;state.autoGame=false;state.autoJob=false;r.index=Math.max(0,Math.min(index,r.frames.length-1));renderGame(r);
+}
+function playGame(fromStart=false){
+  const r=state.viewer;if(!r||r.frames.length<2)return;if(r.timer&&!fromStart){stopPlayback(r);return;}
+  showFrame(fromStart||r.index===r.frames.length-1?0:r.index);el("replay-play").textContent="暂停播放";
+  r.timer=setInterval(()=>{
+    if(state.viewer!==r||document.hidden||state.paused||r.index>=r.frames.length-1){stopPlayback(r);return;}
+    r.index++;renderGame(r);if(r.index>=r.frames.length-1)stopPlayback(r);
+  },700);
+}
+async function readGame(r){
+  if(r.reading||state.viewer!==r||state.paused||document.hidden)return;r.reading=true;let more=false;
+  try{
+    for(let i=0;i<8;i++){
+      const cursor=r.cursor,view=r.source==="compact"?"compact":"full";
+      const data=await json(api("/game-events?folder="+encodeURIComponent(r.folder)+"&view="+view+"&cursor="+cursor+"&limit=200"));
+      if(state.viewer!==r||r.generation!==state.generation)return;
+      const source=data.source||"events.jsonl";
+      for(const row of data.events)ingestGame(r,row,source);
+      r.cursor=data.cursor;if(data.raw_cursor!=null)r.rawCursor=Math.max(r.rawCursor,data.raw_cursor);
+      more=Boolean(data.more)&&r.cursor>cursor;
+      if(r.follow)r.index=Math.max(0,r.frames.length-1);
+      if(!more&&r.source==="compact"&&source==="short_events.jsonl"){
+        // Compact logs can advance through candidate-forwarded token copies
+        // during an unfinished request. Replay only that request's raw tail,
+        // so opening the page mid-generation still recovers its visible text.
+        r.source="events.jsonl";r.cursor=r.pending?.inflightOffset??r.rawCursor;more=true;
+      }else if(source==="events.jsonl")r.source=source;
+      if(!more){r.loading=false;break;}
+      if(state.paused||document.hidden)break;
+    }
+    el("game-loading").textContent=r.loading?"正在载入历史…":r.finished?"对局已结束":"每3秒读取新事件";renderGame(r);
+  }catch(e){more=false;if(state.viewer===r&&e.name!=="AbortError")el("game-loading").textContent="对局读取失败："+e.message;}
+  finally{r.reading=false;}
+  if(more&&state.viewer===r&&!state.paused&&!document.hidden)setTimeout(()=>readGame(r),0);
+}
 async function student(generation){
-  if(!state.job)return;const job=state.job,games=await json(api("/games?job_id="+encodeURIComponent(job)+"&limit=20"));
-  if(generation!==state.generation||job!==state.job)return;
-  if(state.autoGame&&games.length&&state.game!==games.at(-1).folder){state.game=games.at(-1).folder;state.gameCursor=0;state.channels={reasoning:"",content:""};el("thinking").textContent="";clearFeed("student-events");}
-  options("game",games,state.game,g=>g.model_seat+" · "+(g.summary?.result||"进行中")+" · "+g.id,g=>g.folder);
-  if(!state.game)return;const chosen=state.game,data=await json(api("/game-events?folder="+encodeURIComponent(chosen)+"&cursor="+state.gameCursor+"&limit=200"));
-  if(generation!==state.generation||chosen!==state.game)return;state.gameCursor=data.cursor;
-  for(const row of data.events){const e=row.event;
-    if(e.type==="position"){board(e.fen);el("game-state").textContent="轮到"+e.side+" · "+(e.last_move?.uci||"初始局面");}
-    if(["model_request","request"].includes(e.type)&&e.status==="started"){state.channels={reasoning:"",content:""};el("thinking").textContent="";}
-    if(e.type==="token"){const c=e.channel==="reasoning"?"reasoning":"content";state.channels[c]=(e.replace?e.text:state.channels[c]+e.text).slice(-20000);el("thinking").textContent=state.channels.reasoning+"\n"+state.channels.content;}
-    if(["model_request","request"].includes(e.type)&&e.status==="finished")el("thinking").textContent=(e.output||(e.reasoning||"")+"\n"+(e.text||"")).slice(-20000);
-    if(["turn_started","choice","tool_call","model_request","request","fallback","game_finished","engine_search","candidate_event"].includes(e.type)||e.display_truncated)
-      detail("student-events",e.type+" "+(e.status||"")+" "+(e.tool||e.reason||e.finish_reason||""),e,{...row,path:chosen+"/events.jsonl"});}
+  const job=state.job,scope=el("game-scope").value||"campaign";
+  const games=await json(api("/games?limit=1000"+(scope==="job"&&job?"&job_id="+encodeURIComponent(job):"")));
+  if(generation!==state.generation||job!==state.job||scope!==(el("game-scope").value||"campaign"))return;
+  const latest=games.filter(g=>g.folder.startsWith("jobs/"+job+"/")).at(-1)||games.at(-1);
+  state.games=games;
+  if(state.autoGame&&latest&&state.game!==latest.folder||!state.viewer&&latest)openGame(latest);
+  options("game",games,state.game,g=>seatName(g.model_seat)+" · "+(g.summary?.result||"进行中")+" · "+g.id,g=>g.folder);
+  const r=state.viewer;if(!r)return;const info=games.find(g=>g.folder===r.folder);
+  if(info){r.info=info;r.summary=info.summary||r.summary;}
+  await readGame(r);
 }
 async function refresh(){
   if(state.busy||state.paused||document.hidden||!state.campaign)return;state.busy=true;const generation=state.generation;
   try{const s=await json(api("/overview"));if(generation!==state.generation)return;
     const x=await json(api("/executor"));if(generation!==state.generation)return;renderStatus(s,x);state.totalHours=s.worker_gpu_hours||0;
-    const latest=s.active_job?.id;if(state.autoJob&&latest&&state.job!==latest){state.job=latest;state.game="";state.gameCursor=0;state.autoGame=true;}
+    const latest=s.active_job?.id;if(state.autoJob&&latest&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
     options("job",(s.recent_jobs||[]).slice().reverse(),state.job,j=>j.id+" · "+j.role+" · "+j.status+" · "+j.candidate_id,j=>j.id);
     for(const source of ["research","executor"])if(state.streams[source].follow)await readActivity(source);
     if(generation!==state.generation)return;
@@ -184,20 +321,25 @@ async function rawPage(){
 }
 function selectCampaign(){
   for(const request of state.requests)request.abort();state.generation++;state.campaign=el("campaign").value;
-  state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.game="";state.autoGame=true;state.gameCursor=0;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
+  resetGame();state.games=[];state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.autoGame=true;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
   for(const id of ["coach","memory","results","student-events","executor-events"])clearFeed(id);
   el("results").dataset.signature="";el("job-files").dataset.signature="";el("job-files").replaceChildren();
   for(const id of ["thinking","coach-live","board","meta-usage"])el(id).replaceChildren();el("raw").close();refresh();
 }
 el("campaign").onchange=selectCampaign;
-el("pause").onclick=()=>{state.paused=!state.paused;el("pause").textContent=state.paused?"继续刷新":"暂停刷新";if(!state.paused)refresh();};
+el("pause").onclick=()=>{state.paused=!state.paused;el("pause").textContent=state.paused?"继续刷新":"暂停刷新";if(state.paused)stopPlayback();else refresh();};
 el("coach-filter").onchange=()=>filterFeed("coach");el("executor-filter").onchange=()=>filterFeed("executor-events");
 el("coach-older").onclick=()=>readActivity("research",true).catch(e=>el("connection").textContent=e.message);
 el("executor-older").onclick=()=>readActivity("executor",true).catch(e=>el("connection").textContent=e.message);
 el("coach-live-button").onclick=()=>returnLive("research");el("executor-live").onclick=()=>returnLive("executor");
-el("job").onchange=()=>{state.job=el("job").value;state.autoJob=false;state.game="";state.gameCursor=0;state.autoGame=true;refresh();};
-el("game").onchange=()=>{state.game=el("game").value;state.gameCursor=0;state.autoGame=false;el("thinking").textContent="";clearFeed("student-events");refresh();};
-el("follow-game").onclick=()=>{state.autoJob=true;state.autoGame=true;refresh();};
+el("job").onchange=()=>{state.job=el("job").value;state.autoJob=false;state.autoGame=true;el("game-scope").value="job";resetGame();refresh();};
+el("game-scope").onchange=()=>{state.autoJob=false;state.autoGame=false;resetGame();refresh();};
+el("game").onchange=()=>{const game=state.games?.find(g=>g.folder===el("game").value);if(!game)return;state.autoGame=false;state.autoJob=false;readGame(openGame(game));};
+el("follow-game").onclick=()=>{state.autoJob=true;state.autoGame=true;resetGame();refresh();};
+el("replay-prev").onclick=()=>showFrame((state.viewer?.index||0)-1);
+el("replay-next").onclick=()=>showFrame((state.viewer?.index||0)+1);
+el("replay-play").onclick=()=>playGame();el("replay-restart").onclick=()=>playGame(true);
+el("replay-range").oninput=()=>showFrame(Number(el("replay-range").value));
 el("close-raw").onclick=()=>{state.raw=null;el("raw").close();};
 el("raw-prev").onclick=()=>{if(state.raw){state.raw.relative=Math.max(0,state.raw.relative-65536);rawPage();}};
 el("raw-next").onclick=()=>{if(state.raw){state.raw.relative=Math.min(Math.max(0,state.raw.length-1),state.raw.relative+65536);rawPage();}};

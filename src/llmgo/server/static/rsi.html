@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLMGo! RSI</title><link rel="stylesheet" href="/static/rsi.css">
+  <title>LLMGo! RSI</title><link rel="stylesheet" href="/static/rsi.css?v=game-replay-1">
 </head>
 <body>
   <header><a href="/rsi">研究面板</a><h1>国际象棋 RSI</h1>
@@ -22,17 +22,38 @@
     <div class="toolbar"><label>任务 <select id="job"></select></label><span id="file-status"></span></div><div id="job-files" class="files"></div>
   </section>
   <main>
+    <section class="game-view" aria-label="学生对局与复盘"><div class="game-heading"><h2>学生 · 对局与复盘</h2>
+      <label>范围 <select id="game-scope"><option value="campaign">本研究历史（最近1000局）</option><option value="job">选中任务</option></select></label>
+      <label>对局 <select id="game"><option value="">选择对局</option></select></label>
+      <button id="follow-game">跟随最新对局</button><span id="game-loading" role="status"></span></div>
+      <div class="game-layout">
+        <aside class="game-seat"><h3 id="student-seat">学生</h3><p class="muted">只显示学生自己的提示与输出</p>
+          <details open><summary>送给模型的提示</summary><pre id="student-prompt" class="stream prompt"></pre></details>
+          <details open><summary>当前手可见思考与回答</summary><h4>思考</h4><pre id="thinking" class="stream"></pre>
+            <h4>正式输出</h4><pre id="student-output" class="stream short"></pre></details>
+        </aside>
+        <div class="game-table">
+          <div class="board-shell"><div class="file-labels" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
+            <div class="board-row"><div class="rank-labels" aria-hidden="true"><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
+              <div id="board" aria-label="国际象棋棋盘"></div></div>
+            <div class="file-labels" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div></div>
+          <p id="game-state" role="status">选择一局查看棋盘</p>
+          <div class="playback"><button id="replay-prev" disabled>上一手</button><button id="replay-next" disabled>下一手</button>
+            <button id="replay-play" disabled>播放</button><button id="replay-restart" disabled>从头播放</button></div>
+          <label class="replay-progress">手数 <input id="replay-range" type="range" min="0" max="0" value="0" disabled aria-label="选择复盘手数"></label>
+          <p id="replay-label" class="muted">尚无可回放的走子</p><div id="moves" class="moves" aria-label="走子列表"></div>
+        </div>
+        <aside class="game-seat"><h3>本局诊断</h3><pre id="game-summary" class="stream short">尚未选择对局</pre>
+          <details open><summary>本手工具、请求与后备诊断</summary><div id="student-events" class="feed"></div></details>
+          <p class="muted">点击走子或拖动手数查看对应局面。复盘时保留当前手，点击“跟随最新对局”返回直播。长输出显示有界窗口，可按需读取原文。</p>
+        </aside>
+      </div>
+    </section>
     <section><h2>强 Agent · 复盘与工具</h2>
       <div class="toolbar"><label>事件 <select id="coach-filter"><option value="all">全部</option><option value="text">文字/思考</option><option value="tool">工具/命令</option><option value="usage">Token用量</option><option value="request">请求</option><option value="error">异常</option><option value="lifecycle">轮次状态</option></select></label>
         <button id="coach-older">较早事件</button><button id="coach-live-button">返回实时</button></div>
       <p id="coach-window" class="muted"></p><details open><summary>最近可见思考/回答（有界窗口）</summary><pre id="coach-live"></pre></details>
       <div id="coach" class="feed"></div></section>
-    <section><h2>学生 · 实时对局</h2><select id="game"><option value="">选择对局</option></select>
-      <button id="follow-game">跟随最新对局</button>
-      <p id="game-state"></p><div id="board" aria-label="国际象棋棋盘"></div>
-      <details open><summary>当前请求可见思考与回答</summary><pre id="thinking"></pre></details>
-      <details><summary>工具、请求与后备诊断</summary><div id="student-events" class="feed"></div></details>
-    </section>
     <section><h2>Memory · 假设与结论</h2><div id="memory" class="feed"></div></section>
     <section><h2>跨难度实测表现</h2><p>固定 L1–L8，初始基线只测L1–L4，每档10局、共40局；后续评测每档20局。完整玩家和模型对照分开显示。最低档沿用原设置，无通关或自动升档。部分测试不计完整总分；基线样本更少，成绩不是校准Elo。</p>
       <div id="matrix" class="matrix" aria-label="候选与难度成成绩矩阵"></div><p>最近200条单档评测；纵轴为得分率，颜色区分难度。原始历史完整保留。</p>
@@ -40,5 +61,5 @@
       <p id="cost"></p><div id="results" class="feed"></div></section>
   </main>
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
-  <script src="/static/rsi.js" defer></script>
+  <script src="/static/rsi.js?v=game-replay-1" defer></script>
 </body></html>

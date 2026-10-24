@@ -84,7 +84,70 @@ def campaign(name):
         raise HTTPException(404, str(exc)) from exc
 
 
-def page(path, cursor, limit):
+def game_display(event):
+    """Bound replay snapshots while preserving positions and lazy raw references."""
+    shown = {k: v for k, v in event.items() if k not in {
+        "raw_response", "request_payload", "generated_token_ids", "token_ids", "llm_input"}}
+    for key in ("prompt", "reasoning", "output", "text"):
+        value = shown.get(key)
+        if isinstance(value, str) and len(value) > 16000:
+            shown[key] = value[:8000]+"\n[…显示已截断；可读取原始事件…]\n"+value[-8000:]
+    if isinstance(shown.get("output_excerpt"), dict):
+        shown["output_excerpt"] = {k: v for k, v in shown["output_excerpt"].items()
+                                   if k not in {"generated_tokens", "tokenizer"}}
+        for key in ("head", "tail"):
+            value = shown["output_excerpt"].get(key)
+            if isinstance(value, str) and len(value) > 4000:
+                shown["output_excerpt"][key] = value[:4000]+"\n[…显示已截断；可读取原始事件…]"
+    if len(json.dumps(shown, ensure_ascii=False).encode()) > 24000:
+        keep = ("type", "status", "seat", "ply", "sequence", "timestamp", "request_id", "raw_ref",
+                "fen", "side", "last_move", "in_check", "tool", "reason", "finish_reason", "uci", "ok",
+                "source", "channel", "replace", "trace_format", "output_excerpt")
+        compact = {k: shown[k] for k in keep if k in shown}
+        for key in ("prompt", "reasoning", "output", "text"):
+            if key in shown:
+                compact[key] = str(shown[key])[:4000]
+        # Full structured tools/skills remain available through the original record.
+        compact["display_truncated"] = True
+        compact["preview"] = json.dumps(shown, ensure_ascii=False)[:4000]
+        shown = compact
+    return shown
+
+
+def request_fields(path, ref):
+    """Seek a referee request directly; never replay its large raw SSE response.
+
+    Older compact writers omit prompt/reasoning for the newer `request` type.
+    Decode complete fields from a bounded JSON prefix, stopping before raw SSE.
+    """
+    if type(ref.get("offset")) is not int or type(ref.get("length")) is not int or min(ref["offset"], ref["length"]) < 0:
+        return {}
+    with path.open("rb") as stream:
+        stream.seek(ref["offset"])
+        prefix = stream.read(min(ref["length"], 524288)).decode("utf-8", "replace")
+    decoder, index, result = json.JSONDecoder(), 1, {}
+    while index < len(prefix):
+        try:
+            index += len(prefix[index:])-len(prefix[index:].lstrip())
+            key, index = decoder.raw_decode(prefix, index)
+            index += len(prefix[index:])-len(prefix[index:].lstrip())
+            if prefix[index:index+1] != ":" or key in {"raw_response", "request_payload", "token_ids"}:
+                break
+            index += 1
+            index += len(prefix[index:])-len(prefix[index:].lstrip())
+            value, index = decoder.raw_decode(prefix, index)
+            if key in {"prompt", "reasoning", "output", "text"}:
+                result[key] = value
+            index += len(prefix[index:])-len(prefix[index:].lstrip())
+            if prefix[index:index+1] != ",":
+                break
+            index += 1
+        except (ValueError, IndexError):
+            break  # A long final field is still available through the raw link.
+    return result
+
+
+def page(path, cursor, limit, *, replay=False, original=None):
     rows, next_cursor, displayed = [], cursor, 0
     if not path.is_file():
         return {"events": [], "cursor": cursor}
@@ -98,9 +161,11 @@ def page(path, cursor, limit):
                 raise HTTPException(400, "Cursor must point to a JSONL record boundary")
         for _ in range(limit):
             start = stream.tell()
-            line = stream.readline(65536)
-            if not line or not line.endswith(b"\n"):
-                if len(line) < 65536:
+            maximum = 1048576 if replay else 65536
+            line = stream.readline(maximum)
+            complete = line.endswith(b"\n")
+            if not line or not complete:
+                if len(line) < maximum:
                     break
                 # Skip long records in bounded chunks; don't parse megabytes of raw stdout.
                 tail = line
@@ -112,15 +177,23 @@ def page(path, cursor, limit):
             cost = min(length, 24000)+256
             if rows and displayed+cost > 196608:
                 break
-            displayed += cost
             # Preserve structured small events; large records retain an exact raw reference.
-            if length <= 24000:
+            if length <= (maximum if replay else 24000) and complete:
                 try:
                     shown = json.loads(line)
+                    if replay:
+                        if original and shown.get("type") == "request" and isinstance(shown.get("raw_ref"), dict):
+                            shown.update(request_fields(original, shown["raw_ref"]))
+                        shown = game_display(shown)
                 except ValueError as exc:
                     raise HTTPException(409, f"Malformed log at byte {start}") from exc
             else:
                 shown = {"display_truncated": True, "preview": line[:16000].decode("utf-8", "replace")}
+            if replay:
+                cost = len(json.dumps(shown, ensure_ascii=False).encode())+256
+                if rows and displayed+cost > 196608:
+                    break
+            displayed += cost
             next_cursor = stream.tell()
             rows.append({"event": shown, "offset": start, "length": length})
     return {"events": rows, "cursor": next_cursor}
@@ -295,15 +368,25 @@ def games(name: str, limit: int = Query(200, ge=1, le=1000), job_id: str | None 
 
 
 @router.get("/campaigns/{name}/game-events")
-def game_events(name: str, folder: str, cursor: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=256)):
+def game_events(name: str, folder: str, cursor: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=256),
+                view: Literal["full", "compact"] = "full"):
     root = campaign(name)
     try:
         path = inside(root, root/folder)
         if not (path/"config.json").is_file() or "harness_runs" not in path.relative_to(root).parts:
             raise ValueError("Unknown game")
+        source = "short_events.jsonl" if view == "compact" and (path/"short_events.jsonl").is_file() else "events.jsonl"
+        log = inside(root, path/source)
+        original = inside(root, path/"events.jsonl") if source == "short_events.jsonl" and (path/"events.jsonl").is_file() else None
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
-    return page(path/"events.jsonl", cursor, limit)
+    result = page(log, cursor, limit, replay=True, original=original)
+    result.update(source=source, more=log.is_file() and result["cursor"] < log.stat().st_size)
+    # Jump from completed compact history to the raw tail for live token chunks.
+    refs = [row["event"].get("raw_ref", {}) for row in result["events"]]
+    result["raw_cursor"] = max((r["offset"]+r["length"] for r in refs
+                                if type(r.get("offset")) is int and type(r.get("length")) is int), default=None)
+    return result
 
 
 @router.get("/campaigns/{name}/artifact")

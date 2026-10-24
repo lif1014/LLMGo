@@ -13,9 +13,11 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import pytest
+import chess
 
 from llmgo.rsi.contracts import atomic_json
 from llmgo.rsi.memory import MemoryStore
+from llmgo.store.jsonl import TrajectoryStore
 
 
 @pytest.mark.skipif(os.environ.get("LLMGO_BROWSER_TEST") != "1", reason="opt-in Chromium integration")
@@ -41,10 +43,26 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path):
                                            "interval_seconds": 60, "next_check_at": time.time()+60, "platform_status": "Running"})
     atomic_json(job/"output/progress.json", {"stage": "training", "message": "训练阶段测试", "curriculum_records": 64})
     game = job/"output/harness_runs/g"
-    atomic_json(game/"config.json", {"id": "g", "model_seat": "white"})
-    (game/"events.jsonl").write_text("\n".join(json.dumps(e) for e in [
-        {"type": "position", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "side": "white"},
-        {"type": "token", "channel": "reasoning", "text": "学生可见思考"}])+"\n")
+    store = TrajectoryStore(game)
+    store.write_config({"id": "g", "model_seat": "white"})
+    board = chess.Board()
+    store.append({"type": "position", "fen": board.fen(), "side": "white"})
+    store.append({"type": "turn_started", "seat": "white"})
+    store.append({"type": "model_request", "status": "started", "seat": "white", "prompt": "第一手提示", "request_id": "first"})
+    store.append({"type": "model_request", "status": "finished", "seat": "white", "reasoning": "第一手思考", "text": "e2e4", "request_id": "first"})
+    for side, uci in (("white", "e2e4"), ("black", "e7e5")):
+        board.push_uci(uci)
+        store.append({"type": "position", "fen": board.fen(), "side": "black" if side == "white" else "white",
+                      "last_move": {"seat": side, "uci": uci}})
+    store.append({"type": "turn_started", "seat": "white"})
+    store.append({"type": "request", "status": "started", "seat": "white", "prompt": "第二手提示", "request_id": "second"})
+    store.append({"type": "token", "channel": "reasoning", "text": "学生可见思考", "seat": "white"})
+    store.append({"type": "candidate_event", "seat": "white", "origin": "candidate",
+                  "payload": {"type": "token", "channel": "reasoning", "text": "学生可见思考"}})
+    history = TrajectoryStore(root/"jobs/j0/output/harness_runs/old")
+    history.write_config({"id": "old", "model_seat": "black"})
+    history.append({"type": "position", "fen": chess.STARTING_FEN, "side": "white"})
+    history.write_summary({"result": "draw", "result_reason": "truncated", "model_decisions": 1})
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -74,6 +92,39 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path):
                 assert "training" in page.locator("#worker-state").inner_text()
                 assert "4170" in page.locator("#executor-state").inner_text()
                 assert "学生可见思考" in page.locator("#thinking").inner_text()
+                page.wait_for_function("document.querySelector('#moves').children.length===3")
+                assert page.locator("#student-prompt").inner_text() == "第二手提示"
+                layout = page.locator(".game-layout").evaluate("e=>getComputedStyle(e).gridTemplateColumns.split(' ').length")
+                assert layout == 3
+                page.locator("#replay-prev").click()
+                assert "1 / 2" in page.locator("#replay-label").inner_text()
+                assert "第一手思考" in page.locator("#thinking").inner_text()
+                assert page.locator("#student-prompt").inner_text() == "第一手提示"
+                assert page.locator("#student-output").inner_text() == "e2e4"
+                assert page.locator('#board [title="e4"]').inner_text() == "♙"
+                # An actual new raw chunk must not replace the selected historical hand.
+                store.append({"type": "token", "channel": "reasoning", "text": "新增实时思考", "seat": "white"})
+                page.wait_for_timeout(3300)
+                assert "第一手思考" in page.locator("#thinking").inner_text()
+                assert "1 / 2" in page.locator("#replay-label").inner_text()
+                page.locator("#follow-game").click()
+                page.wait_for_function("document.querySelector('#thinking').textContent.includes('新增实时思考')")
+                assert page.locator("#thinking").inner_text() == "学生可见思考新增实时思考"
+                page.locator("#replay-restart").click()
+                page.wait_for_function("document.querySelector('#replay-label').textContent.includes('复盘 · 2 / 2')")
+                page.wait_for_function("document.querySelector('#replay-play').textContent==='播放'")
+                page.locator("#moves button").first.click()
+                assert page.locator("#student-prompt").inner_text() == ""
+                page.locator("#replay-range").fill("1")
+                assert "第一手思考" in page.locator("#thinking").inner_text()
+                page.locator("#game").select_option("jobs/j0/output/harness_runs/old")
+                page.wait_for_function("document.querySelector('#game-summary').textContent.includes('对局：old')")
+                assert page.locator("#thinking").inner_text() == ""
+                assert "黑方" in page.locator("#student-seat").inner_text()
+                assert page.locator("#replay-next").is_disabled()
+                page.locator("#game").select_option("jobs/j1/output/harness_runs/g")
+                page.wait_for_function("document.querySelector('#thinking').textContent.includes('新增实时思考')")
+                page.locator(".game-view").screenshot(path=str(tmp_path/"rsi-replay-desktop.png"))
                 assert page.locator("#coach details pre").first.inner_text() == ""
                 # Trigger a genuine incremental protocol event after page load.
                 memory.append("meta_event", {"message": {"method": "item/agentMessage/delta", "params": {

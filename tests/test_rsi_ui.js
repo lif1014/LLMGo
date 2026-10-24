@@ -10,20 +10,21 @@ class Element {
   add(n){this.append(n);}
   get lastChild(){return this.children.at(-1);}
   remove(){this.parent.children.splice(this.parent.children.indexOf(this),1);}
-  setAttribute(){}
+  setAttribute(k,v){(this.attributes??={})[k]=v;}
   showModal(){this.open=true;}
   close(){this.open=false;}
 }
 const nodes=new Map(),el=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
 const row=(i,channel='coach',category='text')=>({ordinal:i,event:{id:'e'+i,ts:'2026-10-21',kind:'meta_event',channel,category,title:'event '+i,text:'visible '+i},offset:i*100,length:100,path:'events.jsonl'});
 let teacher=Array.from({length:180},(_,i)=>row(i+1)),studentEvents=[],evaluations=[{candidate_id:'initial',level:1,statistics:{score:.75}}];
+let gameList=[{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}],gamePages=null,overviewJob='j1';
 let delay=null;
 const requests=[];
 const document={hidden:false,getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
 function body(url){
   const u=new URL(url,'http://local');
   if(url==='/api/rsi/campaigns')return [];
-  if(u.pathname.endsWith('/overview'))return {jobs:{},recent_jobs:[{id:'j1',role:'candidate',status:'Running'}],active_job:{id:'j1'},incumbent:{id:'initial'},phase:'PLANNING',current_level:1,round:1};
+  if(u.pathname.endsWith('/overview'))return {jobs:{},recent_jobs:[{id:overviewJob,role:'candidate',status:'Running'}],active_job:{id:overviewJob},incumbent:{id:'initial'},phase:'PLANNING',current_level:1,round:1};
   if(u.pathname.endsWith('/executor'))return {mode:'external',report:{status:'waiting',task_id:4170,checks:3,interval_seconds:60}};
   if(u.pathname.endsWith('/activity')){
     const source=u.searchParams.get('source');
@@ -34,13 +35,18 @@ function body(url){
   }
   if(u.pathname.endsWith('/evaluations'))return evaluations;
   if(u.pathname.endsWith('/job-files'))return {files:[],game_results:1,formal_games:10,progress:{stage:'training',curriculum_records:64}};
-  if(u.pathname.endsWith('/games'))return [{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}];
-  if(u.pathname.endsWith('/game-events')){const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;}
+  if(u.pathname.endsWith('/games'))return gameList;
+  if(u.pathname.endsWith('/game-events')){
+    if(gamePages?.length)return gamePages.shift();
+    const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;
+  }
   if(u.pathname.endsWith('/artifact'))return {text:'raw '+u.searchParams.get('path')+' '+u.searchParams.get('offset')};
   throw Error('unexpected endpoint '+url);
 }
 const response=data=>({ok:true,json:async()=>data});
-const context=vm.createContext({document,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,setInterval:()=>1,console,
+let intervalId=0;const intervals=new Map();
+const context=vm.createContext({document,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,
+  setInterval:(fn,ms)=>{const id=++intervalId;intervals.set(id,{fn,ms});return id;},clearInterval:id=>intervals.delete(id),console,
   Option:class extends Element{constructor(text,value){super('option');this.textContent=text;this.value=value;}},
   fetch:async url=>{requests.push(url);if(delay&&delay.match(url)){const item=delay;delay=null;return item.promise;}return response(body(url));}
 });
@@ -54,7 +60,8 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
     {type:'token',channel:'reasoning',text:'Visible ',replace:false},{type:'token',channel:'reasoning',text:'thought',replace:false},
     {type:'token',channel:'content',text:'e2e4',replace:false}];
   await run('refresh()');
-  assert.equal(el('board').children.length,64);assert.equal(el('thinking').textContent,'Visible thought\ne2e4');
+  assert.equal(el('board').children.length,64);assert.equal(el('thinking').textContent,'Visible thought');
+  assert.equal(el('student-output').textContent,'e2e4');
   assert.equal(el('coach').children.length,80);assert.match(el('coach').textContent,/event 180/);assert.doesNotMatch(el('coach').textContent,/event 99\b/);
   assert.equal(el('coach').children[0].children[1].textContent,'','closed detail bodies are lazy');
   const student=el('student-events').children.at(-1);student.open=true;student.ontoggle();assert.match(student.textContent,/tool_library/);
@@ -100,5 +107,61 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   const resolveOld=defer(url=>url.includes('path=old.log'));const old=run('openRaw({path:"old.log",offset:0,length:100})');
   await run('openRaw({path:"new.log",offset:0,length:100})');resolveOld({text:'obsolete'});await old;
   assert.match(el('raw-content').textContent,/new.log/);assert.doesNotMatch(el('raw-content').textContent,/obsolete/);
-  console.log('RSI dashboard DOM checks passed: bounded streaming, filters, history, pause and asynchronous races');
+  // Compact history establishes every position; raw streaming resumes at its byte offset.
+  const start='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const afterE4='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+  const afterE5='rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+  const afterNf3='rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2';
+  const history=[{type:'position',fen:start,side:'white'},
+    {type:'turn_started',seat:'white'},{type:'model_request',status:'started',seat:'white',prompt:'first prompt'},
+    {type:'model_request',status:'finished',seat:'white',text:'e2e4',output_excerpt:{head:'first thought',tail:'',omitted:0}},
+    {type:'position',fen:afterE4,side:'black',last_move:{seat:'white',uci:'e2e4'}},
+    {type:'position',fen:afterE5,side:'white',last_move:{seat:'black',uci:'e7e5'}},
+    {type:'turn_started',seat:'white'},{type:'request',status:'started',seat:'white',prompt:'second prompt'}];
+  const rows=history.map((event,i)=>({event:{...event,raw_ref:{offset:i*100,length:100}},offset:i*50,length:50}));
+  gamePages=[{source:'short_events.jsonl',events:rows.slice(0,4),cursor:200,raw_cursor:400,more:true},
+    {source:'short_events.jsonl',events:rows.slice(4),cursor:400,raw_cursor:800,more:false},
+    {source:'events.jsonl',events:[{event:{type:'token',channel:'reasoning',text:'second live thought'},offset:800,length:100}],cursor:900,more:false}];
+  run('openGame(state.games[0])');await run('readGame(state.viewer)');
+  assert.equal(run('state.viewer.frames.length'),3);assert.equal(run('state.viewer.index'),2);
+  assert.match(requests.at(-1),/view=full&cursor=700/);assert.equal(el('thinking').textContent,'second live thought');
+  assert.equal(el('student-prompt').textContent,'second prompt');
+  el('replay-prev').onclick();assert.equal(run('state.viewer.index'),1);
+  assert.equal(el('thinking').textContent,'first thought');assert.equal(el('student-output').textContent,'e2e4');
+  assert.equal(el('student-prompt').textContent,'first prompt');
+  assert.equal(el('moves').children[1].attributes['aria-current'],'step');
+  // Live completion and a different active cluster task cannot pull a replay forward.
+  overviewJob='j2';gameList.push({folder:'jobs/j2/output/harness_runs/new',id:'new',model_seat:'black'});
+  gamePages=[{source:'events.jsonl',events:[
+    {event:{type:'request',status:'finished',seat:'white',reasoning:'second completed thought',text:'g1f3'},offset:900,length:100},
+    {event:{type:'position',fen:afterNf3,side:'black',last_move:{seat:'white',uci:'g1f3'}},offset:1000,length:100}],cursor:1100,more:false}];
+  await run('refresh()');assert.equal(run('state.job'),'j1');assert.equal(run('state.viewer.index'),1);
+  assert.equal(run('state.viewer.frames.length'),4);assert.equal(el('thinking').textContent,'first thought');
+  el('replay-range').value='3';el('replay-range').oninput();assert.equal(el('thinking').textContent,'second completed thought');
+  el('moves').children[0].onclick();assert.equal(el('student-prompt').textContent,'');assert.equal(el('student-output').textContent,'');
+  el('replay-restart').onclick();assert.equal(run('state.viewer.index'),0);
+  let timer=run('state.viewer.timer');assert.equal(intervals.get(timer).ms,700);
+  intervals.get(timer).fn();assert.equal(run('state.viewer.index'),1);
+  el('replay-play').onclick();assert.equal(run('state.viewer.timer'),null);assert(!intervals.has(timer));
+  el('replay-play').onclick();timer=run('state.viewer.timer');intervals.get(timer).fn();intervals.get(timer).fn();
+  assert.equal(run('state.viewer.index'),3);assert.equal(run('state.viewer.timer'),null);assert(el('replay-next').disabled);
+  // Switching games cancels playback and rejects an old game's in-flight response.
+  const resolveGame=defer(url=>url.includes('/game-events?'));const oldGame=run('readGame(state.viewer)');
+  run('openGame(state.games[1])');resolveGame({source:'events.jsonl',events:rows,cursor:10000,more:false});await oldGame;
+  assert.equal(run('state.viewer.info.id'),'new');assert.equal(run('state.viewer.frames.length'),0);
+  assert.equal(el('thinking').textContent,'');assert.equal(el('board').children.length,0);
+  // A full 200-ply game crosses the per-batch page limit without dropping moves.
+  gamePages=Array.from({length:9},(_,page)=>{
+    const events=Array.from({length:Math.min(25,201-page*25)},(_,j)=>{
+      const index=page*25+j;return {event:{type:'position',fen:start,side:'white',
+        ...(index?{last_move:{seat:'white',uci:'e2e4'}}:{}),raw_ref:{offset:index*100,length:100}},offset:index*50,length:50};
+    });
+    return {source:'short_events.jsonl',events,cursor:Math.min(201,(page+1)*25)*50,
+      raw_cursor:Math.min(201,(page+1)*25)*100,more:page<8};
+  }).concat([{source:'events.jsonl',events:[],cursor:20100,more:false}]);
+  await run('readGame(state.viewer)');await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(run('state.viewer.frames.length'),201);assert.equal(el('moves').children.length,201);
+  assert.equal(run('state.viewer.loading'),false);assert.equal(Number(el('replay-range').max),200);
+  el('moves').children[100].onclick();assert.equal(run('state.viewer.index'),100);
+  console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, pause and asynchronous races');
 })().catch(error=>{console.error(error);process.exitCode=1;});

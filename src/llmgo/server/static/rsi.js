@@ -2,7 +2,7 @@
 const el=id=>document.getElementById(id), freshStream=()=>({cursor:null,before:null,follow:true,request:0,recent:[]});
 const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set(),cards:new Map(),streams:{research:freshStream(),executor:freshStream()},
   evaluations:[],totalHours:0,evaluationRefresh:0,job:"",autoJob:true,game:"",autoGame:true,viewer:null,raw:null,
-  jobs:[],manifests:new Map(),fileData:null,games:[],gamesScope:null};
+  jobs:[],manifests:new Map(),fileData:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
 const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
   EVALUATING:"固定评测",NEEDS_INPUT:"等待缺失项处理"};
@@ -135,6 +135,18 @@ const percent=value=>typeof value==="number"&&Number.isFinite(value)?(value*100)
 const gameJob=game=>game.folder?.split("/")[1];
 const roleName=role=>role==="baseline"?"初始基线":role==="candidate"?"研究候选":show(role);
 function jobInfo(id){return state.jobs.find(j=>j.id===id)||{};}
+function visibleJobs(){return state.jobs.filter(j=>!state.archivedJobs.has(j.id)||el("show-archived-jobs").checked||j.id===state.activeJobId);}
+async function loadArchivedJobs(generation){
+  if(state.archivesLoaded)return;
+  try{
+    const query=new URLSearchParams({path:"archived-jobs.json",offset:"0",length:"65536"});
+    const data=await json(api("/artifact?"+query));
+    if(generation!==state.generation)return;
+    const index=JSON.parse(data.text);
+    if(data.eof&&Array.isArray(index.jobs))state.archivedJobs=new Set(index.jobs.filter(id=>typeof id==="string"&&/^j\d+$/.test(id)));
+    state.archivesLoaded=true;
+  }catch(e){if(generation===state.generation&&e.name!=="AbortError")state.archivesLoaded=true;}
+}
 function jobLevel(id){return state.manifests.get(id)?.payload?.protocol?.opponent?.level??jobInfo(id).level;}
 function difficulty(id){const level=jobLevel(id);return level==null?"难度未登记":"L"+level;}
 function opponentText(id){
@@ -191,7 +203,8 @@ function jobStats(id){
     score:completed?(formal?formal.score:(counts.wins+.5*counts.draws)/completed):null};
 }
 function renderEvaluationJobs(){
-  const target=el("evaluation-jobs"),rows=state.jobs.slice().reverse().filter(j=>j.level!=null),table=document.createElement("table"),header=document.createElement("tr");
+  const target=el("evaluation-jobs"),rows=visibleJobs().slice().reverse().filter(j=>j.level!=null),table=document.createElement("table"),header=document.createElement("tr");
+  const hidden=state.jobs.length-visibleJobs().length;el("archived-job-count").textContent=hidden?" 已隐藏"+hidden+"项旧任务；编号与提交凭据保留。":"";
   for(const title of ["任务 / 平台ID","难度","用途 / 候选","状态","有效完成 / 计划","胜 / 和 / 负","胜率","得分率","结果来源"]){const th=document.createElement("th");th.textContent=title;header.append(th);}table.append(header);
   for(const job of rows){
     const s=jobStats(job.id),manifest=state.manifests.get(job.id)?.payload,expected=manifest?.protocol?.games;
@@ -392,9 +405,9 @@ async function student(generation){
 async function refresh(){
   if(state.busy||state.paused||document.hidden||!state.campaign)return;state.busy=true;const generation=state.generation;
   try{const s=await json(api("/overview"));if(generation!==state.generation)return;
-    const x=await json(api("/executor"));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];renderStatus(s,x);state.totalHours=s.worker_gpu_hours||0;
+    const x=await json(api("/executor"));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await loadArchivedJobs(generation);if(generation!==state.generation)return;renderStatus(s,x);state.totalHours=s.worker_gpu_hours||0;
     const latest=s.active_job?.id;if(state.autoJob&&latest&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
-    options("job",state.jobs.slice().reverse(),state.job,j=>j.id+" · "+difficulty(j.id)+" · "+roleName(j.role)+" · "+j.status+" · "+j.candidate_id,j=>j.id);
+    options("job",visibleJobs().slice().reverse(),state.job,j=>j.id+" · "+difficulty(j.id)+" · "+roleName(j.role)+" · "+j.status+" · "+j.candidate_id,j=>j.id);
     for(const source of ["research","executor"])if(state.streams[source].follow)await readActivity(source);
     if(generation!==state.generation)return;
     if(Date.now()-state.evaluationRefresh>20000){const rows=await json(api("/evaluations"));if(generation!==state.generation)return;state.evaluations=rows;state.evaluationRefresh=Date.now();curve();results(rows);}
@@ -418,6 +431,7 @@ async function rawPage(){
 function selectCampaign(){
   for(const request of state.requests)request.abort();state.generation++;state.campaign=el("campaign").value;
   resetGame();state.games=[];state.jobs=[];state.manifests=new Map();state.fileData=null;state.gamesScope=null;state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.autoGame=true;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
+  state.archivedJobs=new Set();state.archivesLoaded=false;state.activeJobId=null;el("show-archived-jobs").checked=false;
   el("evaluation-jobs").replaceChildren();el("evaluation-jobs").dataset.signature="";el("job-context").textContent="正在读取任务参数…";el("evaluation-scope").textContent="";
   for(const id of ["coach","memory","results","student-events","executor-events"])clearFeed(id);
   el("results").dataset.signature="";el("job-files").dataset.signature="";el("job-files").replaceChildren();
@@ -430,6 +444,10 @@ el("coach-older").onclick=()=>readActivity("research",true).catch(e=>el("connect
 el("executor-older").onclick=()=>readActivity("executor",true).catch(e=>el("connection").textContent=e.message);
 el("coach-live-button").onclick=()=>returnLive("research");el("executor-live").onclick=()=>returnLive("executor");
 el("job").onchange=()=>selectJob(el("job").value);
+el("show-archived-jobs").onchange=()=>{
+  if(!el("show-archived-jobs").checked&&state.archivedJobs.has(state.job)&&state.job!==state.activeJobId){state.autoJob=true;state.job=state.activeJobId||visibleJobs().at(-1)?.id||"";resetGame();state.autoGame=true;}
+  renderEvaluationJobs();refresh();
+};
 el("game-scope").onchange=()=>{state.autoJob=false;state.autoGame=false;resetGame();refresh();};
 el("game").onchange=async()=>{const game=state.games?.find(g=>g.folder===el("game").value);if(!game)return;state.autoGame=false;state.autoJob=false;const r=openGame(game);await loadJobManifest(gameJob(game));if(state.viewer===r)readGame(r);};
 el("follow-game").onclick=()=>{state.autoJob=true;state.autoGame=true;resetGame();refresh();};

@@ -42,6 +42,7 @@ function body(url){
     const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;
   }
   if(u.pathname.endsWith('/artifact')){
+    if(u.searchParams.get('path')==='archived-jobs.json')return {text:'{"jobs":[]}',eof:true};
     const job=u.searchParams.get('path')?.match(/^jobs\/([^/]+)\/manifest.json$/)?.[1];
     if(job){const text=JSON.stringify({payload:manifests[job]||{job_id:job}}),offset=Number(u.searchParams.get('offset'))||0;
       return {text:text.slice(offset,offset+65536),next_offset:Math.min(text.length,offset+65536),eof:offset+65536>=text.length};}
@@ -191,5 +192,11 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   assert.match(el('job-context').textContent,/胜率 0.0% · 得分率 50.0%/);assert.match(el('evaluation-jobs').textContent,/正式已收集/);
   run('state.manifests.get("j000005").payload.protocol.opponent.skill=0;renderJobContext()');
   assert.match(el('job-context').textContent,/Skill 0/,'numeric zero is a valid parameter, not a missing value');
+  run('state.jobs.unshift({id:"j000001",level:1,status:"Killed"});state.archivedJobs=new Set(["j000001","j000005"]);state.activeJobId="j000005";renderEvaluationJobs()');
+  assert.doesNotMatch(el('evaluation-jobs').textContent,/j000001/);
+  assert.match(el('evaluation-jobs').textContent,/j000005/,'active jobs stay visible even if archive metadata is stale');
+  assert.match(el('archived-job-count').textContent,/已隐藏1项/);
+  el('show-archived-jobs').checked=true;run('renderEvaluationJobs()');
+  assert.match(el('evaluation-jobs').textContent,/j000001/);assert.equal(run('state.jobs.length'),2,'archiving must not remove reserved job IDs');
   console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, difficulty, win rates and asynchronous races');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -19,6 +19,7 @@ const row=(i,channel='coach',category='text')=>({ordinal:i,event:{id:'e'+i,ts:'2
 let teacher=Array.from({length:180},(_,i)=>row(i+1)),studentEvents=[],evaluations=[{candidate_id:'initial',level:1,statistics:{score:.75}}];
 let gameList=[{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}],gamePages=null,overviewJob='j1';
 let delay=null;
+const manifests={};
 const requests=[];
 const document={hidden:false,getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
 function body(url){
@@ -40,7 +41,12 @@ function body(url){
     if(gamePages?.length)return gamePages.shift();
     const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;
   }
-  if(u.pathname.endsWith('/artifact'))return {text:'raw '+u.searchParams.get('path')+' '+u.searchParams.get('offset')};
+  if(u.pathname.endsWith('/artifact')){
+    const job=u.searchParams.get('path')?.match(/^jobs\/([^/]+)\/manifest.json$/)?.[1];
+    if(job){const text=JSON.stringify({payload:manifests[job]||{job_id:job}}),offset=Number(u.searchParams.get('offset'))||0;
+      return {text:text.slice(offset,offset+65536),next_offset:Math.min(text.length,offset+65536),eof:offset+65536>=text.length};}
+    return {text:'raw '+u.searchParams.get('path')+' '+u.searchParams.get('offset')};
+  }
   throw Error('unexpected endpoint '+url);
 }
 const response=data=>({ok:true,json:async()=>data});
@@ -163,5 +169,27 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   assert.equal(run('state.viewer.frames.length'),201);assert.equal(el('moves').children.length,201);
   assert.equal(run('state.viewer.loading'),false);assert.equal(Number(el('replay-range').max),200);
   el('moves').children[100].onclick();assert.equal(run('state.viewer.index'),100);
-  console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, pause and asynchronous races');
+  // Difficulty and job identity come from the immutable manifest, not a job suffix.
+  manifests.j000005={job_id:'j000005',candidate_id:'initial',track:'player',protocol:{games:10,
+    opponent:{level:2,skill:-5,depth:5,movetime_sec:.1}},padding:'x'.repeat(70000)};
+  run('state.jobs=[{id:"j000005",level:2,role:"baseline",candidate_id:"initial",task_id:1356363,status:"Running"}];state.job="j000005";state.manifests=new Map();state.gamesScope="campaign";state.evaluations=[]');
+  let before=requests.length;await run('loadJobManifest("j000005")');
+  assert.equal(requests.length-before,2,'large manifests use bounded pages');
+  before=requests.length;await run('loadJobManifest("j000005")');assert.equal(requests.length,before,'immutable manifest cached');
+  run('state.games=[{folder:"jobs/j000005/output/harness_runs/00",model_seat:"white",summary:{result:"white_win",result_reason:"checkmate"}},'+
+    '{folder:"jobs/j000005/output/harness_runs/01",model_seat:"black",summary:{result:"draw",result_reason:"stalemate"}},'+
+    '{folder:"jobs/j000005/output/harness_runs/02",model_seat:"white",summary:{result:"black_win",result_reason:"checkmate",random_moves:1}},'+
+    '{folder:"jobs/j000005/output/harness_runs/03",model_seat:"white",summary:{result:"black_win",result_reason:"harness_error"}},'+
+    '{folder:"jobs/j000005/output/harness_runs/04",model_seat:"black"}];renderEvaluationJobs()');
+  assert.match(el('job-context').textContent,/L2 · Fairy-Stockfish Skill -5 · depth 5 · 时间上限 0.1秒/);
+  assert.match(el('job-context').textContent,/有效完成：3 · 胜\/和\/负：1\/1\/1 · 胜率 33.3% · 得分率 50.0%/);
+  assert.match(el('job-context').textContent,/程序异常：1 · 进行中：1 · 随机后备：1/);
+  assert.match(el('evaluation-jobs').textContent,/暂时统计/);
+  run('state.games=[];renderEvaluationJobs()');assert.match(el('job-context').textContent,/胜率 —/);
+  assert.doesNotMatch(el('evaluation-jobs').textContent,/0.0%/,'missing or cleaned logs do not imply zero win rate');
+  run('state.evaluations=[{ref:{job_id:"j000005"},statistics:{games:10,wins:0,draws:10,losses:0,score:.5}}];renderEvaluationJobs()');
+  assert.match(el('job-context').textContent,/胜率 0.0% · 得分率 50.0%/);assert.match(el('evaluation-jobs').textContent,/正式已收集/);
+  run('state.manifests.get("j000005").payload.protocol.opponent.skill=0;renderJobContext()');
+  assert.match(el('job-context').textContent,/Skill 0/,'numeric zero is a valid parameter, not a missing value');
+  console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, difficulty, win rates and asynchronous races');
 })().catch(error=>{console.error(error);process.exitCode=1;});

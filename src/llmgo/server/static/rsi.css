@@ -7,6 +7,9 @@ main { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 .status-grid section { border-top:4px solid #245a4c; padding:14px; }
 .status-grid h2 { font-size:16px; } .status-grid pre { font-size:12px; max-height:230px; }
 .monitor { margin-bottom:20px; } .monitor .feed { max-height:340px; }
+.evaluation-panel { margin:16px 0 20px; border-top:4px solid #245a4c; }
+.evaluation-panel pre { background:#f1f6f3; border-radius:8px; padding:12px; font:13px/1.65 system-ui,sans-serif; }
+.evaluation-panel tr.selected { background:#e5f0e9; }.evaluation-panel button { white-space:nowrap; border:1px solid #b9cfc4; border-radius:5px; background:#f5faf7; }
 .toolbar,.files { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
 .files button { font-size:12px; background:#f1f6f3; border:1px solid #b9cfc4; border-radius:5px; }
 button { cursor:pointer; } button:disabled { cursor:default; opacity:.5; }

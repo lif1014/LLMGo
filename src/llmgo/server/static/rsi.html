@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=proxy-path-2";
+      stylesheet.href = "static/rsi.css?v=difficulty-details-1";
       document.head.append(stylesheet);
     })();
   </script>
@@ -26,6 +26,13 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
+  <section class="evaluation-panel" aria-label="评测难度与胜负统计">
+    <h2>评测难度与胜负统计</h2>
+    <p class="muted">L1–L8是难度档位；j000005是任务编号；对局末尾-00是第1局。研究轮次0表示初始基线，均不是引擎难度0。胜率=胜局/有效完成局，得分率=(胜局+半数和局)/有效完成局；没有结果时显示“—”。</p>
+    <pre id="job-context">选择任务后显示其正式对手参数与统计。</pre>
+    <div id="evaluation-jobs" class="matrix" aria-label="任务难度与胜负列表"></div>
+    <p id="evaluation-scope" class="muted"></p>
+  </section>
   <section class="monitor"><h2>Executor · 提交、轮询与收集</h2>
     <div class="toolbar"><label>事件 <select id="executor-filter"><option value="all">全部</option><option value="poll">轮询</option><option value="command">cctl命令</option><option value="error">异常</option></select></label>
       <button id="executor-older">较早事件</button><button id="executor-live">返回实时</button><span id="executor-window" class="muted"></span></div>
@@ -75,7 +82,7 @@
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
   <script>
     const dashboard = document.createElement("script");
-    dashboard.src = "static/rsi.js?v=proxy-path-2";
+    dashboard.src = "static/rsi.js?v=difficulty-details-1";
     document.body.append(dashboard);
   </script>
 </body></html>

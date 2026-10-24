@@ -29,7 +29,7 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path, mount_p
     job = root/"jobs/j1"
     atomic_json(root/"campaign.json", {"campaign_id": "demo", "phase": "PLANNING", "round": 1, "current_level": 1,
         "highest_cleared_level": 0, "incumbent": {"id": "initial"}, "attempts": [], "active_job": "j1",
-        "jobs": {"j1": {"id": "j1", "role": "candidate", "status": "Running", "candidate_id": "candidate"}}})
+        "jobs": {"j1": {"id": "j1", "role": "candidate", "status": "Running", "candidate_id": "candidate", "level": 2, "task_id": 4170}}})
     atomic_json(root/"meta-session.json", {"status": "running", "thread_id": "thread", "turn_id": "turn", "cwd": "/user/lyh4170/research"})
     for i in range(110):
         memory.append("meta_event", {"message": {"method": "item/agentMessage/delta", "params": {
@@ -39,7 +39,10 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path, mount_p
     executor.append("command_started", {"argv": ["cctl", "job", "get", "4170"], "operation_id": "op", "timeout_sec": 90})
     executor.append("command", {"argv": ["cctl", "job", "get", "4170"], "operation_id": "op", "returncode": 0, "seconds": 1.2, "stdout": "platform full output\n"*50000})
     executor.append("poll_finished", {"job_id": "j1", "checks": 3, "task_id": 4170, "platform_status": "Running", "status": "waiting", "interval_seconds": 60})
-    atomic_json(job/"manifest.json", {"payload": "synthetic"})
+    atomic_json(job/"manifest.json", {"payload": {"job_id": "j1", "candidate_id": "candidate", "track": "player",
+        "protocol": {"games": 10, "opponent": {"level": 2, "skill": -5, "depth": 5, "movetime_sec": .1}}}})
+    atomic_json(root/"jobs/j0/manifest.json", {"payload": {"job_id": "j0", "candidate_id": "initial", "track": "player",
+        "protocol": {"games": 10, "opponent": {"level": 1, "skill": -9, "depth": 5, "movetime_sec": .05}}}})
     atomic_json(job/"executor/report.json", {"job_id": "j1", "task_id": 4170, "status": "waiting", "checks": 3,
                                            "interval_seconds": 60, "next_check_at": time.time()+60, "platform_status": "Running"})
     atomic_json(job/"output/progress.json", {"stage": "training", "message": "训练阶段测试", "curriculum_records": 64})
@@ -110,6 +113,10 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path, mount_p
                 assert "training" in page.locator("#worker-state").inner_text()
                 assert "4170" in page.locator("#executor-state").inner_text()
                 assert "学生可见思考" in page.locator("#thinking").inner_text()
+                assert "L2 · Fairy-Stockfish Skill -5" in page.locator("#job-context").inner_text()
+                assert "时间上限 0.1秒" in page.locator("#job-context").inner_text()
+                assert "暂时统计" in page.locator("#evaluation-jobs").inner_text()
+                assert "L2" in page.locator("#job").inner_text()
                 page.wait_for_function("document.querySelector('#moves').children.length===3")
                 assert page.locator("#student-prompt").inner_text() == "第二手提示"
                 layout = page.locator(".game-layout").evaluate("e=>getComputedStyle(e).gridTemplateColumns.split(' ').length")
@@ -139,6 +146,7 @@ def test_real_dashboard_streaming_history_artifacts_and_mobile(tmp_path, mount_p
                 page.wait_for_function("document.querySelector('#game-summary').textContent.includes('对局：old')")
                 assert page.locator("#thinking").inner_text() == ""
                 assert "黑方" in page.locator("#student-seat").inner_text()
+                assert "L1 · Fairy-Stockfish Skill -9" in page.locator("#game-summary").inner_text()
                 assert page.locator("#replay-next").is_disabled()
                 page.locator("#game").select_option("jobs/j1/output/harness_runs/g")
                 page.wait_for_function("document.querySelector('#thinking').textContent.includes('新增实时思考')")

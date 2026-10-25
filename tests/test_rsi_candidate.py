@@ -150,9 +150,11 @@ async def choose_move(board,history,ask,emit,**kwargs):
     assert all(g['result_reason']=='truncated' for g in games)
 
 
-def test_external_turn_timeout_preserves_partial_request_diagnostics(tmp_path):
-    root=fixture_candidate(tmp_path,"""
+@pytest.mark.parametrize('startup_delay',[0,3.2],ids=['normal-start','slow-start'])
+def test_external_turn_timeout_preserves_partial_request_diagnostics(tmp_path,startup_delay):
+    root=fixture_candidate(tmp_path,f"""
 async def choose_move(board,history,ask,emit,**kwargs):
+ await asyncio.sleep({startup_delay})
  await ask('slow request',10)
  return Decision('e2e4','model')
 """)
@@ -162,22 +164,65 @@ async def choose_move(board,history,ask,emit,**kwargs):
         entered=False
         async def stream(self,prompt,cap,emit):
             self.entered=True
+            self.deadline.reschedule(asyncio.get_running_loop().time()+.05)
             try:await asyncio.sleep(60)
             except asyncio.CancelledError:
                 raise StreamCancelled(AskResult('',2,reasoning='partial thought',raw_response='partial raw stream',tokens_exact=False))
     async def emit(e):events.append(e)
     async def run():
-        # Include cold child startup without expiring before inference begins.
-        # The assertions below still require cancellation of an active request.
+        # Cold startup has a separate guard. Arm the actual external cancellation
+        # only after inference starts; never assume imports finish within 3 seconds.
         asker=Slow()
-        seat=CandidateSeat('white',asker,root,tmp_path/'log',turn_timeout=3)
-        with pytest.raises(TimeoutError):await seat.choose(chess.Board(),[],emit)
+        seat=CandidateSeat('white',asker,root,tmp_path/'log',turn_timeout=60)
+        try:
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(30) as deadline:
+                    asker.deadline=deadline
+                    await seat.choose(chess.Board(),[],emit)
+        finally:
+            await seat.close()
         assert asker.entered
         assert seat.proc is None
     asyncio.run(run())
     row=next(e for e in events if e.get('cancelled'))
     assert row['raw_response']=='partial raw stream' and row['reasoning']=='partial thought'
     assert row['status']=='finished' and row['authoritative']
+
+
+@pytest.mark.parametrize('with_partial',[False,True])
+def test_explicit_cancellation_keeps_exact_type_and_partial_diagnostics(tmp_path,with_partial):
+    # Check the type directly on every Python version: Python 3.13 would otherwise
+    # hide this 3.12 compatibility bug by translating CancelledError subclasses.
+    from llmgo.harness.streaming import StreamCancelled
+    events=[]
+    async def run():
+        entered=asyncio.Event()
+        class Slow:
+            async def stream(self,*args):
+                entered.set()
+                try:await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    if with_partial:
+                        raise StreamCancelled(AskResult('',2,reasoning='saved reasoning',raw_response='saved raw'))
+                    raise
+        async def traced(event):events.append(event)
+        seat=CandidateSeat('white',Slow(),tmp_path,tmp_path/'unused.log')
+        messages=asyncio.Queue()
+        await messages.put({'op':'ask','prompt':'slow','max_tokens':10})
+        task=asyncio.create_task(seat._dialog(messages,traced,[],0))
+        try:
+            await asyncio.wait_for(entered.wait(),5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError) as caught:await task
+            assert type(caught.value) is asyncio.CancelledError
+        finally:
+            if not task.done():task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+    asyncio.run(run())
+    rows=[event for event in events if event.get('cancelled')]
+    assert len(rows)==1 and rows[0]['authoritative'] and rows[0]['charged_tokens']==10
+    if with_partial:
+        assert rows[0]['raw_response']=='saved raw' and rows[0]['reasoning']=='saved reasoning'
 
 
 def test_unknown_token_usage_is_conservatively_charged_but_not_claimed_exact(tmp_path):

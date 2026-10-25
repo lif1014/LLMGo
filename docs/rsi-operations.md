@@ -162,6 +162,16 @@ bridge的`events.jsonl`中`stream`仍是原转换事件；`stream_repair`是结�
 
 2026-10-25隔离0GPU任务1365204使用真实Codex CLI、固定LiteLLM与本地受控Chat串流做对照，涵盖推理首区块和空role首区块：旧桥6次警告、交付5个摘要delta；修正后0次警告、交付全部11个delta，两边真实工具命令均成功。回执为`/user/lyh4170/rsi_readiness/reasoning-lifecycle-20261025/validation-v2/result.json`。该测试不调用正式模型、不提交训练，也不停止生产进程；不把它当作正在运行的旧bridge已热更新。
 
+### 走棋超时与部分诊断
+
+`test_external_turn_timeout_preserves_partial_request_diagnostics`在第四轮及未改动的第三轮均失败，原始异常为`StreamCancelled: request_cancelled`，并非缺少部分输出。裁判已保存诊断，却重新抛出了继承`asyncio.CancelledError`的子类；Python 3.12的`asyncio.timeout`只转换类型完全相同的取消异常，导致原本应成为`TimeoutError`的超时以取消异常外泄。本机Python 3.13改用子类判断，掩盖了这个跨版本问题。官方实现可对照[Python 3.12](https://github.com/python/cpython/blob/v3.12.3/Lib/asyncio/timeouts.py#L103)与[Python 3.13](https://github.com/python/cpython/blob/v3.13.0/Lib/asyncio/timeouts.py#L106)。它属于基础设施错误处理问题；没有证据把第三轮权重退化归因于它。
+
+`CandidateSeat._dialog`现在先写完权威取消诊断，再标准化取消异常类型，保留原异常因果链。真实超时正常转换为`TimeoutError`，操作员/调用方主动取消仍传递取消；不吞掉取消、不更改生产超时、预算或评测规则。原测试另有冷启动超过3秒便无法进入推理的脆弱假设：新版测试在stream开始时才安排外部超时，给冷启动单独保护，覆盖0秒/3.2秒启动延迟、子进程清理及部分诊断；另直接校验普通取消与带诊断取消的精确类型，避免Python 3.13再次掩盖回归。
+
+2026-10-26香港时间的隔离0GPU任务1365275使用现有控制环境Python 3.12.13：旧代码/旧测试复现相同`StreamCancelled`失败，修复后17项候选适配器测试全部通过，包含真实Fairy接口。本机全套369通过、4跳过。文件在`/user/lyh4170/rsi_readiness/timeout-diagnostics-20261025/validation/`，`result.json`记录版本、源码/测试SHA、前后返回码和日志路径；原第四轮失败证据另在同目录上层`failure-evidence.json`。
+
+这项修改位于评测适配器，必须区分live仓库、Meta的研究workspace和campaign冻结源。同步live仅提供已验证修复，正在运行或已排队的任务仍用登记时的源码；不热改快照、哈希或已完成成绩，也不为它停止Executor。新campaign会采用新源码；现有campaign的迁移需在无在途任务且研究状态允许时单独安排。当前`upgrade`拒绝已有研究workspace，不能删除workspace绕过它，也不能把普通重启说成评测已升级。
+
 ### 已完成Meta提案的恢复
 
 当 `phase=PLANNING`、没有active_job、Meta进程已退出，但原始 `turn/completed` 为completed、最终回复含ready提案时，可用：

@@ -114,6 +114,13 @@ class CandidateSeat:
                         **(asdict(partial) if partial is not None else {}),
                         "error":"external_turn_cancelled", "charged_tokens":requested,
                         "authoritative":True, "cancelled":True}))
+                    # Python 3.12 asyncio.timeout only translates the exact
+                    # CancelledError type. Preserve the serving diagnostics above
+                    # and normalize subclasses (e.g. StreamCancelled) at this
+                    # referee boundary, so deadline expiry remains TimeoutError.
+                    # A caller's explicit cancellation still propagates as cancellation.
+                    if type(exc) is not asyncio.CancelledError:
+                        raise asyncio.CancelledError(*exc.args) from exc
                     raise
                 # Missing usage cannot grant extra inference allowance.
                 charge = response.tokens if response.tokens_exact else requested

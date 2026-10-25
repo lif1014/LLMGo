@@ -21,6 +21,7 @@ import uuid
 
 from .codex_auth import resolve_auth
 from .connection_check import scrub
+from .responses_stream import ReasoningStream, STREAM_VERSION, prepare_chat_iterator
 
 
 def chat_base(url):
@@ -75,7 +76,7 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
 
     @app.get('/health')
     async def health():
-        return {'status':'ready', 'upstream_api':'chat_completions'}
+        return {'status':'ready', 'upstream_api':'chat_completions', 'stream_protocol':STREAM_VERSION}
 
     @app.post('/v1/responses')
     async def responses(request: Request):
@@ -113,19 +114,30 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
             record('response', request_id=rid, response=result)
             return JSONResponse(result)
 
+        if prepare_chat_iterator(response):
+            record('iterator_compat', request_id=rid, repair='defer_empty_chat_start', version='litellm-1.105.2')
+
         async def stream():
+            protocol = ReasoningStream()
             try:
                 async for item in response:
                     data = document(item)
+                    # Keep the exact converter event as evidence. Record repairs
+                    # as metadata rather than duplicating every text delta.
                     record('stream', request_id=rid, event=data)
-                    kind = data.get('type', 'message')
-                    yield 'event: '+kind+'\ndata: '+json.dumps(data, ensure_ascii=False)+'\n\n'
+                    delivered = protocol.feed(data)
+                    for repair in protocol.repairs:
+                        record('stream_repair', request_id=rid, **repair)
+                    for event in delivered:
+                        kind = event.get('type', 'message')
+                        yield 'event: '+kind+'\ndata: '+json.dumps(event, ensure_ascii=False)+'\n\n'
             except Exception as error:
                 message = scrub(str(error), known)
                 record('stream_error', request_id=rid, error=type(error).__name__, detail=message)
                 data = {'type':'error', 'code':'upstream_error', 'message':message}
                 yield 'event: error\ndata: '+json.dumps(data, ensure_ascii=False)+'\n\n'
             finally:
+                record('stream_normalization', request_id=rid, version=STREAM_VERSION, counts=dict(protocol.counts))
                 close = getattr(response, 'aclose', None)
                 if close:
                     completion = close()

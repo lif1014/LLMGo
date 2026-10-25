@@ -154,6 +154,14 @@ python /user/lyh4170/LLMGo!/scripts/finish_research.py \
 
 连接验收：`python3 scripts/check_meta_connection.py --sandbox-check --tools-check`。`model_tool_calls_tested=true` 要求模型产生真实成功命令事件和随机测试文件的正确副本，仅返回READY无法通过；启动器默认执行这项检查。`--offline` 不调用模型，不能验证模型工具选择。
 
+### 推理摘要串流诊断
+
+`ReasoningSummaryDelta without active item`需核对bridge原始事件，而不是停止Executor或直接隐藏stderr。当前固定转换器曾输出reasoning开始项却漏掉必填`summary`数组，也没有在摘要delta前输出`response.reasoning_summary_part.added`。另有空/role-only首区块过早初始化正文，导致后续推理ID从未开始；对固定LiteLLM 1.105.2响应实例延后这类初始化，仍保留区块的usage与累积处理，不改安装文件或全局类。`responses_stream.py`再逐请求补空数组与缺失part-start，保持序号递增；已有合法start不重复添加，工具和模型文字等有效载荷原样保留。无匹配item、索引冲突或关闭后的delta会明确报错，不猜测关联。
+
+bridge的`events.jsonl`中`stream`仍是原转换事件；`stream_repair`是结构修正元数据，`stream_normalization`是每次请求的修正计数。`/health`的`stream_protocol`标识已载入版本。转接服务随Meta backend子进程启动；同步live repo后自然下次启动生效，不热改当前流、不重启Controller/Executor、不动已冻结评测源码和Worker。当前仍在使用旧bridge的研究可能继续产生旧警告，不能说同步后已立即消失。协议依据见[OpenAI Responses streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
+
+2026-10-25隔离0GPU任务1365204使用真实Codex CLI、固定LiteLLM与本地受控Chat串流做对照，涵盖推理首区块和空role首区块：旧桥6次警告、交付5个摘要delta；修正后0次警告、交付全部11个delta，两边真实工具命令均成功。回执为`/user/lyh4170/rsi_readiness/reasoning-lifecycle-20261025/validation-v2/result.json`。该测试不调用正式模型、不提交训练，也不停止生产进程；不把它当作正在运行的旧bridge已热更新。
+
 ### 已完成Meta提案的恢复
 
 当 `phase=PLANNING`、没有active_job、Meta进程已退出，但原始 `turn/completed` 为completed、最终回复含ready提案时，可用：

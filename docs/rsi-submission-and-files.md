@@ -51,6 +51,7 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 | src/llmgo/rsi/codex_auth.py | 从私有TOML/环境解析认证，仅注入子进程并脱敏 |
 | src/llmgo/rsi/connection_check.py、scripts/check_meta_connection.py | 真实 app-server READY 连接测试与私有协议日志 |
 | src/llmgo/rsi/codex_bridge.py、scripts/serve_meta_bridge.py | 保留 Codex 工具和会话，Responses 转 Chat Completions |
+| src/llmgo/rsi/responses_stream.py、tests/test_responses_stream.py | 修复摘要事件生命期缺口，保持文本/工具载荷，记录原始事件与修正元数据 |
 | src/llmgo/rsi/meta_protocol.py、scripts/finish_research.py | 请求绑定的研究完成记录、源码哈希检查与故障分类 |
 | tests/test_research_completion.py、tests/test_controller_recovery.py | 交接崩溃、过期记录、持久重试与候选原子发布回归 |
 | configs/rsi/meta-bridge-requirements.txt | 独立转接环境固定依赖版本，不影响训练环境 |

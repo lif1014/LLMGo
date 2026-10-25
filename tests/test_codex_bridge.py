@@ -76,3 +76,30 @@ def test_upstream_errors_are_redacted_and_keep_status(tmp_path):
         response=client.post('/v1/responses',headers={'Authorization':'Bearer local-test-token'},json={'input':'hello'})
     assert response.status_code==401 and 'opaque-upstream-key' not in response.text
     assert 'opaque-upstream-key' not in (tmp_path/'events.jsonl').read_text()
+
+
+def test_reasoning_lifecycle_repair_is_delivered_and_original_evidence_is_preserved(tmp_path):
+    original=[{'type':'response.output_item.added','output_index':0,
+        'item':{'id':'rs1','type':'reasoning','status':'in_progress'}},
+        {'type':'response.reasoning_summary_text.delta','item_id':'rs1','output_index':0,'summary_index':0,'delta':'visible summary'},
+        {'type':'response.completed','response':{'id':'one','status':'completed'}}]
+    closed=[]
+    async def responder(**kwargs):
+        async def events():
+            try:
+                for event in original:yield event
+            finally:closed.append(True)
+        return events()
+    trace=tmp_path/'events.jsonl'
+    app=create_app('test','https://example.com/v1','upstream','local',trace,responder=responder)
+    with TestClient(app) as client:
+        assert client.get('/health').json()['stream_protocol']=='reasoning-lifecycle-v1'
+        result=client.post('/v1/responses',headers={'Authorization':'Bearer local'},json={'stream':True,'input':'test'})
+    delivered=[json.loads(line.removeprefix('data: ')) for line in result.text.splitlines() if line.startswith('data: ')]
+    assert delivered[0]['item']['summary']==[]
+    assert delivered[1]['type']=='response.reasoning_summary_part.added'
+    assert delivered[2]['delta']=='visible summary'
+    rows=[json.loads(line) for line in trace.read_text().splitlines()]
+    assert [r['event'] for r in rows if r['kind']=='stream']==original
+    assert len([r for r in rows if r['kind']=='stream_repair'])==2
+    assert rows[-1]['kind']=='stream_normalization' and closed==[True]

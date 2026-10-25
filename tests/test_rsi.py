@@ -478,3 +478,26 @@ def test_explicit_resume_changes_meta_request_preserves_workspace_and_evidence(c
     assert c.state['meta_request_revision']==2
     with pytest.raises(ValueError,match='explicitly resolved'):
         c.resume()
+
+
+def test_recover_meta_freezes_original_proposal_and_preserves_baseline(controller):
+    from test_rsi_meta import record_stopped_result
+    c=controller;complete_baseline(c);workspace=c.workspace()
+    baseline=copy.deepcopy(c.state['baseline'])
+    atomic_json(workspace/'proposal.json',{'hypothesis':'Already researched skills candidate','jobs':[],
+        'evaluation':{'levels':[2,3],'tracks':['player']},'evaluation_gpus':1})
+    record_stopped_result(c.memory,workspace,'Done.\n```json\n'+json.dumps({
+        'status':'ready','summary':'Ready to evaluate','proposal_path':str(workspace/'proposal.json')})+'\n```')
+    result=c.recover_meta()
+    assert result['recovered'] and result['phase']=='EXPERIMENT'
+    assert not result['inference_performed']
+    assert c.state['baseline']==baseline
+    assert c.state['candidate']['evaluation']=={'levels':[2,3],'tracks':['player']}
+    backups=list((c.root/'recoveries').glob('*/meta-session.json'))
+    assert len(backups)==1 and read_json(backups[0])['status']=='failed'
+    with pytest.raises(ValueError,match='idle PLANNING'):c.recover_meta()
+    assert len(list((c.root/'candidates').glob('r*')))==1
+    c.step();c.step()
+    job=c.state['jobs'][c.state['active_job']]
+    assert job['level']==2 and job['role']=='candidate'
+    assert len(c.state['baseline'])==4

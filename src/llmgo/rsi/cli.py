@@ -89,7 +89,7 @@ def parser():
     d.add_argument("--codex-auth", action="store_true", help="Check provider credential configuration or CLI login status, without inference")
     init = sub.add_parser("init")
     init.add_argument("campaign")
-    for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "index-activity", "upgrade"):
+    for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "recover-meta", "index-activity", "upgrade"):
         cmd = sub.add_parser(name)
         cmd.add_argument("campaign")
         if name == "prepare":
@@ -213,5 +213,7 @@ def main(argv=None):
                         result = {"phase": controller.state["phase"], "job_id": controller.state["active_job"]}
                     elif args.command == "resume":
                         result = controller.resume()
+                    elif args.command == "recover-meta":
+                        result = controller.recover_meta()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if args.command == "doctor" and not result["ok"] else 0

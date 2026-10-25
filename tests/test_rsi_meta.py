@@ -208,3 +208,58 @@ def test_unreviewed_crash_recovery_does_not_accept_no_action_result(tmp_path):
     assert result['status']=='ready'
     assert memory.recent(10,'meta_continuation')[0]['body']['reason']=='needs_input_without_actions'
     assert memory.recent(10,'meta_recovered')[0]['body']['review_pending']
+
+
+@pytest.mark.parametrize('wrapper', ['{}', '```json\n{}\n```', 'Completed and verified.\n\n```JSON\n{}\n```\nDetails saved.'])
+def test_final_result_accepts_json_fence_after_prose(wrapper):
+    answer={'status':'ready','summary':'Verified experiment','proposal_path':'/owned/proposal.json'}
+    assert CodexBackend._answer(wrapper.format(json.dumps(answer)))==answer
+
+
+@pytest.mark.parametrize('text', [
+    '{"status":"ready","summary":"done","proposal_path":null}',
+    '{"status":"ready","summary":"done"}',
+    '{"status":"ready","status":"needs_input","summary":"done","proposal_path":null}',
+    '```json\n{"status":"ready","summary":"done","proposal_path":"p"}',
+    'text {"status":"ready","summary":"done","proposal_path":"p"} text',
+    '```json\n{"status":"ready","summary":"done","proposal_path":"p"}\n```\n```json\n{"status":"ready","summary":"different","proposal_path":"q"}\n```',
+])
+def test_result_parser_rejects_partial_ambiguous_and_invalid_contract(text):
+    assert CodexBackend._answer(text) is None
+
+
+def record_stopped_result(memory, workspace, text, *, completed=True):
+    atomic_json(memory.root/'meta-session.json',{'status':'failed','process':None,'cwd':str(workspace),
+        'thread_id':'saved-thread','turn_id':'saved-turn'})
+    memory.append('meta_event',{'thread_id':'saved-thread','message':{'method':'item/completed','params':{
+        'threadId':'saved-thread','turnId':'saved-turn','item':{'type':'agentMessage','text':text}}}})
+    memory.append('meta_event',{'thread_id':'saved-thread','message':{'method':'turn/completed','params':{
+        'threadId':'saved-thread','turn':{'id':'saved-turn','status':'completed' if completed else 'failed','items':[]}}}})
+
+
+def test_recover_recorded_ready_without_spawning_or_model_call(tmp_path):
+    memory=MemoryStore(tmp_path/'memory')
+    answer={'status':'ready','summary':'Already done','proposal_path':str(tmp_path/'proposal.json')}
+    record_stopped_result(memory,tmp_path,'Verified:\n```json\n'+json.dumps(answer)+'\n```')
+    def forbidden(*args,**kwargs):raise AssertionError('Recovery must not start Codex')
+    backend=CodexBackend({'user_root':str(tmp_path)},memory,popen=forbidden)
+    assert backend.recover_completed(tmp_path)==answer
+    assert backend.session['status']=='completed'
+    assert memory.recent(1,'meta_result_recovered')[0]['body']['inference_performed'] is False
+
+
+@pytest.mark.parametrize('mode',['failed_turn','wrong_workspace','live_process','needs_input','wrong_turn','invalid_final'])
+def test_recovery_requires_matching_terminal_evidence(tmp_path,mode):
+    memory=MemoryStore(tmp_path/'memory')
+    answer={'status':'ready','summary':'Already done','proposal_path':str(tmp_path/'proposal.json')}
+    if mode=='needs_input':answer.update(status='needs_input',proposal_path=None)
+    text=json.dumps(answer)
+    if mode=='invalid_final':text='I will start working.'
+    record_stopped_result(memory,tmp_path,text,completed=mode!='failed_turn')
+    session=read_json(memory.root/'meta-session.json')
+    if mode=='live_process':session['process']={'pid':123}
+    if mode=='wrong_turn':session['turn_id']='different-turn'
+    atomic_json(memory.root/'meta-session.json',session)
+    backend=CodexBackend({'user_root':str(tmp_path)},memory)
+    with pytest.raises(ValueError):backend.recover_completed(tmp_path/'other' if mode=='wrong_workspace' else tmp_path)
+    assert not memory.recent(1,'meta_result_recovered')

@@ -396,6 +396,23 @@ class Controller:
                       track=old.get("track") or "player", command=payload.get("command"),
                       batch_index=old["batch_index"], resume_from=payload["output"])
 
+    def recover_meta(self):
+        if self.state["phase"] != "PLANNING" or self.state.get("active_job") or not self.state.get("workspace"):
+            raise ValueError("Recover Meta only at an idle PLANNING boundary with a registered workspace")
+        from .meta import CodexBackend
+        backend = CodexBackend(self.site, self.memory)
+        # Preserve both the prior state and the failing session before recovery.
+        folder = self.root / "recoveries" / ("meta-" + str(self.state["round"]) + "-" + digest(backend.session)[:16])
+        if not folder.exists():
+            atomic_json(folder/"campaign.json", self.state)
+            atomic_json(folder/"meta-session.json", backend.session)
+        answer = backend.recover_completed(Path(self.state["workspace"]))
+        candidate = self.prepare(answer["proposal_path"])
+        self.memory.append("meta_proposal_recovered", {"candidate_id": candidate["id"],
+            "proposal_path": answer["proposal_path"], "backup": str(folder)})
+        return {"recovered": True, "candidate_id": candidate["id"], "phase": self.state["phase"],
+                "evaluation": candidate["evaluation"], "inference_performed": False}
+
     def resume(self):
         """An explicit operator resume authorizes a new Meta turn, not cached output."""
         if self.state["phase"] != "NEEDS_INPUT":

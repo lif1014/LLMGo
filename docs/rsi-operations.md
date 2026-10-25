@@ -121,4 +121,28 @@ Meta研究不向上游强制最终JSON schema，最终JSON仍在本地验证。�
 
 连接验收：`python3 scripts/check_meta_connection.py --sandbox-check --tools-check`。`model_tool_calls_tested=true` 要求模型产生真实成功命令事件和随机测试文件的正确副本，仅返回READY无法通过；启动器默认执行这项检查。`--offline` 不调用模型，不能验证模型工具选择。
 
+### 已完成Meta提案的恢复
+
+当 `phase=PLANNING`、没有active_job、Meta进程已退出，但原始 `turn/completed` 为completed、最终回复含ready提案时，可用：
+
+```bash
+bash scripts/start_rsi.sh --recover-meta --web
+```
+
+底层命令是 `python3 scripts/rsi.py recover-meta CAMPAIGN`。它只读取已登记workspace与当前session匹配的thread/turn，要求日志中的完成事件和最终agentMessage，允许最终JSON外有Markdown代码围栏及说明，但拒绝歧义或不完整结果。恢复前在campaign的 `recoveries/` 备份campaign和session，恢复后照常校验proposal、冻结candidate源码/skills、记录Memory；不会修改既有基线或已完成评测，不触发新研究推理。若最近500个协议事件中没有完整终态证据则停止，需先定位原始trace，不能用一个不明来源的proposal代替完成证据。
+
+恢复后由Controller依次进入EXPERIMENT、EVALUATING并登记新job。第二轮原提案是L2、L3各20局，8 GPU，一个难度完成并收集后再提交下一档。重复执行recover-meta会因阶段已改变而拒绝，防止重复冻结或提交；此时普通 `bash scripts/start_rsi.sh --web` 即可。
+
+### 如何恢复评测
+
+| 当前情况 | 操作 | 保留与恢复范围 |
+|---|---|---|
+| 仅SSH/浏览器断线，Controller仍持锁 | 查看 `--status`、网页或 `--logs`，无需再启动 | nohup后台进程继续运行 |
+| Controller退出，阶段为WAITING/EVALUATING/EXPERIMENT | `bash scripts/start_rsi.sh --web` | 读取已有intent/task ID和回执，继续原任务及后续难度 |
+| 已完成Meta回复因JSON包装解析失败，仍为PLANNING | 修复解析后 `--recover-meta --web` | 从原完成事件恢复提案，不重做研究 |
+| 真正缺少输入，NEEDS_INPUT | 解决具体缺失项后 `--resume --web` | 授权新Meta请求，保留会话与历史 |
+| 当前GPU任务确认终止失败，仍登记为active_job | 查看失败原因，修好后用 `python3 scripts/rsi.py resume-failed CAMPAIGN`，再普通启动 | 新任务登记resume_from，Worker仅复用身份匹配且有效的逐局回执 |
+
+不要kill仍在运行的任务来“恢复”，不要删除submission intent、Memory或改变回执hash。若失败候选已经被Controller交回PLANNING且candidate为空，应由Meta登记新提案，不能直接resume-failed旧候选。源码/协议不兼容的旧棋局不会被强行复用。
+
 旧自动晋级 state 不迁移，新建 campaign，旧证据保留。只写 /user/lyh4170、NORMAL/beijing/model-autosft、devspace0GPU、不停止别人任务的约束继续有效。

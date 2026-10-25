@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import socket
 import subprocess
 import threading
@@ -311,11 +312,73 @@ class CodexBackend:
 
     @staticmethod
     def _answer(text):
-        try:
-            answer = json.loads(text)
-        except (ValueError, TypeError):
+        if not isinstance(text, str):
             return None
-        if (isinstance(answer, dict) and answer.get("status") in ("ready", "needs_input")
-                and isinstance(answer.get("summary"), str)):
+
+        def parse(raw):
+            def unique(pairs):
+                value = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError("Duplicate result key")
+                    value[key] = item
+                return value
+            try:
+                value = json.loads(raw, object_pairs_hook=unique)
+            except (ValueError, TypeError):
+                return None
+            if (not isinstance(value, dict) or set(value) != {"status", "summary", "proposal_path"}
+                    or not isinstance(value["summary"], str) or not value["summary"].strip()):
+                return None
+            if value["status"] == "ready":
+                return value if isinstance(value["proposal_path"], str) and value["proposal_path"].strip() else None
+            if value["status"] == "needs_input" and value["proposal_path"] is None:
+                return value
+            return None
+
+        answer = parse(text.strip())
+        if answer is not None:
             return answer
-        return None
+        # Accept one complete JSON fence, including a final result after prose.
+        # Do not guess from arbitrary braces, tool examples or partial JSON.
+        blocks = re.findall(r"^[ \t]*```(?:json)?[ \t]*\r?\n(.*?)^[ \t]*```[ \t]*$",
+                            text, flags=re.MULTILINE | re.DOTALL | re.IGNORECASE)
+        results = [value for block in blocks if (value := parse(block.strip())) is not None]
+        return results[0] if len(results) == 1 else None
+
+    def recover_completed(self, workspace):
+        """Recover the recorded terminal reply without another model request."""
+        workspace = inside(self.site["user_root"], workspace)
+        if (self.session.get("process") is not None or self.session.get("status") not in {"failed", "completed"}
+                or self.session.get("cwd") != str(workspace)):
+            raise ValueError("Recovery requires a stopped session in the registered workspace")
+        thread_id, turn_id = self.session.get("thread_id"), self.session.get("turn_id")
+        if not thread_id or not turn_id:
+            raise ValueError("No recorded Meta thread/turn to recover")
+        rows = list(reversed(self.memory.recent(500, "meta_event")))
+        completed, messages = None, []
+        for row in rows:
+            body = row["body"]
+            message = body.get("message", {})
+            params = message.get("params", {})
+            if params.get("threadId", body.get("thread_id")) != thread_id:
+                continue
+            if message.get("method") == "turn/completed" and params.get("turn", {}).get("id") == turn_id:
+                completed = params["turn"]
+            if message.get("method") == "item/completed" and params.get("turnId") == turn_id:
+                item = params.get("item", {})
+                if item.get("type") == "agentMessage":
+                    messages.append((item.get("text", ""), row["id"]))
+        if completed is None or completed.get("status") != "completed":
+            raise ValueError("No completed-turn evidence in the recent protocol journal; inspect original trace")
+        for item in completed.get("items", []):
+            if item.get("type") == "agentMessage":
+                messages.append((item.get("text", ""), None))
+        # Only the final agent message may authorize a proposal, not an earlier example.
+        answer = self._answer(messages[-1][0]) if messages else None
+        if answer is None or answer["status"] != "ready":
+            raise ValueError("Recorded final reply has no unambiguous ready result")
+        self._save(answer=answer, status="completed", updated=utc())
+        self.memory.append("meta_result_recovered", {"thread_id": thread_id, "turn_id": turn_id,
+            "event_id": messages[-1][1], "answer": answer, "inference_performed": False})
+        return answer

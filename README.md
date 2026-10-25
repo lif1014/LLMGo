@@ -22,6 +22,8 @@ bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --web
 
 若停在 `NEEDS_INPUT`，先查看具体原因并修复，再执行 `bash scripts/start_rsi.sh --resume --web`。这会保留已完成基线、研究副本和原会话，用新的请求版本继续 Meta 工作，避免直接重放此前缓存的 `needs_input`。它不会升级冻结的评测源码，不与 `--upgrade` 同用。当前只修复 Meta 提前结束时，无需重跑40局基线或重新 init。
 
+若 Meta 已完成研究、写好提案，却因结束回复的格式而退出，且campaign仍为 `PLANNING`，执行 `bash scripts/start_rsi.sh --recover-meta --web`。它从持久日志确认对应thread/turn已完成，解析原最终回复（支持说明文字后的单个JSON代码块），备份状态与session，验证并冻结原提案，再启动评测；不重新调用研究模型，不靠猜测或仅凭磁盘上有proposal就提交。多个互相冲突的JSON、未完成turn、其他workspace或活动进程均拒绝恢复。若运维已完成提案恢复，状态已变成 `EXPERIMENT`/`EVALUATING`/`WAITING`，直接 `bash scripts/start_rsi.sh --web` 继续，不重复加恢复参数。
+
 启动检查现在包含 `--sandbox-check --tools-check`：不仅验证 API 返回 READY，还要求模型亲自调用 `exec_command`，产生成功命令事件并正确复制一个随机测试文件。普通 `--sandbox-check` 单独使用仍只证明客户端可以运行命令。研究请求不强制每次上游响应都采用最终JSON schema；模型可正常连续调用工具，结束时仍必须返回有效JSON。若没有任何工具动作就返回 `needs_input`，同一会话会追加一次澄清；真正的用户问题仍可暂停。无效最终JSON也只补正一次，所有续行和原始事件保留，研究本身没有总时长限制。
 
 `init`只执行一次，恢复时沿用原campaign。已有campaign保持冻结设置，旧自动晋级campaign请另起名称，不原地混用旧状态。手动CLI操作见[首次部署](docs/rsi-first-run.md)。

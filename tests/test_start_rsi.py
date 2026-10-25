@@ -131,3 +131,20 @@ def test_upgrade_and_resume_are_mutually_exclusive(launcher):
     result=run('--upgrade','--resume')
     assert result.returncode==2
     assert not (root/'calls.jsonl').exists()
+
+
+def test_recover_meta_runs_before_controller_without_resuming_or_upgrading(launcher):
+    root,site,config,run=launcher
+    campaign=root/'campaigns/chess-autonomous-v2'
+    campaign.mkdir(parents=True);(campaign/'campaign.json').write_text('{"phase":"PLANNING"}')
+    result=run('--recover-meta')
+    assert result.returncode==0,result.stderr
+    assert calls(root)==['doctor','recover-meta','run']
+    assert '无需重做研究' in result.stdout
+
+
+@pytest.mark.parametrize('option',['--resume','--upgrade'])
+def test_recover_meta_conflicts_with_other_migrations(launcher,option):
+    root,site,config,run=launcher
+    result=run('--recover-meta',option)
+    assert result.returncode==2 and not (root/'calls.jsonl').exists()

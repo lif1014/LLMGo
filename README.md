@@ -159,5 +159,7 @@ bash scripts/start_rsi.sh --upgrade --web
 
 Python 3.12 的走棋超时兼容问题已修复：裁判先保存流中断时的部分原始输出、推理与Token诊断，再把携带诊断的取消子类转回标准取消异常，使超时正确成为`TimeoutError`；显式取消仍按取消处理。相关测试在推理开始后才触发短超时，另覆盖慢启动，避免把导入耗时误当诊断失败。远端Python 3.12.13已验证旧版重现失败、新版17项通过，见[故障说明与生效边界](docs/rsi-operations.md#走棋超时与部分诊断)。同步live仓库不会改变已冻结的评测源，不为此停止正在运行的Executor或任务；已有研究workspace时不能直接用`--upgrade`，迁移需另行安排。
 
+CUDA Graph诊断脚本现为`scripts/graph_ab.py`：按最终答案检查走法，分别记录服务端推理边界与字面`</think>`，每笔请求保存完整回答、Token及输入供重检。旧j000013的0/4来自可能误判的检查器且缺少原回答，实际合法率未知；不改写历史结果。调用方法、Meta如何在下轮采用及首批吞吐的限制见[诊断检查器说明](docs/rsi-operations.md#cuda-graph诊断的答案检查器)。
+
 
 8GPU训练验收已通过（任务1350755）：7卡PPO＋1卡LC0，2个训练步、每步2个PPO epoch，第二步重新采样，非零有限梯度、完整分片checkpoint与HF导出均完成。正式评测的多难度完整比赛尚未重跑；这次短验收不代表棋力提升。回执在 `/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/`，详细证据见 `docs/environment-status.json`。

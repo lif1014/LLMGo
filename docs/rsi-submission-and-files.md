@@ -72,6 +72,7 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 | tests/test_rsi_worker.py | 任意研究命令、模型回执与幂等恢复检查 |
 | tests/fixtures/qwen_stream_boundaries.json.gz | 独立于runs目录的11条原始GPU流式响应回归样本 |
 | tests/test_rsi_candidate.py | 真子进程、预算、伪造事件、历史、超时和真实Fairy接口检查 |
+| scripts/graph_ab.py、tests/test_graph_ab.py | 单卡Graph/eager诊断、只解析最终答案的检查器、完整请求回执及真实HTTP适配器回归 |
 | docs/removed-files.json | 删除/替换文件清单 |
 | docs/environment-status.json | 本次远端环境检查/安装的实际状态回执 |
 | docs/validation.json | 交付时测试与包验证记录 |

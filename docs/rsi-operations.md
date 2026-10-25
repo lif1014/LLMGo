@@ -172,6 +172,20 @@ bridge的`events.jsonl`中`stream`仍是原转换事件；`stream_repair`是结�
 
 这项修改位于评测适配器，必须区分live仓库、Meta的研究workspace和campaign冻结源。同步live仅提供已验证修复，正在运行或已排队的任务仍用登记时的源码；不热改快照、哈希或已完成成绩，也不为它停止Executor。新campaign会采用新源码；现有campaign的迁移需在无在途任务且研究状态允许时单独安排。当前`upgrade`拒绝已有研究workspace，不能删除workspace绕过它，也不能把普通重启说成评测已升级。
 
+### CUDA Graph诊断的答案检查器
+
+远端第四轮自建的`graph_ab.py`曾把`AskResult.output`（推理与答案的展示拼接）交给`parse_move`，并用字面的`</think>`计数边界。当vLLM分别返回reasoning/content时，合法最终答案也可能被判失败；无字面标签不代表思考未完成。j000013的0/4不能当作真实合法率，其报告未保存回答内容，无法事后算出正确比例，也不能直接改成4/4。
+
+仓库现提供修正版`scripts/graph_ab.py`：检查规范化的`answer.text`及normalization_error，保留请求错误、未闭合思考、非法/含糊答案与length截断的失败判定。`has_boundary`表示已观察到可用的推理/答案边界，原字面标签改由`has_think_tag`单独记录，独立的纯UCI答案仍按Harness接受；`protocol_check=normalized-final-v1`与`schema_version=2`区分新旧结果。
+
+每笔完成或返回错误的HTTP请求在`output/responses/graph-NN.json`或`eager-NN.json`保存完整AskResult，包括raw_response、text、reasoning、output、token_ids、usage、finish_reason、请求payload、错误与延迟，并保留prompt、合法步列表及判定结果。摘要的response_path指向这些文件，可离线重检；不从推理里搜索某个看似合法的棋步代替最终答案。
+
+调用仍用既有research job：`argv=["{python}","scripts/graph_ab.py"]`，由Worker传入LLMGO_SITE/OUTPUT/MODEL/CANDIDATE；该诊断只申请1GPU、TP1，并行最多4个样本，服务器容量8。运行两个模式各自第一批，`timing_scope=first_batch_includes_lazy_initialization`；它还不是暖机后多轮吞吐，不能把首次延迟推论为稳态性能。真实prompt token数来自usage，不再用字符数/4冒充。
+
+修正版只部署live仓库，不修改已冻结r000004源码、j000013结果或在途j000014。Meta后续若复用自己的旧研究脚本，应先将live的`scripts/graph_ab.py`与`tests/test_graph_ab.py`复制进新的可编辑workspace并验证，再经正常提案/快照提交；不在冻结目录热修，也不需要为修检查器停止当前训练或重新做初始基线。超时兼容修复的启用边界见上一节。
+
+验收：本机381通过、4跳过；隔离0GPU任务1365383使用远端Python 3.12.13，检查器与超时适配器共29项通过。`/user/lyh4170/rsi_readiness/graph-checker-20261026/validation/result.json`保存版本、SHA与pytest.log路径。它验证真实HTTP适配器的受控响应、检查器和回执，不代表重新生成了j000013的八份回答或完成了新的GPU测速。
+
 ### 已完成Meta提案的恢复
 
 当 `phase=PLANNING`、没有active_job、Meta进程已退出，但原始 `turn/completed` 为completed、最终回复含ready提案时，可用：

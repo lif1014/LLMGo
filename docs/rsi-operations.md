@@ -145,4 +145,22 @@ bash scripts/start_rsi.sh --recover-meta --web
 
 不要kill仍在运行的任务来“恢复”，不要删除submission intent、Memory或改变回执hash。若失败候选已经被Controller交回PLANNING且candidate为空，应由Meta登记新提案，不能直接resume-failed旧候选。源码/协议不兼容的旧棋局不会被强行复用。
 
+### 重复生成的检测与恢复
+
+控制端`generation_guard.py`只检查`item/agentMessage/delta`，按消息ID隔离，保留8192字符滑动窗口，每累计256字符检查一次。8–256字符的完全相同短周期重复至少12次且覆盖至少2048字符才触发；纯数字、空白或标点不单独作为循环证据。它不检测命令stdout，不用“很久没有工具调用”推定卡死，不设研究总时间上限。
+
+触发时先持久化原事件及周期样本/摘要，再发送`turn/interrupt`。等原turn确认interrupted（或竞态中已经completed），才新建thread，以原prompt、同一workspace及Memory继续；恢复提示要求先核对已有任务和产物，禁止重提。中断确认有独立的协议等待上限，失败时不会盲目并发新会话。每个研究请求最多切换两次，第三次重复则返回明确needs_input，由Controller暂停。原线程、所有已收到的原始输出、工作文件与集群job均保留。
+
+研究面板事件：`meta_generation_loop`（异常）、`meta_generation_recovery`（生命周期）、`meta_generation_exhausted`（异常），并记录thread/turn及恢复次数。新线程不携带整段污染的对话历史，依赖持久Memory与已有文件接续，避免反复把循环文本塞回上下文。
+
+### 等待计算任务时加载控制端修复
+
+```bash
+bash scripts/start_rsi.sh --restart-control --web
+```
+
+只在原devspace使用。此入口要求Controller确实持锁、主机/PID/cwd/命令匹配本campaign、权威状态为WAITING、无活动Meta，以及active_job已有匹配description的task ID。它以非阻塞方式取得Executor lifecycle锁和主journal写锁，确保没有平台命令或主日志写入在途，备份状态/session/进程身份后，仅向已核对的Controller发送SIGTERM，并等待其锁释放；不停止Worker或集群job。随后普通启动器读取原intent恢复监控。
+
+若Meta仍在正常工作、锁忙、任务提交不确定或主机不符，命令会拒绝且不发送信号。Controller早已退出时无需再停止，直接继续启动。`--restart-control`不能与`--resume`、`--recover-meta`、`--upgrade`或状态查看混用。此操作加载控制端代码，不更新冻结的正式评测源码。
+
 旧自动晋级 state 不迁移，新建 campaign，旧证据保留。只写 /user/lyh4170、NORMAL/beijing/model-autosft、devspace0GPU、不停止别人任务的约束继续有效。

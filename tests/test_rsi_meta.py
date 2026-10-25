@@ -263,3 +263,64 @@ def test_recovery_requires_matching_terminal_evidence(tmp_path,mode):
     backend=CodexBackend({'user_root':str(tmp_path)},memory)
     with pytest.raises(ValueError):backend.recover_completed(tmp_path/'other' if mode=='wrong_workspace' else tmp_path)
     assert not memory.recent(1,'meta_result_recovered')
+
+
+@pytest.mark.parametrize('persistent',[False,True])
+def test_repeated_generation_interrupts_and_recovers_in_fresh_thread(tmp_path,persistent):
+    server=tmp_path/'loop-server.py'
+    server.write_text(r'''
+import json,sys
+threads=0;turns=0
+pattern='Let me write.\n\nFINAL.\n\nOutput.\n\nGo.\n\nWriting.\n\nNow.\n\nOK.\n\n'
+def emit(x):print(json.dumps(x),flush=True)
+for line in sys.stdin:
+ r=json.loads(line);m=r.get('method')
+ if 'id' not in r:continue
+ if m=='initialize':emit({'id':r['id'],'result':{}})
+ elif m=='thread/start':
+  threads+=1;emit({'id':r['id'],'result':{'thread':{'id':'thread-'+str(threads),'turns':[]}}})
+ elif m=='turn/start':
+  turns+=1;tid='turn-'+str(turns)
+  assert r['params']['threadId']=='thread-'+str(threads)
+  emit({'id':r['id'],'result':{'turn':{'id':tid}}})
+  if turns==1 or sys.argv[1]=='persistent':
+   for _ in range(80):emit({'method':'item/agentMessage/delta','params':{'turnId':tid,'itemId':'msg-'+tid,'delta':pattern}})
+  else:
+   emit({'method':'item/completed','params':{'turnId':tid,'item':{'type':'commandExecution','exitCode':0}}})
+   answer={'status':'ready','summary':'Continued from saved files','proposal_path':'proposal.json'}
+   emit({'method':'item/completed','params':{'turnId':tid,'item':{'type':'agentMessage','text':json.dumps(answer)}}})
+   emit({'method':'turn/completed','params':{'turn':{'id':tid,'status':'completed','items':[]}}})
+ elif m=='turn/interrupt':
+  assert r['params']['turnId']==tid
+  emit({'id':r['id'],'result':{}})
+  emit({'method':'turn/completed','params':{'turn':{'id':tid,'status':'interrupted','items':[]}}})
+''')
+    workspace=tmp_path/'workspace';workspace.mkdir();(workspace/'progress.txt').write_text('saved work')
+    memory=MemoryStore(tmp_path/'memory')
+    site={'user_root':str(tmp_path),'codex_home':str(tmp_path/'home'),'codex_bin':'fake'}
+    def popen(argv,**kwargs):return subprocess.Popen([sys.executable,str(server),'persistent' if persistent else 'once'],**kwargs)
+    backend=CodexBackend(site,memory,popen=popen)
+    answer=backend.turn(workspace,'Research from context and saved files')
+    assert answer['status']==('needs_input' if persistent else 'ready')
+    assert (workspace/'progress.txt').read_text()=='saved work'
+    expected=3 if persistent else 1
+    assert len(memory.recent(10,'meta_generation_loop'))==expected
+    assert len(memory.recent(10,'meta_generation_recovery'))==(2 if persistent else 1)
+    sends=[e['body']['message'] for e in memory.recent(100,'meta_send')]
+    assert sum(m.get('method')=='turn/interrupt' for m in sends)==expected
+    assert sum(m.get('method')=='thread/start' for m in sends)==(3 if persistent else 2)
+    assert backend.session['process'] is None
+    if persistent:assert backend.session['status']=='recovery_exhausted'
+    assert memory.search('Let me write')  # Original output was retained.
+
+
+def test_repetitive_command_stdout_is_not_treated_as_assistant_generation(tmp_path):
+    server=tmp_path/'server.py'
+    source=SERVER.replace('emit({"method":"item/agentMessage/delta"',
+        'emit({"method":"item/commandExecution/outputDelta","params":{"turnId":"turn-one","delta":"Writing. "*2000}})\n        emit({"method":"item/agentMessage/delta"')
+    server.write_text(source)
+    memory=MemoryStore(tmp_path/'memory')
+    site={'user_root':str(tmp_path),'codex_home':str(tmp_path/'home'),'codex_bin':'fake'}
+    def popen(argv,**kwargs):return subprocess.Popen([sys.executable,str(server)],**kwargs)
+    assert CodexBackend(site,memory,popen=popen).turn(tmp_path,'prepare')['status']=='ready'
+    assert not memory.recent(5,'meta_generation_loop')

@@ -16,6 +16,7 @@ from typing import Protocol
 from .contracts import atomic_json, digest, file_hash, inside, read_json, utc, worker_environment
 from .codex_auth import runtime_auth, scrub_known
 from .codex_sandbox import sandbox_mode, thread_sandbox, turn_sandbox
+from .generation_guard import RepetitiveGeneration, StreamRepetitionGuard
 
 
 class MetaAgentBackend(Protocol):
@@ -228,7 +229,34 @@ class CodexBackend:
                     })
                     turn_id = result["turn"]["id"]
                     self._save(turn_id=turn_id, status="running")
-                    completed, texts, acted = self._wait_turn(turn_id)
+                    try:
+                        completed, texts, acted = self._wait_turn(turn_id)
+                    except RepetitiveGeneration as exc:
+                        turn_ids.append(turn_id)
+                        retries = review.get("generation_retries", 0)
+                        if retries >= 2:
+                            answer = {"status": "needs_input", "proposal_path": None,
+                                "summary": "Meta模型连续出现重复生成，已中断并更换研究会话重试两次仍未恢复。"
+                                    "研究文件、原会话和已提交任务均保留；请检查上游模型服务或调整Meta模型配置后恢复。"}
+                            self.memory.append("meta_generation_exhausted", {"thread_id": thread_id,
+                                "turn_id": turn_id, "recoveries": retries})
+                            self._save(answer=answer, status="recovery_exhausted", review=review)
+                            return answer
+                        review = {**review, "generation_retries": retries + 1}
+                        prior_thread = thread_id
+                        fresh = self._rpc("thread/start", params)
+                        thread_id = fresh["thread"]["id"]
+                        turn_ids = []
+                        next_prompt = (prompt + "\n恢复说明：上一会话的助手文字出现长循环重复，已中断该turn，原始记录仍保留。"
+                            "请先读取context.json、Memory摘要和workspace已有文件，从实际进度继续，不重做已完成工作。"
+                            "先核对已有任务ID、提交intent与产物，不能重复提交训练或评测。不要读取或复述整段重复输出。"
+                            "现在执行具体工具动作；完成研究后写proposal.json并返回最终JSON。")
+                        self.memory.append("meta_generation_recovery", {"previous_thread_id": prior_thread,
+                            "previous_turn_id": turn_id, "thread_id": thread_id,
+                            "attempt": retries + 1, "workspace": str(workspace)})
+                        self._save(thread_id=thread_id, turn_id=None, status="recovering",
+                                   previous_turn_ids=[], pending_prompt=next_prompt, review=review)
+                        continue
                     turn_ids.append(turn_id)
                 review = {**review, "acted": bool(review.get("acted") or acted)}
                 answer = next((value for text in reversed(texts) if (value := self._answer(text))), None)
@@ -290,12 +318,26 @@ class CodexBackend:
         # Full events are durable; retain a bounded message window in RAM.
         items = deque(maxlen=16)
         acted = False
+        guard = StreamRepetitionGuard()
+        repetition = None
+        interrupt_deadline = None
         while True:
+            if interrupt_deadline is not None and time.monotonic() >= interrupt_deadline:
+                raise RuntimeError("Meta repetition detected but turn interruption did not finish; inspect before restarting")
             while self.notifications:
                 event = self.notifications.popleft()
                 p = event.get("params", {})
                 if p.get("turnId") not in (None, turn_id):
                     continue
+                if event.get("method") == "item/agentMessage/delta" and repetition is None:
+                    repetition = guard.feed(p.get("itemId"), p.get("delta"))
+                    if repetition is not None:
+                        repetition = scrub_known(repetition, self._secrets)
+                        self.memory.append("meta_generation_loop", {"thread_id": self.session.get("thread_id"),
+                            "turn_id": turn_id, "item_id": p.get("itemId"), **repetition})
+                        self._save(status="interrupting_repetition", updated=utc())
+                        self._rpc("turn/interrupt", {"threadId": self.session["thread_id"], "turnId": turn_id})
+                        interrupt_deadline = time.monotonic() + 30
                 if event.get("method") == "item/completed":
                     item = p["item"]
                     acted = acted or self._is_action(item)
@@ -304,11 +346,14 @@ class CodexBackend:
                 if event.get("method") == "turn/completed" and p["turn"]["id"] == turn_id:
                     turn = p["turn"]
                     self._save(status=turn["status"], updated=utc())
+                    if repetition is not None and turn["status"] in {"completed", "interrupted"}:
+                        raise RepetitiveGeneration(repetition)
                     if turn["status"] != "completed":
                         raise RuntimeError(f"Codex turn {turn['status']}: {scrub_known(turn.get('error'), self._secrets)}")
                     texts = [i.get("text", "") for i in turn.get("items", []) if i.get("type") == "agentMessage"]
                     return turn, texts or list(items), acted or any(self._is_action(i) for i in turn.get("items", []))
-            self._pump()  # no total teacher turn/research timeout
+            remaining = max(.1, interrupt_deadline-time.monotonic()) if interrupt_deadline is not None else 30
+            self._pump(timeout=min(30, remaining))  # no total teacher turn/research timeout
 
     @staticmethod
     def _answer(text):

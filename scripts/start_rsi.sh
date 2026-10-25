@@ -7,10 +7,12 @@ web=false
 upgrade=false
 resume=false
 recover_meta=false
+restart_control=false
 action=start
 usage() {
   cat <<'HELP'
 用法：bash scripts/start_rsi.sh [--web] [--upgrade | --resume | --recover-meta] [--campaign NAME]
+      bash scripts/start_rsi.sh --restart-control [--web] [--campaign NAME]
       bash scripts/start_rsi.sh --status
       bash scripts/start_rsi.sh --logs
 默认检查环境和Meta连接，首次初始化，然后后台启动/恢复同名loop。
@@ -18,6 +20,7 @@ usage() {
 --upgrade 在旧任务已终止且loop退出后升级现有campaign，保留全部历史。
 --resume 修复NEEDS_INPUT原因后显式恢复；保留基线、研究副本和会话，开启新的Meta请求。
 --recover-meta 从已完成的Meta原始回复恢复ready提案；不重新调用模型、不重做研究。
+--restart-control 仅在WAITING且无活动Meta时检查并重启Controller，接手原集群任务。
 --status 查看持久状态；--logs 跟随Controller日志，Ctrl-C不停止loop。
 可用 RSI_PYTHON 指定控制环境解释器，默认沿用已安装的远端专用环境。
 HELP
@@ -28,6 +31,7 @@ while (($#)); do
     --upgrade) upgrade=true; shift ;;
     --resume) resume=true; shift ;;
     --recover-meta) recover_meta=true; shift ;;
+    --restart-control) restart_control=true; shift ;;
     --campaign) [[ $# -ge 2 ]] || { usage; exit 2; }; campaign="$2"; shift 2 ;;
     --status) action=status; shift ;;
     --logs) action=logs; shift ;;
@@ -37,6 +41,7 @@ while (($#)); do
 done
 [[ "$upgrade" == false || "$resume" == false ]] || { echo '--upgrade与--resume不能同时使用' >&2; exit 2; }
 [[ "$recover_meta" == false || ( "$upgrade" == false && "$resume" == false ) ]] || { echo '--recover-meta不能与--upgrade或--resume同时使用' >&2; exit 2; }
+[[ "$restart_control" == false || ( "$upgrade" == false && "$resume" == false && "$recover_meta" == false && "$action" == start ) ]] || { echo '--restart-control不能与迁移或状态查看参数混用' >&2; exit 2; }
 [[ "$campaign" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$ ]] || { echo 'campaign名称无效' >&2; exit 2; }
 rsi_python="${RSI_PYTHON:-/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python}"
 [[ -x "$rsi_python" ]] || { echo "控制Python不存在：$rsi_python；请在远端devspace执行。" >&2; exit 1; }
@@ -118,6 +123,9 @@ PY
 }
 
 # Keep this lock in the controller child until it exits. PID files are not locks.
+if [[ "$restart_control" == true ]]; then
+  "$rsi_python" scripts/restart_rsi_control.py --site "$site" --campaign "$campaign"
+fi
 exec 9>"$runtime/$campaign.lock"
 if ! flock -n 9; then
   echo "同名loop已在运行或启动中：$campaign"

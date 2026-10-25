@@ -18,7 +18,7 @@ import uuid
 
 from .contracts import REPO, inside, load_site, worker_environment
 from .codex_auth import resolve_auth, scrub_known
-from .meta import FINAL_SCHEMA
+from .meta import FINAL_SCHEMA, CodexBackend
 from .codex_sandbox import sandbox_mode, thread_sandbox, turn_sandbox
 
 
@@ -229,10 +229,7 @@ def check_connection(site, output, *, offline=False, timeout=180, env=None, sand
                         answers.extend(item.get("text", "") for item in completed.get("items", []) if item.get("type") == "agentMessage")
                         valid = False
                         for answer in answers:
-                            try:
-                                value = json.loads(answer)
-                            except (ValueError, TypeError):
-                                continue
+                            value = CodexBackend._answer(answer)
                             valid = valid or value == {"status": "needs_input", "summary": "READY", "proposal_path": None}
                         if not valid:
                             raise ProtocolError("Completed turn did not return the required READY JSON")

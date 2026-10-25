@@ -45,6 +45,9 @@ elif command in ('run','executor'):
 elif command=='status':print('{"phase":"BASELINE"}')
 ''')
     (scripts/'check_meta_connection.py').write_text("import os\nraise SystemExit(3 if os.environ.get('FAKE_BAD_CHECK') else 0)\n")
+    (scripts/'restart_rsi_control.py').write_text("import json,sys\nfrom pathlib import Path\n"
+        "s=json.loads(Path(sys.argv[2]).read_text())\n"
+        "with (Path(s['user_root'])/'calls.jsonl').open('a') as f:f.write(json.dumps({'command':'restart-control'})+'\\n')\n")
     (scripts/'run_web.sh').write_text('exit 97\n')
     env={**os.environ,'RSI_PYTHON':sys.executable}
     def run(*arguments,extra=None):
@@ -147,4 +150,20 @@ def test_recover_meta_runs_before_controller_without_resuming_or_upgrading(launc
 def test_recover_meta_conflicts_with_other_migrations(launcher,option):
     root,site,config,run=launcher
     result=run('--recover-meta',option)
+    assert result.returncode==2 and not (root/'calls.jsonl').exists()
+
+
+def test_restart_control_helper_precedes_start_and_reuses_campaign(launcher):
+    root,site,config,run=launcher
+    campaign=root/'campaigns/chess-autonomous-v2'
+    campaign.mkdir(parents=True);(campaign/'campaign.json').write_text('{"phase":"WAITING"}')
+    result=run('--restart-control')
+    assert result.returncode==0,result.stderr
+    assert calls(root)==['restart-control','doctor','run']
+
+
+@pytest.mark.parametrize('option',['--resume','--upgrade','--recover-meta','--status'])
+def test_restart_control_conflicting_actions_do_not_stop_any_process(launcher,option):
+    root,site,config,run=launcher
+    result=run('--restart-control',option)
     assert result.returncode==2 and not (root/'calls.jsonl').exists()

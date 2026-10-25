@@ -47,8 +47,10 @@ for line in sys.stdin:
             time.sleep(30)
             continue
         answer={'status':'needs_input','summary':'WRONG' if os.environ.get('FAKE_MODE')=='wrong' else 'READY','proposal_path':None}
+        answer_text=json.dumps(answer)
+        if os.environ.get('FAKE_MODE')=='wrapped':answer_text='Verified:\n```json\n'+answer_text+'\n```'
         # A fast completion may arrive before the turn/start acknowledgement.
-        emit({'method':'item/completed','params':{'item':{'type':'agentMessage','text':json.dumps(answer)}}})
+        emit({'method':'item/completed','params':{'item':{'type':'agentMessage','text':answer_text}}})
         emit({'id':rid,'result':{'turn':{'id':'turn-test'}}})
         turn={'id':'turn-test','status':'completed'}
         if os.environ.get('FAKE_MODE')=='auth':
@@ -179,3 +181,8 @@ def test_model_tools_check_requires_event_and_real_file_proof(connection_site,tm
     assert result['model_tool_calls_tested'] is passed
     if not passed:
         assert 'Model tool check failed' in result['detail']
+
+
+def test_tool_readiness_accepts_same_fenced_json_as_research(connection_site,tmp_path):
+    result=check_connection(connection_site,tmp_path/'wrapped',tools_check=True,env=environment('wrapped'))
+    assert result['ok'] and result['model_tool_calls_tested']

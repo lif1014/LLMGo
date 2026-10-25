@@ -54,7 +54,7 @@ def project(event):
         method = message.get("method", "")
         lower = method.lower()
         view.update(channel="coach", method=method, thread_id=params.get("threadId", body.get("thread_id")),
-                    turn_id=params.get("turnId", turn.get("id") if isinstance(turn, dict) else None),
+                    turn_id=params.get("turnId", turn.get("id") or body.get("turn_id")),
                     item_id=params.get("itemId", item.get("id")))
         label = item.get("type", "")
         if kind == "meta_heartbeat":
@@ -63,6 +63,15 @@ def project(event):
             view.update(category="error", title="教练错误/诊断", text=clipped(body.get("error", body.get("text", message.get("text", "")))))
         elif kind == "meta_status":
             view.update(category="lifecycle", title="教练状态 · " + str(body.get("status", "")))
+        elif kind == "meta_generation_loop":
+            view.update(category="error", title="教练重复生成 · 正在中断",
+                        text=f"同一助手消息出现{body.get('cycles')}次周期重复，覆盖{body.get('repeated_chars')}字符；原输出保留。")
+        elif kind == "meta_generation_recovery":
+            view.update(category="lifecycle", title="教练已切换恢复会话",
+                        text=f"第{body.get('attempt')}次恢复；从原workspace、Memory和已有任务继续。")
+        elif kind == "meta_generation_exhausted":
+            view.update(category="error", title="教练重复生成 · 自动恢复未成功",
+                        text="已尝试两次恢复；等待检查上游模型服务或Meta配置。")
         elif kind == "meta_send":
             view.update(category="request", title="发送 · " + method)
         elif method == "error" or message.get("error") is not None:

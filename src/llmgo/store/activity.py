@@ -63,6 +63,18 @@ def project(event):
             view.update(category="error", title="教练错误/诊断", text=clipped(body.get("error", body.get("text", message.get("text", "")))))
         elif kind == "meta_status":
             view.update(category="lifecycle", title="教练状态 · " + str(body.get("status", "")))
+        elif kind == "meta_continuation":
+            view.update(category="lifecycle", title="研究未交接 · 自动续接",
+                        text="本次模型发言结束，已有进度保留；继续工具工作或显式提交完成记录。")
+        elif kind == "meta_protocol_recovery":
+            view.update(category="lifecycle", title="交接未完成 · 已换恢复会话",
+                        text=f"第{body.get('attempt')}次会话恢复；保留workspace与Memory，不重复提交任务。")
+        elif kind == "meta_completion_committed":
+            view.update(category="lifecycle", title="研究已明确完成 · 正在校验提案",
+                        text=clipped(body.get("answer", {}).get("summary")))
+        elif kind == "meta_completion_rejected":
+            view.update(category="error", title="完成记录校验未通过 · 继续研究",
+                        text=clipped(body.get("error")))
         elif kind == "meta_generation_loop":
             view.update(category="error", title="教练重复生成 · 正在中断",
                         text=f"同一助手消息出现{body.get('cycles')}次周期重复，覆盖{body.get('repeated_chars')}字符；原输出保留。")
@@ -105,6 +117,12 @@ def project(event):
         else:
             view["title"] = method or kind
         view["stream_key"] = ":".join(str(view.get(k) or "") for k in ("thread_id", "turn_id", "item_id", "stream"))
+    elif kind in {"controller_retry", "controller_blocked", "controller_recovered"}:
+        blocked = kind == "controller_blocked"
+        view.update(channel="coach", category="error" if blocked else "lifecycle",
+            title={"controller_retry":"控制器自动恢复 · 等待重试", "controller_blocked":"控制器暂停 · 需要处理",
+                   "controller_recovered":"控制器已恢复"}[kind],
+            text=clipped(body.get("error", "恢复成功")))
     elif kind in {"command_started", "command", "poll_started", "poll_finished", "platform_observation",
                   "lifecycle_transition", "observation_error", "reconciliation_required", "artifact_invalid",
                   "log_collection_error", "submission_intent", "submission_uncertain", "task_submitted", "task_reconciled", "retry_guard"}:

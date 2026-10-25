@@ -24,7 +24,11 @@ bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --web
 
 若 Meta 已完成研究、写好提案，却因结束回复的格式而退出，且campaign仍为 `PLANNING`，执行 `bash scripts/start_rsi.sh --recover-meta --web`。它从持久日志确认对应thread/turn已完成，解析原最终回复（支持说明文字后的单个JSON代码块），备份状态与session，验证并冻结原提案，再启动评测；不重新调用研究模型，不靠猜测或仅凭磁盘上有proposal就提交。多个互相冲突的JSON、未完成turn、其他workspace或活动进程均拒绝恢复。若运维已完成提案恢复，状态已变成 `EXPERIMENT`/`EVALUATING`/`WAITING`，直接 `bash scripts/start_rsi.sh --web` 继续，不重复加恢复参数。
 
-启动检查现在包含 `--sandbox-check --tools-check`：不仅验证 API 返回 READY，还要求模型亲自调用 `exec_command`，产生成功命令事件并正确复制一个随机测试文件。普通 `--sandbox-check` 单独使用仍只证明客户端可以运行命令。研究请求不强制每次上游响应都采用最终JSON schema；模型可正常连续调用工具，结束时仍必须返回有效JSON。若没有任何工具动作就返回 `needs_input`，同一会话会追加一次澄清；真正的用户问题仍可暂停。无效最终JSON也只补正一次，所有续行和原始事件保留，研究本身没有总时长限制。
+启动检查包含 `--sandbox-check --tools-check`：不仅验证 API 返回 READY，还要求模型亲自调用 `exec_command`，产生成功命令事件并正确复制一个随机测试文件。普通 `--sandbox-check` 单独使用仍只证明客户端可以运行命令。研究请求不强制每次上游响应采用最终JSON schema。Meta完成修改和测试后，优先执行prompt给出的 `scripts/finish_research.py --request ... --summary '...'`：原子保存绑定本次请求、proposal与研究源码哈希的完成记录，Controller在模型结束发言后校验并准备实验。仍兼容原三字段最终JSON；proposal草稿存在不会触发提交。
+
+无效结束回复会自动续接，有工具进展的研究没有总turn/时间上限。连续两次没有工具动作也没有明确交接，换新会话从原workspace/Memory继续；每次调用最多换两次，再交给Controller延迟重试。断流、暂时服务失败和交接协议持续失败依次等待60、120、240、480、600秒，最多自动重试5次；重启保留计数与下次时间。认证/协议配置错误、未知程序异常或产物身份不符明确转为`NEEDS_INPUT`，保留证据并提示处理方法。网页展示恢复阶段、错误类别、次数和下次时间；GPU监控仍遵循5–10分钟间隔。
+
+候选源码完整复制后才原子发布；Controller若在发布后、保存状态前退出，会核对并复用完全相同的候选，不覆盖不同内容。完成记录在campaign的`meta-requests/REQUEST_ID/`，不混入研究源码；完成后又改代码必须重新确认。控制端修复不要求升级已冻结评测源码：现有第四轮仍为`PLANNING`且Meta已退出时，普通 `bash scripts/start_rsi.sh --web` 可继续原研究。
 
 Meta重复生成防护只检查同一助手消息中的长周期重复：至少2048字符、至少12次完全相同的短周期；工具stdout与正常长计算不在检测范围。触发后记录`meta_generation_loop`，通过app-server中断该turn，保留原会话与文件，换新thread从Memory和已有任务继续；每个研究请求最多恢复两次，再次失败转NEEDS_INPUT。网页事件中能区分发现循环、切换会话与恢复耗尽。它不限制整轮研究时长，也不停止集群任务。
 

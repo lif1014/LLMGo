@@ -1,6 +1,7 @@
 """Persistent, method-agnostic research coordination with an external evaluator."""
 from __future__ import annotations
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from llmgo.remote.lifecycle import JobExecutor
@@ -9,6 +10,7 @@ from .contracts import SCHEMA, atomic_json, digest, file_hash, identifier, insid
 from .evaluator import engine_identity
 from .ladder import evaluation_plan, panel_summary, opponent
 from .memory import CampaignLocked, MemoryStore
+from .meta_protocol import MetaFailure
 
 RESEARCH_VERSION = "autonomous-chess-v2"
 
@@ -65,6 +67,14 @@ class Controller:
     def save(self):
         self.state["updated"] = utc()
         self.memory.save_state(self.state)
+        self._publish_control_status()
+
+    def _publish_control_status(self):
+        # Small, read-only web compatibility artifact. Older Web processes can
+        # show recovery without loading a multi-megabyte campaign or raw log.
+        atomic_json(self.root/"controller-status.json", {"schema_version":1,
+            **{key:self.state.get(key) for key in ("campaign_id","phase","round","active_job",
+                                                  "controller_recovery","updated")}})
 
     def upgrade(self, site, repo=None):
         """Explicit operator migration: keep old evidence and initial reference immutable."""
@@ -278,20 +288,43 @@ class Controller:
         if Path(model).resolve() != Path(self.site["base_model"]).resolve():
             model = str(inside(self.site["user_root"], model))
         folder = self.root/"candidates"/f"r{self.state['round']:06d}"
-        snapshot = source_snapshot(workspace, folder/"source")
-        cards = None
-        if (workspace/"skills.json").is_file():
-            cards = folder/"skills.json"
-            shutil.copy2(workspace/"skills.json", cards)
+        cards = folder/"skills.json" if (workspace/"skills.json").is_file() else None
+        if folder.exists():
+            # Crash after publishing files but before saving campaign state:
+            # reuse exactly the same prepared experiment, never overwrite it.
+            from .meta_protocol import workspace_hash
+            snapshot = read_json(folder/"source/source-manifest.json")
+            verify_source(snapshot)
+            if (snapshot["root"] != str(folder/"source") or read_json(folder/"proposal.json") != proposal
+                    or snapshot["sha256"] != workspace_hash(workspace)
+                    or cards is not None and file_hash(cards) != file_hash(workspace/"skills.json")
+                    or cards is None and (folder/"skills.json").exists()):
+                raise ValueError("Prepared candidate differs from this proposal; inspect preserved candidate before retrying")
+        else:
+            # Publish a complete snapshot atomically; partial copies are never
+            # mistaken for a frozen candidate by a later Controller run.
+            folder.parent.mkdir(parents=True, exist_ok=True)
+            temporary = Path(tempfile.mkdtemp(prefix="."+folder.name+"-prepare-", dir=folder.parent))
+            try:
+                snapshot = source_snapshot(workspace, temporary/"source")
+                snapshot["root"] = str(folder/"source")
+                atomic_json(temporary/"source/source-manifest.json", snapshot)
+                if cards is not None:
+                    shutil.copy2(workspace/"skills.json", temporary/"skills.json")
+                atomic_json(temporary/"proposal.json", proposal)
+                temporary.rename(folder)
+            finally:
+                if temporary.exists():
+                    shutil.rmtree(temporary)
         candidate = {"id": folder.name, "parent_id": self.state["working"]["id"], "source": snapshot,
                      "model_path": model, "model_sha256": None, "skills_path": str(cards) if cards else None, "skills_sha256": file_hash(cards) if cards else None,
                      "hypothesis": proposal["hypothesis"], "proposal": proposal, "jobs": jobs,
                      "evaluation": plan, "evaluations": [], "fingerprint": digest({"source":snapshot["sha256"], "model":model})}
-        atomic_json(folder/"proposal.json", proposal)
         self.state.update(candidate=candidate, candidate_step=0, evaluation_cursor=0,
                           pending_evaluations=[], phase="EXPERIMENT", meta_stalls=0)
         self.memory.append("hypothesis", {"candidate_id": candidate["id"], "hypothesis": candidate["hypothesis"],
-                                          "source": snapshot["sha256"], "proposal": proposal})
+                                          "source": snapshot["sha256"], "proposal": proposal},
+                           event_id="hypothesis-"+candidate["id"])
         self.save()
         return candidate
 
@@ -420,22 +453,71 @@ class Controller:
         self.memory.append("operator_resume", {"previous_reason": self.state.get("needs_input"),
             "previous_phase": self.state.get("resume_phase", "PLANNING"),
             "meta_request_revision": self.state.get("meta_request_revision", 0) + 1})
-        self.state.update(phase=self.state.get("resume_phase", "PLANNING"), active_job=None,
+        self.state.update(phase=self.state.get("resume_phase", "PLANNING"),
+                          active_job=self.state.pop("resume_active_job", None),
                           needs_input=None, meta_stalls=0,
                           meta_request_revision=self.state.get("meta_request_revision", 0) + 1)
+        self.state.pop("controller_recovery", None)
         self.save()
         return {"phase": self.state["phase"]}
 
+    def _clear_recovery(self, stage):
+        recovery = self.state.get("controller_recovery")
+        if recovery and recovery.get("stage") == stage:
+            self.memory.append("controller_recovered", {"stage": stage, "attempts": recovery["attempt"],
+                                                       "workspace": self.state.get("workspace")})
+            self.state.pop("controller_recovery", None)
+            self.save()
+
+    def _control_failure(self, exc, stage):
+        """Persist a bounded retry schedule, or stop clearly at an unsafe boundary.
+
+        Never resubmit here: task submission/reconciliation remains owned by
+        Executor. Unknown bugs and artifact integrity failures require inspection.
+        """
+        from .connection_check import scrub
+        previous = self.state.get("controller_recovery") or {}
+        attempt = previous.get("attempt", 0)+1 if previous.get("stage") == stage else 1
+        retryable = exc.retryable if isinstance(exc, MetaFailure) else isinstance(exc, (OSError, TimeoutError))
+        code = getattr(exc, "code", "io" if retryable else "unexpected")
+        error = scrub(str(exc))[:4000]
+        retry = retryable and attempt <= 5
+        delay = min(600, 60*2**min(attempt-1, 4)) if retry else None
+        recovery = {"status": "waiting" if retry else "blocked", "stage": stage,
+            "code": code, "error_type": type(exc).__name__, "error": error,
+            "attempt": attempt, "max_retries": 5, "retryable": retryable,
+            "next_retry_at": time.time()+delay if retry else None, "updated": utc()}
+        self.state["controller_recovery"] = recovery
+        self.memory.append("controller_retry" if retry else "controller_blocked", recovery)
+        if retry:
+            self.save()
+            return {**recovery, "status": "retry_wait"}
+        self.state.update(resume_phase=self.state["phase"], resume_active_job=self.state.get("active_job"),
+            phase="NEEDS_INPUT", needs_input=f"{stage} / {code}: {error}. "
+                + ("自动重试5次后仍未恢复；" if retryable else "需要检查配置或完整性，未自动重试；")
+                + "研究文件、任务与回执均保留。处理原因后用start_rsi.sh --resume --web恢复。")
+        self.save()
+        return {"status": "needs_input", "detail": self.state["needs_input"], "recovery": recovery}
+
     def run(self, *, backend=None, max_steps=None, poll_seconds=None):
         with self.memory.lock():
+            self._publish_control_status()
             iterations = 0
             while max_steps is None or iterations < max_steps:
-                result = self.step()
                 iterations += 1
+                recovery = self.state.get("controller_recovery") or {}
+                if recovery.get("status") == "waiting" and recovery["next_retry_at"] > time.time():
+                    time.sleep(min(60, recovery["next_retry_at"]-time.time()))
+                    continue
+                try:
+                    result = self.step()
+                except Exception as exc:
+                    result = self._control_failure(exc, "advance")
+                    if result["status"] == "needs_input":
+                        return result
+                    continue
+                self._clear_recovery("advance")
                 if result["status"] == "needs_meta":
-                    if backend is None:
-                        from .meta import CodexBackend
-                        backend = CodexBackend(self.site, self.memory)
                     workspace = Path(result["workspace"])
                     prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
                         f"完整证据在 {self.root}。只能通过RL和改进skills提升Qwen3.5-4B，可单独或组合使用。"
@@ -450,10 +532,23 @@ class Controller:
                         "评测套件/裁判/正式记录不可修改。提交协议及任意计算任务格式见 docs/rsi-operations.md。"
                         "可以通过 research job 调用受保护 source/scripts/evaluate.py 做快速或完整测试。"
                         "不要求本轮成功才能继续。请现在实际调用工具读取文件并开展研究，不要仅宣布准备开始就结束。"
-                        "保存实验结论，最后写 proposal.json 并返回JSON：status=ready、summary和proposal_path绝对路径；"
+                        "保存实验结论，完成proposal.json和验证后，使用本次请求提供的finish_research.py命令明确交接；"
+                        "也兼容最终JSON：status=ready、summary和proposal_path绝对路径；"
                         "只有确实需要用户补充信息或权限时返回needs_input，并明确说明实际障碍和需要回答的问题。"
                         f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")
-                    answer = backend.turn(workspace, prompt)
+                    try:
+                        if backend is None:
+                            from .meta import CodexBackend
+                            active_backend = CodexBackend(self.site, self.memory)
+                        else:
+                            active_backend = backend
+                        answer = active_backend.turn(workspace, prompt)
+                    except Exception as exc:
+                        result = self._control_failure(exc, "meta")
+                        if result["status"] == "needs_input":
+                            return result
+                        continue
+                    self._clear_recovery("meta")
                     self.memory.append("meta_result", answer)
                     if answer["status"] == "needs_input":
                         self.state.update(phase="NEEDS_INPUT", needs_input=answer["summary"], resume_phase="PLANNING")
@@ -468,6 +563,12 @@ class Controller:
                         if self.state["meta_stalls"] >= 3:
                             self.state.update(phase="NEEDS_INPUT", needs_input=str(exc), resume_phase="PLANNING")
                         self.save()
+                    except Exception as exc:
+                        result = self._control_failure(exc, "prepare")
+                        if result["status"] == "needs_input":
+                            return result
+                    else:
+                        self._clear_recovery("prepare")
                 elif result["status"] == "waiting":
                     time.sleep(min(60, poll_seconds or self.site.get("poll_seconds", 120)))
                 elif result["status"] in ("submission_uncertain", "needs_input"):

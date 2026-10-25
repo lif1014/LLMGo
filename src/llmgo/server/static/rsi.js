@@ -113,12 +113,14 @@ function matrix(rows){
   }target.append(table);
 }
 function renderStatus(s,x){
-  const m=s.meta||{},j=s.active_job||{},r=x.report||{},h=x.heartbeat||{};
+  const m=s.meta||{},j=s.active_job||{},r=x.report||{},h=x.heartbeat||{},recovery=s.controller_recovery;
   if(m.token_usage)usage(m.token_usage);
   el("overview").textContent=(labels[s.phase]||s.phase)+" · 工作版本 "+(s.working?.id||s.incumbent?.id||"—")+" · 实测最佳 "+(s.best?.candidate_id||"—")+
     (s.round===0?" · 初始基线（研究轮次0，不是难度0）":" · 第"+s.round+"轮研究")+(j.level!=null?" · 当前评测 L"+j.level+" / "+j.id:"");
   el("meta-status").textContent="最近记录状态："+show(m.status)+"\n线程："+show(m.thread_id)+"\n轮次："+show(m.turn_id)+"\n工作目录："+show(m.cwd)+
-    "\n最近状态时间："+date(m.updated)+"\n记录的进程："+(m.process?m.process.host+" / PID "+m.process.pid:"当前无已记录子进程");
+    "\n最近状态时间："+date(m.updated)+"\n记录的进程："+(m.process?m.process.host+" / PID "+m.process.pid:"当前无已记录子进程")+
+    (recovery?"\n控制器："+(recovery.status==="waiting"?"等待自动恢复":"暂停，需要处理")+" · "+recovery.stage+" / "+recovery.code+
+      "\n失败次数："+recovery.attempt+" · 最多自动重试 "+recovery.max_retries+"次\n下一次重试："+date(recovery.next_retry_at)+"\n原因："+show(recovery.error):"");
   const left=r.next_check_at?Math.ceil(r.next_check_at-(s.server_time||Date.now()/1000)):null;
   el("executor-state").textContent="模式："+(x.mode||"embedded")+"\n任务："+(j.id||r.job_id||"—")+" / 平台ID "+show(r.task_id)+
     "\n平台："+show(r.platform_status)+" / 交接："+show(r.status)+"\n已检查："+show(r.checks)+"次 · 间隔 "+show(r.interval_seconds)+"秒\n下次检查："+date(r.next_check_at)+
@@ -405,8 +407,20 @@ async function student(generation){
 async function refresh(){
   if(state.busy||state.paused||document.hidden||!state.campaign)return;state.busy=true;const generation=state.generation;
   try{const s=await json(api("/overview"));if(generation!==state.generation)return;
+    // Older Python Web services can serve this small JSON artifact without a
+    // restart. Never read the full campaign or raw research journal on refresh.
+    if(s.controller_status_version!==1){
+      try{const page=await json(api("/artifact?path=controller-status.json&offset=0&length=16384"));
+        const c=page.eof?JSON.parse(page.text):null;
+        if(c?.schema_version===1&&c.campaign_id===state.campaign){
+          s.latest_job??=s.active_job;s.active_job=s.active_job?.id===c.active_job?s.active_job:null;
+          s.phase=c.phase;s.round=c.round;s.controller_recovery=c.controller_recovery;s.active_job_id=c.active_job;
+        }
+      }catch(e){/* Legacy campaigns have no compatibility artifact yet. */}
+      if(generation!==state.generation)return;
+    }
     const x=await json(api("/executor"));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await loadArchivedJobs(generation);if(generation!==state.generation)return;renderStatus(s,x);state.totalHours=s.worker_gpu_hours||0;
-    const latest=s.active_job?.id;if(state.autoJob&&latest&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
+    const latest=s.active_job?.id||s.latest_job?.id;if(state.autoJob&&latest&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
     options("job",visibleJobs().slice().reverse(),state.job,j=>j.id+" · "+difficulty(j.id)+" · "+roleName(j.role)+" · "+j.status+" · "+j.candidate_id,j=>j.id);
     for(const source of ["research","executor"])if(state.streams[source].follow)await readActivity(source);
     if(generation!==state.generation)return;

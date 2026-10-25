@@ -91,6 +91,22 @@ def test_projection_keeps_tool_lifecycle_usage_errors_and_stream_identity():
     assert "Running / waiting" in poll["title"] and "120秒" in poll["title"]
 
 
+def test_recovery_events_and_overview_distinguish_latest_task_from_active(tmp_path,monkeypatch):
+    root=tmp_path/'demo';memory,_=indexed(root,[])
+    for kind in ['controller_retry','controller_recovered','meta_continuation','meta_protocol_recovery','meta_completion_committed']:
+        memory.append(kind,{'stage':'meta','attempt':1,'next_retry_at':1234})
+        assert memory.recent(1,kind)
+        assert project(event(kind,kind,{}))['category']=='lifecycle'
+    assert project(event('blocked','controller_blocked',{}))['category']=='error'
+    atomic_json(root/'campaign.json',{'campaign_id':'demo','phase':'PLANNING','active_job':None,
+        'jobs':{'j1':{'id':'j1','status':'Killed'}},'attempts':[],
+        'controller_recovery':{'status':'waiting','attempt':1,'next_retry_at':1234}})
+    result=client_for(root,monkeypatch).get('/api/rsi/campaigns/demo/overview').json()
+    assert result['active_job'] is result['active_job_id'] is None
+    assert result['latest_job']['id']=='j1'
+    assert result['controller_recovery']['next_retry_at']==1234
+
+
 def test_api_is_readonly_and_never_replays_raw_on_refresh(tmp_path, monkeypatch):
     root = tmp_path/"demo"
     indexed(root, [event(i) for i in range(180)])

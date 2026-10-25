@@ -37,6 +37,8 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 
 常规流程在workspace写proposal.json，使用 `.agents/skills/rsi-submit/SKILL.md`；Controller快照、Executor提交。`preview CAMPAIGN` 可查看真实argv但不创建任务。每次manifest的description含campaign、job ID与SHA，先持久保存submission intent，再调用create，超时按description对账，不盲目重复。
 
+完成后优先用prompt给出的`finish_research.py --request ABS_REQUEST_JSON --summary '...'`保存本请求的完成记录，绑定proposal与源码哈希，不提交任务。仍兼容三字段最终JSON。完成后又改源码应重新确认，草稿存在不等于完成。恢复规则见[rsi-operations.md](rsi-operations.md)。
+
 新容器入口为源快照的 scripts/worker_entry.py，参数 `--manifest ABS_PATH --manifest-sha256 HASH`。它先核对manifest，在指定基底镜像建立/核验共享Worker overlay，随后exec真正的worker解释器。不能只在devspace pip安装就假定GPU job也拥有环境。
 
 允许Meta-Agent自行提交独立研究任务；应持久记任务ID、输出和结论，避免让原始轮询填满研究上下文。常规任务优先Executor。Controller持锁调用Meta时不要递归run/prepare/step以免抢同一写锁。
@@ -49,6 +51,8 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 | src/llmgo/rsi/codex_auth.py | 从私有TOML/环境解析认证，仅注入子进程并脱敏 |
 | src/llmgo/rsi/connection_check.py、scripts/check_meta_connection.py | 真实 app-server READY 连接测试与私有协议日志 |
 | src/llmgo/rsi/codex_bridge.py、scripts/serve_meta_bridge.py | 保留 Codex 工具和会话，Responses 转 Chat Completions |
+| src/llmgo/rsi/meta_protocol.py、scripts/finish_research.py | 请求绑定的研究完成记录、源码哈希检查与故障分类 |
+| tests/test_research_completion.py、tests/test_controller_recovery.py | 交接崩溃、过期记录、持久重试与候选原子发布回归 |
 | configs/rsi/meta-bridge-requirements.txt | 独立转接环境固定依赖版本，不影响训练环境 |
 | tests/test_meta_connection.py、tests/test_codex_bridge.py | 配置认证、脱敏、URL规范化、流式及工具事件回归 |
 | scripts/request_evaluation.py、src/llmgo/rsi/evaluation_request.py | 单难度或全八档评测提案接口，保留RL任务并交给Executor |

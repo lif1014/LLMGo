@@ -35,7 +35,7 @@ for line in sys.stdin:
         emit({"id":rid,"result":{"turn":{"id":"turn-one"}}})
         emit({"method":"item/agentMessage/delta","params":{"turnId":"turn-one","delta":"visible analysis"}})
         emit({"method":"thread/tokenUsage/updated","params":{"threadId":"thread-one","tokenUsage":{"total":{"inputTokens":100,"outputTokens":20},"last":{"totalTokens":120}}}})
-        status = "failed" if request["params"]["input"][0]["text"] == "fail" else "completed"
+        status = "failed" if request["params"]["input"][0]["text"].splitlines()[0] == "fail" else "completed"
         answer = json.dumps({"status":"ready","summary":"one hypothesis","proposal_path":"proposal.json"})
         emit({"method":"item/completed","params":{"turnId":"turn-one","item":{"id":"item-one","type":"agentMessage","text":answer}}})
         emit({"method":"turn/completed","params":{"turn":{"id":"turn-one","status":status,"items":[]}}})
@@ -75,7 +75,7 @@ def test_codex_jsonl_resume_visible_events_and_crash_result_reuse(tmp_path, isol
     with pytest.raises(RuntimeError, match="turn failed"):
         restored.turn(workspace, "fail")
     assert read_json(memory.root/"meta-session.json")["status"] == "failed"
-    assert memory.recent(1, "meta_failure")[0]["body"]["error_type"] == "RuntimeError"
+    assert memory.recent(1, "meta_failure")[0]["body"]["error_type"] == "MetaFailure"
     assert memory.recent(1, "meta_status")[0]["body"]["status"] == "failed"
 
 

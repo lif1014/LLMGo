@@ -119,7 +119,38 @@ python3 scripts/rsi.py note CAMPAIGN --text '证据、假设、反证与下一�
 
 研究阶段的 `NEEDS_INPUT` 经操作员修复后，用 `bash scripts/start_rsi.sh --resume --web` 恢复默认campaign；其他名称加 `--campaign NAME`。CLI `resume` 会记录 `operator_resume` 并增加 `meta_request_revision`，使同一workspace开启新的Meta请求，保留thread、基线和所有历史。普通重启仍会恢复已完成请求的结果，避免Controller崩溃后重复研究或提交；不要删除 `meta-session.json` 来绕过这个机制。已有研究workspace时不需要也不能用 `--upgrade` 代替恢复。
 
-Meta研究不向上游强制最终JSON schema，最终JSON仍在本地验证。没有工具动作的 `needs_input` 会收到一次 `meta_continuation` 提醒，要求实际执行已授权工作或说明明确的用户问题；再次确有问题时正常暂停，不无限重试。无效最终JSON最多补正一次。这些是结束协议补正次数，不是研究时间限制。原始回答、后续turn、工具及Token用量均保留在Memory和原会话中。
+Meta研究不向上游强制最终JSON schema。一次`turn/completed`只是模型回合结束，Controller继续判断是否明确交接；不能凭proposal草稿存在就登记任务。原始回答、续行、工具与Token用量均保留。
+
+### 明确完成研究
+
+每次研究有独立的`campaign/meta-requests/REQUEST_ID/request.json`。修改、测试及proposal全部完成后，Meta执行prompt给出的绝对路径命令：
+
+```bash
+# 使用当前prompt给出的控制Python与request路径，不用旧轮次request。
+python /user/lyh4170/LLMGo!/scripts/finish_research.py \
+  --request /user/lyh4170/rsi_campaigns/CAMPAIGN/meta-requests/REQUEST_ID/request.json \
+  --summary '完成的实验、验证结果与证据路径'
+```
+
+默认`--status ready --proposal proposal.json`；真正缺少用户输入时用`--status needs_input --summary '具体问题'`。命令原子写同目录`result.json`，不创建任务、不递归进入Controller；模型随后普通结束发言即可。完成记录绑定request ID、workspace、proposal SHA与研究源码SHA；提交后又改源码须重新执行，context与缓存按既有快照规则排除。之后仍经过Controller原有提案、资源与路径校验。
+
+兼容最终JSON：`{"status":"ready","summary":"...","proposal_path":"绝对路径"}`。只解析最后一条助手消息，接受唯一完整JSON围栏，拒绝歧义或不完整对象；完成文件与最终JSON的状态/目标冲突时要求修正。若Controller在接收最终回复前退出，已记录的Meta子进程已结束且完成记录哈希有效时，普通重启可离线接手，不重新调用模型。
+
+### 自动恢复与停止边界
+
+| 情况 | 控制端行为 |
+|---|---|
+| 无明确交接，但该回合有工具执行 | 原会话续接，无研究总回合或时间限制 |
+| 连续2次无工具、无完成记录 | 换新会话读取原workspace/Memory与已有任务；单次backend调用最多换2次 |
+| 断流、暂时服务错误、交接协议持续失败 | 持久保存`controller_recovery`，依次等60/120/240/480/600秒，最多自动重试5次 |
+| 在等待重试时重启 | 沿用计数与绝对下次时间，不立即重问模型 |
+| 401/403、无效key、协议配置问题、未知异常、产物身份不符 | `NEEDS_INPUT`显示具体阶段/类别；保留证据，不伪造成功 |
+| GPU创建响应不确定 | Executor保留intent并对账，Controller不重复创建 |
+| 快照已发布但状态未保存 | 只复用提案、源码、skills相同的快照；冲突保留原件并停止检查 |
+
+`controller_retry/recovered/blocked`、`meta_continuation`、`meta_protocol_recovery`与`meta_completion_committed/rejected`进入Memory及网页有界索引。网页显示恢复原因、次数与下一次时间，并分开`active_job`和`latest_job`；旧任务Killed不表示当前有活动任务。HTTP刷新只读磁盘，不查cctl或扫描完整日志。旧Python网页服务通过小型`controller-status.json`兼容读取新恢复状态，不必为此停止已有网页；新版接口直接在overview提供这些字段。浏览器需刷新以加载新版JS。
+
+上述间隔用于控制端故障恢复，GPU任务仍每5–10分钟轮询。操作员中断不会被自动吞掉；真正用户问题可暂停。处理具体原因后`--resume --web`清除恢复计数，保留workspace和已有任务ID。旧版因`format_retry`失败且仍为PLANNING的会话，新版会迁移后续接，无需init、upgrade或丢弃第四轮提案。
 
 连接验收：`python3 scripts/check_meta_connection.py --sandbox-check --tools-check`。`model_tool_calls_tested=true` 要求模型产生真实成功命令事件和随机测试文件的正确副本，仅返回READY无法通过；启动器默认执行这项检查。`--offline` 不调用模型，不能验证模型工具选择。
 

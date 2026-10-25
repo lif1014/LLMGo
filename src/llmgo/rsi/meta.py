@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import socket
 import subprocess
 import threading
@@ -17,6 +18,7 @@ from .contracts import atomic_json, digest, file_hash, inside, read_json, utc, w
 from .codex_auth import runtime_auth, scrub_known
 from .codex_sandbox import sandbox_mode, thread_sandbox, turn_sandbox
 from .generation_guard import RepetitiveGeneration, StreamRepetitionGuard
+from .meta_protocol import MetaFailure, ResearchHandshake, service_failure
 
 
 class MetaAgentBackend(Protocol):
@@ -96,12 +98,12 @@ class CodexBackend:
             channel, value = self.events.get(timeout=timeout)
         except queue.Empty:
             if self.proc.poll() is not None:
-                raise RuntimeError(f"Codex exited with status {self.proc.returncode}")
+                raise MetaFailure(f"Codex exited with status {self.proc.returncode}")
             self.memory.append("meta_heartbeat", {"thread_id": self.session.get("thread_id"),
                                                   "turn_id": self.session.get("turn_id")})
             return
         if channel == "eof":
-            raise RuntimeError("Codex app-server stream ended")
+            raise MetaFailure("Codex app-server stream ended")
         self._record(channel, value)
         if channel != "protocol":
             return
@@ -121,11 +123,15 @@ class CodexBackend:
         deadline = time.monotonic() + timeout
         while rid not in self.responses:
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Codex protocol acknowledgement timed out: {method}")
+                raise MetaFailure(f"Codex protocol acknowledgement timed out: {method}", code="rpc_timeout")
             self._pump(timeout=min(30, max(.1, deadline-time.monotonic())))
         response = self.responses.pop(rid)
         if "error" in response:
-            raise RuntimeError(f"Codex {method}: {scrub_known(response['error'], self._secrets)}")
+            error = response["error"]
+            message = f"Codex {method}: {scrub_known(error, self._secrets)}"
+            if error.get("code") in {-32600, -32601, -32602}:
+                raise MetaFailure(message, code="protocol_configuration", retryable=False)
+            raise service_failure(message)
         return response["result"]
 
     def turn(self, workspace, prompt):
@@ -135,13 +141,41 @@ class CodexBackend:
         context = workspace / "context.json"
         request_key = digest({"workspace": str(workspace), "prompt": prompt,
                               "context": file_hash(context) if context.exists() else None})
+        handshake = ResearchHandshake(self.memory.root, workspace, request_key)
         previous = self.session.get("process")
         if previous and _process_identity(previous["pid"]) == previous:
             raise RuntimeError("Previous Codex process is still alive; inspect it before starting another turn")
         if self.session.get("request_key") == request_key and self.session.get("answer"):
-            self.memory.append("meta_recovered", {"thread_id": self.session.get("thread_id"),
-                                                  "turn_id": self.session.get("turn_id")})
-            return self.session["answer"]
+            cached = self.session.get("result_source") != "file"
+            if not cached:
+                try:
+                    cached = handshake.read() == self.session["answer"]
+                except (ValueError, OSError, TypeError, KeyError) as exc:
+                    self.memory.append("meta_completion_rejected", {"request_id": request_key,
+                        "error": str(exc), "source": "cached_completion"})
+            if cached:
+                self.memory.append("meta_recovered", {"thread_id": self.session.get("thread_id"),
+                                                      "turn_id": self.session.get("turn_id")})
+                return self.session["answer"]
+        finish_command = handshake.publish()
+        # A deliberate file commit remains valid if the Controller died before
+        # receiving the final model message. Reuse it without another API call.
+        try:
+            committed = handshake.read()
+        except (ValueError, OSError, TypeError, KeyError):
+            committed = None  # The next turn will receive the rejection details.
+        if committed is not None:
+            self._save(answer=committed, status="completed", result_source="file",
+                       result_path=str(handshake.result_path), process=None, updated=utc())
+            self.memory.append("meta_completion_committed", {"request_id": request_key,
+                "result_path": str(handshake.result_path), "answer": committed, "recovered": True})
+            return committed
+        completion_prompt = ("\n明确交接接口：当前研究请求为 " + str(handshake.request_path) + "。"
+            "完成代码修改、测试和proposal后，执行 " + shlex.join(finish_command) +
+            " --summary '本轮完成内容与证据'。此命令保存绑定本次请求和当前源码哈希的完成记录，"
+            "不提交任务；之后结束发言即可。需要用户补充时加 --status needs_input，summary写具体问题。"
+            "只有proposal.json存在不代表完成；未完成就继续工具工作，不要提前调用完成命令。"
+            "完成后又修改研究文件必须重新执行完成命令。也兼容原来的三字段最终JSON。")
         self.events = queue.Queue()
         self.responses = {}
         self.notifications = deque()
@@ -168,14 +202,17 @@ class CodexBackend:
             "收到研究请求就立即使用工具读取证据并开展工作，不要把‘我将开始读取/研究’作为最终回答。"
             "只有确实缺少用户才能提供的信息或权限时才返回needs_input，summary必须写清实际阻碍和具体问题。"
             "可自行阅读文件、运行CPU命令、修改研究副本或登记计算任务的事项，不是缺少用户输入。"
-            "研究过程中正常使用工具；完成后才输出一个JSON对象，字段为status、summary、proposal_path。"
-            "status=ready时proposal_path须指向已写好的proposal.json；需要用户输入时status=needs_input且proposal_path=null。"
+            "研究过程中正常使用工具；完成后优先执行本次请求的finish_research.py命令保存明确交接记录。"
+            "也兼容最后输出JSON对象：status、summary、proposal_path；ready指向实际提案，needs_input时proposal_path=null。"
             "参阅本目录docs/rsi-operations.md、.agents/skills中的Memory、提交和Executor说明。"
-        )
+        ) + completion_prompt
 
         command = [self.site["codex_bin"], "app-server"]
-        self.proc = self.popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        try:
+            self.proc = self.popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        except OSError as exc:
+            raise MetaFailure(str(exc), code="launcher", retryable=False) from exc
         self._save(process=_process_identity(self.proc.pid), cwd=str(workspace), sandbox_mode=isolation)
         readers = []
         for stream, channel in ((self.proc.stdout, "stdout"), (self.proc.stderr, "stderr")):
@@ -211,6 +248,11 @@ class CodexBackend:
             turn_ids = [t["id"] for t in prior_turns]
             review = self.session.get("review", {}) if same_request else {}
             next_prompt = self.session.get("pending_prompt", prompt) if same_request else prompt
+            # Old failed sessions used a single format_retry bit. Migrate without
+            # rethrowing their saved terminal reply forever after ordinary restart.
+            review = {k:v for k,v in review.items() if k != "format_retry"}
+            if completion_prompt not in next_prompt:
+                next_prompt += completion_prompt
             self._save(thread_id=thread_id, request_key=request_key, answer=None, updated=utc())
             while True:
                 if recovered is not None:
@@ -250,7 +292,7 @@ class CodexBackend:
                         next_prompt = (prompt + "\n恢复说明：上一会话的助手文字出现长循环重复，已中断该turn，原始记录仍保留。"
                             "请先读取context.json、Memory摘要和workspace已有文件，从实际进度继续，不重做已完成工作。"
                             "先核对已有任务ID、提交intent与产物，不能重复提交训练或评测。不要读取或复述整段重复输出。"
-                            "现在执行具体工具动作；完成研究后写proposal.json并返回最终JSON。")
+                            "现在执行具体工具动作；完成研究后写proposal.json并明确交接。" + completion_prompt)
                         self.memory.append("meta_generation_recovery", {"previous_thread_id": prior_thread,
                             "previous_turn_id": turn_id, "thread_id": thread_id,
                             "attempt": retries + 1, "workspace": str(workspace)})
@@ -259,29 +301,84 @@ class CodexBackend:
                         continue
                     turn_ids.append(turn_id)
                 review = {**review, "acted": bool(review.get("acted") or acted)}
-                answer = next((value for text in reversed(texts) if (value := self._answer(text))), None)
+                # Only the final agent message can authorize completion; an
+                # earlier JSON example must not be accepted as the final result.
+                answer = self._answer(texts[-1]) if texts else None
+                result_source = "message"
+                commit_error = None
+                try:
+                    committed = handshake.read()
+                except (ValueError, OSError, TypeError, KeyError) as exc:
+                    committed, commit_error = None, str(exc)
+                    self.memory.append("meta_completion_rejected", {"request_id": request_key,
+                        "turn_id": completed["id"], "error": commit_error})
+                if committed is not None:
+                    same_result = answer is None or (answer["status"] == committed["status"] and (
+                        answer["proposal_path"] is None and committed["proposal_path"] is None or
+                        answer["proposal_path"] is not None and committed["proposal_path"] is not None and
+                        (workspace/answer["proposal_path"]).resolve() == Path(committed["proposal_path"]).resolve()))
+                    if not same_result:
+                        commit_error = "Completion file and final JSON disagree; explicitly commit the intended result again"
+                    else:
+                        answer, result_source = committed, "file"
+                if commit_error:
+                    answer = None
                 if answer is None:
-                    if review.get("format_retry"):
-                        raise ValueError("Codex completed without the required structured result after clarification")
-                    review["format_retry"] = True
+                    review["continuations"] = review.get("continuations", 0) + 1
+                    review["no_action_completions"] = 0 if acted else review.get("no_action_completions", 0) + 1
                     reason = "invalid_final_result"
-                    next_prompt = ("上一轮结束时缺少有效的最终JSON。如果尚未完成研究，请继续使用工具。"
-                        "完成后返回且只返回JSON对象，包含status（ready或needs_input）、summary和proposal_path。"
-                        "ready必须给出实际proposal路径；needs_input必须明确用户需要解决的问题，proposal_path=null。")
+                    next_prompt = ("刚才只结束了一次模型发言，研究尚未交接。已有文件和工具结果都保留；"
+                        "请从实际进度继续，不重做已完成研究、不重复提交任务。"
+                        "若研究已完成，请调用下面的完成命令；尚未完成则继续使用工具。" +
+                        ("上次完成记录被拒绝：" + commit_error if commit_error else "") + completion_prompt)
+                    # Productive research has no turn/time cap. Repeated empty
+                    # completions instead receive a fresh, bounded context recovery.
+                    if review["no_action_completions"] >= 2:
+                        recoveries = review.get("protocol_recoveries", 0)
+                        if recoveries >= 2:
+                            raise MetaFailure("Meta repeatedly ended without an explicit research completion; files retained",
+                                              code="completion_protocol")
+                        prior_thread = thread_id
+                        fresh = self._rpc("thread/start", params)
+                        thread_id = fresh["thread"]["id"]
+                        turn_ids = []
+                        review.update(protocol_recoveries=recoveries+1, no_action_completions=0)
+                        next_prompt = (prompt + "\n原会话连续结束发言却未明确交接，已换新会话。"
+                            "先读context.json、Memory和workspace现有笔记与proposal，核对已有任务及产物后继续；"
+                            "不要复述旧会话全文，不要重复提交。" + completion_prompt)
+                        self.memory.append("meta_protocol_recovery", {"previous_thread_id": prior_thread,
+                            "previous_turn_id": completed["id"], "thread_id": thread_id,
+                            "attempt": recoveries+1, "workspace": str(workspace)})
+                        reason = "fresh_session_after_empty_completions"
                 elif answer["status"] == "needs_input" and not review["acted"] and not review.get("action_retry"):
                     review["action_retry"] = True
                     reason = "needs_input_without_actions"
                     next_prompt = ("上一轮没有任何工具执行记录就返回了needs_input。请继续原研究任务，立即用工具读取context.json和Memory。"
                         "‘我将开始读取/研究’不是缺少输入。无需用户批准已授权的读取、CPU分析、skills修改或登记计算任务。"
                         "如果确实存在只有用户能解决的障碍，请明确写出具体障碍和需要用户回答的问题，再返回needs_input。"
-                        "否则继续研究，写好proposal.json后返回ready及绝对路径。最终返回JSON对象，字段status、summary、proposal_path。")
+                        "否则继续研究，写好proposal.json后明确交接。" + completion_prompt)
                 else:
-                    self._save(answer=answer, status="completed", turn_id=completed["id"], review=review)
+                    self._save(answer=answer, status="completed", turn_id=completed["id"], review=review,
+                               result_source=result_source, result_path=str(handshake.result_path), last_error=None)
+                    if result_source == "file":
+                        self.memory.append("meta_completion_committed", {"request_id": request_key,
+                            "result_path": str(handshake.result_path), "answer": answer})
                     return answer
+                self._save(thread_id=thread_id, turn_id=None, status="continuing", review=review,
+                           previous_turn_ids=turn_ids, pending_prompt=next_prompt, updated=utc())
                 self.memory.append("meta_continuation", {"reason": reason, "turn_id": completed["id"],
                     "previous_answer": answer, "review": review})
         except BaseException as exc:
-            self._save(status="failed", updated=utc())
+            if isinstance(exc, MetaFailure) and exc.code == "completion_protocol":
+                # Only a confirmed terminal turn reaches this branch. A later
+                # scheduled retry must not replay the same exhausted turn.
+                self.memory.append("meta_protocol_retry_pending", {"thread_id":self.session.get("thread_id"),
+                    "turn_id":self.session.get("turn_id"), "workspace":str(workspace)})
+                self._save(recovery_parent_thread_id=self.session.get("thread_id"),
+                    recovery_parent_turn_id=self.session.get("turn_id"), thread_id=None, turn_id=None,
+                    review={}, previous_turn_ids=[], pending_prompt=prompt+completion_prompt)
+            self._save(status="failed", updated=utc(), last_error={"code":getattr(exc,"code","unexpected"),
+                "message":scrub_known(str(exc),self._secrets), "retryable":getattr(exc,"retryable",False)})
             self.memory.append("meta_failure", {"error_type": type(exc).__name__, "error": scrub_known(str(exc), self._secrets),
                 "thread_id": self.session.get("thread_id"), "turn_id": self.session.get("turn_id")})
             raise
@@ -323,7 +420,8 @@ class CodexBackend:
         interrupt_deadline = None
         while True:
             if interrupt_deadline is not None and time.monotonic() >= interrupt_deadline:
-                raise RuntimeError("Meta repetition detected but turn interruption did not finish; inspect before restarting")
+                raise MetaFailure("Meta repetition detected but turn interruption did not finish; inspect before restarting",
+                                  code="interrupt_unconfirmed", retryable=False)
             while self.notifications:
                 event = self.notifications.popleft()
                 p = event.get("params", {})
@@ -349,7 +447,10 @@ class CodexBackend:
                     if repetition is not None and turn["status"] in {"completed", "interrupted"}:
                         raise RepetitiveGeneration(repetition)
                     if turn["status"] != "completed":
-                        raise RuntimeError(f"Codex turn {turn['status']}: {scrub_known(turn.get('error'), self._secrets)}")
+                        message = f"Codex turn {turn['status']}: {scrub_known(turn.get('error'), self._secrets)}"
+                        if turn["status"] == "interrupted":
+                            raise MetaFailure(message, code="interrupted", retryable=False)
+                        raise service_failure(message, code="turn_failed")
                     texts = [i.get("text", "") for i in turn.get("items", []) if i.get("type") == "agentMessage"]
                     return turn, texts or list(items), acted or any(self._is_action(i) for i in turn.get("items", []))
             remaining = max(.1, interrupt_deadline-time.monotonic()) if interrupt_deadline is not None else 30

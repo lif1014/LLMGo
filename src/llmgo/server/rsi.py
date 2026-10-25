@@ -230,14 +230,15 @@ def overview(name: str):
     active = state.get("active_job")
     latest = jobs.get(active) or next(reversed(jobs.values()), None)
     session = limited_json(root/"meta-session.json", 262144) or {}
-    result = {k: state.get(k) for k in ("campaign_id", "phase", "round", "created", "updated", "incumbent", "working", "recommended", "failure", "needs_input")}
+    result = {k: state.get(k) for k in ("campaign_id", "phase", "round", "created", "updated", "incumbent", "working", "recommended", "failure", "needs_input", "controller_recovery")}
     for key in ("working", "incumbent"):
         item = state.get(key) or {}
         result[key] = {k:item.get(k) for k in ("id", "model_path", "model_sha256", "hypothesis")}
     best = state.get("best")
     result["best"] = {"candidate_id":best["candidate"]["id"],"score":best["score"],"panel":best["panel"]} if best else None
     result["candidate"] = {k: state.get("candidate", {}).get(k) for k in ("id","hypothesis","evaluation")} if state.get("candidate") else None
-    result.update(active_job=latest, job_count=len(jobs), attempt_count=len(state.get("attempts", [])),
+    result.update(controller_status_version=1, active_job=jobs.get(active), latest_job=latest, active_job_id=active,
+                  job_count=len(jobs), attempt_count=len(state.get("attempts", [])),
                   accepted_count=sum(bool(a.get("new_best")) for a in state.get("attempts", [])),
                   worker_gpu_hours=sum((j.get("worker_wall_seconds") or 0)*(j.get("allocated_gpu_count") or 0)/3600 for j in jobs.values()),
                   recent_jobs=[{k: j.get(k) for k in ("id", "role", "candidate_id", "level", "track", "status", "task_id", "executor_status")}

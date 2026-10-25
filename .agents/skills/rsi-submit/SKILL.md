@@ -21,7 +21,9 @@ python scripts/request_evaluation.py --full-panel
 
 四档初始基线完成即开始研究，不会等待L5–L8；四档基线只记分档结果，完整总分与初始best为空；后续单档测试不覆盖已有的完整best。只有完整八档player评测才更新best；最终应调用 `--full-panel`，单测简单档不能作为完整实力证据。
 
-Controller 调用你时持有 campaign 写锁，避免在该 turn 递归运行 prepare/step/run；完成研究后返回 ready 和 proposal 绝对路径，由 Controller 快照，Executor 提交/轮询/收集。也允许自行提交独立研究任务，但应登记任务 ID、输出与结论，避免重提；常规任务建议走 Executor 以免轮询占用上下文。
+Controller调用你时持有campaign写锁，避免递归运行prepare/step/run。完成修改、验证和proposal后，优先执行当前prompt给出的`finish_research.py --request ABS_REQUEST_JSON --summary '完成内容与证据'`。它保存绑定本请求与源码/提案哈希的完成记录，不提交任务；模型随后普通结束发言即可。完成后再修改文件须重新执行，不使用旧轮次request。仍兼容最后三字段JSON：status=ready、summary、proposal_path绝对路径。草稿存在不等于完成；Controller校验后快照，Executor提交/轮询/收集。
+
+也允许自行提交独立研究任务，但应登记任务ID、输出与结论。续接或换会话时先读现有workspace笔记、已有任务与产物，不重做已完成步骤、不重复提交。
 
 提交响应不确定时保留 intent、按 description 查询自己的任务并对账；不要盲目重提。只用 beijing/model-autosft/NORMAL，devspace 0 GPU，只写 /user/lyh4170，不停止他人任务。需要原生操作时读同级 cctl/SKILL.md。
 

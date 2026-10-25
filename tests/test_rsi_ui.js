@@ -18,7 +18,7 @@ const nodes=new Map(),el=id=>{if(!nodes.has(id))nodes.set(id,new Element());retu
 const row=(i,channel='coach',category='text')=>({ordinal:i,event:{id:'e'+i,ts:'2026-10-21',kind:'meta_event',channel,category,title:'event '+i,text:'visible '+i},offset:i*100,length:100,path:'events.jsonl'});
 let teacher=Array.from({length:180},(_,i)=>row(i+1)),studentEvents=[],evaluations=[{candidate_id:'initial',level:1,statistics:{score:.75}}];
 let gameList=[{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}],gamePages=null,overviewJob='j1';
-let delay=null;
+let delay=null,compatibilityStatus=null;
 const manifests={};
 const requests=[];
 const document={hidden:false,getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
@@ -42,6 +42,7 @@ function body(url){
     const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;
   }
   if(u.pathname.endsWith('/artifact')){
+    if(u.searchParams.get('path')==='controller-status.json'&&compatibilityStatus)return {text:JSON.stringify(compatibilityStatus),eof:true};
     if(u.searchParams.get('path')==='archived-jobs.json')return {text:'{"jobs":[]}',eof:true};
     const job=u.searchParams.get('path')?.match(/^jobs\/([^/]+)\/manifest.json$/)?.[1];
     if(job){const text=JSON.stringify({payload:manifests[job]||{job_id:job}}),offset=Number(u.searchParams.get('offset'))||0;
@@ -198,5 +199,14 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   assert.match(el('archived-job-count').textContent,/已隐藏1项/);
   el('show-archived-jobs').checked=true;run('renderEvaluationJobs()');
   assert.match(el('evaluation-jobs').textContent,/j000001/);assert.equal(run('state.jobs.length'),2,'archiving must not remove reserved job IDs');
+  compatibilityStatus={schema_version:1,campaign_id:'test',phase:'PLANNING',round:4,active_job:null,
+    controller_recovery:{status:'waiting',stage:'meta',code:'transport',error:'temporary disconnect',attempt:2,max_retries:5,next_retry_at:1234567890}};
+  await run('refresh()');
+  assert.equal(run('state.activeJobId'),undefined);
+  assert.match(el('meta-status').textContent,/等待自动恢复/);
+  assert.match(el('meta-status').textContent,/temporary disconnect/);
+  assert.match(el('meta-status').textContent,/下一次重试/);
+  assert(!requests.some(url=>url.includes('path=campaign.json')||url.includes('path=events.jsonl')),
+    'compatibility reads a small status artifact, never full state or research logs');
   console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, difficulty, win rates and asynchronous races');
 })().catch(error=>{console.error(error);process.exitCode=1;});

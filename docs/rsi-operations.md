@@ -107,6 +107,8 @@ Meta-Agent 在研究 workspace 执行 `python scripts/request_evaluation.py --le
 
 run 重启从持久日志恢复，真实进程锁防双重 Controller，提交 intent 防重复任务。长期研究没有总 turn timeout，RPC 确认仍有界；Executor退避轮询独立于LLM上下文。
 
+Memory的JSONL是权威记录，SQLite为可重建索引。实时append已落盘后，并发replay可能先把同一事件加入索引；索引写入应接受完全相同的事件，不因重复ID退出。新实现使用幂等插入并核对完整事件；真实ID/内容冲突仍报错。遇到`UNIQUE constraint failed: events.id`先保存日志和索引，升级控制端后重建/恢复，不删除原始JSONL或伪造结果来清错。
+
 ```bash
 python3 scripts/rsi.py status CAMPAIGN
 python3 scripts/rsi.py memory CAMPAIGN --kind decision --limit 5

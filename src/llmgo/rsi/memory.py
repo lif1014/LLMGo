@@ -86,7 +86,13 @@ class MemoryStore:
                 stream.flush()
                 os.fsync(stream.fileno())
             with self.connect() as db:
-                db.execute("INSERT INTO events VALUES(?,?,?,?)", (event["id"], event["ts"], kind, encoded))
+                # A concurrent replay may have indexed the just-fsynced journal
+                # record before this connection reaches its insert. Accept only
+                # the identical event; a real ID/content conflict still fails.
+                db.execute("INSERT OR IGNORE INTO events VALUES(?,?,?,?)", (event["id"], event["ts"], kind, encoded))
+                indexed = db.execute("SELECT body FROM events WHERE id=?", (event["id"],)).fetchone()
+                if indexed is None or json.loads(indexed[0]) != event:
+                    raise ValueError("Conflicting event in concurrent journal replay")
                 self._index_activity(db, event, offset, len((encoded+"\n").encode()))
         return event
 
@@ -98,7 +104,7 @@ class MemoryStore:
             return
         view = project(event)
         if view is not None:
-            db.execute("INSERT INTO activity VALUES(?,?,?,?)", (event["id"], offset, length, canonical(view)))
+            db.execute("INSERT OR IGNORE INTO activity VALUES(?,?,?,?)", (event["id"], offset, length, canonical(view)))
 
     def rebuild(self):
         """Replay the authoritative log; never silently discard a torn record."""

@@ -105,5 +105,49 @@
       "root": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000010/source",
       "sha256": "8ba4798c890ed718077356df79bb3143eb8e6e49c1893ed6084ee83772f106d1"
     }
+  },
+  "clean_baseline_advice": {
+    "status": "recommended_not_adopted",
+    "purpose": "clean starting point for repaired PPO, not guaranteed strongest or permanent default",
+    "candidate_id": "r000002",
+    "evaluation_job": "j000010",
+    "source": {
+      "root": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000002/source",
+      "sha256": "ee655c54a9d9064d2ec1ae872f7127863e6da688909bdd5765ae5b94077e4bb2"
+    },
+    "skills_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000002/skills.json",
+    "skills_sha256": "60df0ee9f3010766e64f8a96f305e834f7f20d3e14b18cd2bbabf7e19f867ea3",
+    "model_path": "/user/liyaohu4170/models/Qwen3.5-4B",
+    "model_sha256": "0c3129c0a669beca441f07bfa7bb9e11c7d9ee626419e40195a95de7461feee7",
+    "weights_provenance": "original Qwen3.5-4B; matches initial evaluation model identity",
+    "statistics": {
+      "black_score": 0.75,
+      "draws": 6,
+      "games": 20,
+      "losses": 0,
+      "pair_scores": [
+        0.75,
+        1.0,
+        0.75,
+        1.0,
+        1.0,
+        0.75,
+        0.75,
+        1.0,
+        0.5,
+        1.0
+      ],
+      "pair_standard_error": 0.055277079839256664,
+      "score": 0.85,
+      "truncated": 3,
+      "white_score": 0.95,
+      "wins": 14
+    },
+    "metrics_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000010/output/metrics.json",
+    "metrics_file_sha256": "8d1f26d30b4b090b1d45cabb4f6d6b59274122ef902c89f0b47c91bff7e4b8b2",
+    "manifest_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000010/manifest.json",
+    "manifest_file_sha256": "bb70daf40f31ea83de6a3609691e39af58d80b6f9f5295be41d88047d30cf8a1",
+    "training_repair_manifest": "/user/lyh4170/rsi_readiness/ppo-handback-20261026/repair-files.json",
+    "adoption": "Restore candidate Harness/skills inside registered workspace; explicitly use original model_path and repaired training code/recipe; record selection and adoption separately."
   }
 }

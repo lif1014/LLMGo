@@ -72,6 +72,25 @@ def test_large_output_is_bounded_and_index_rebuild_preserves_raw(tmp_path):
     assert activity_page(tmp_path, "research")["events"] == view["events"]
 
 
+def test_research_recommendation_has_readable_title_summary_and_complete_evidence(tmp_path, monkeypatch):
+    root = tmp_path/"demo"
+    memory = MemoryStore(root)
+    body = {"title":"起点建议：r2＋原始Qwen＋修补PPO（待采用）",
+            "summary":"建议已发布，模型/Harness/skills与训练代码分开登记。",
+            "status":"recommended_not_adopted", "text":"完整取证记录\n"*1000}
+    saved = memory.append("research_note",body,event_id="startpoint-recommendation")
+    atomic_json(root/"campaign.json",{"campaign_id":"demo","jobs":{},"attempts":[]})
+    client = client_for(root,monkeypatch)
+    page = client.get("/api/rsi/campaigns/demo/activity?limit=10").json()
+    row = page["events"][0]
+    assert row["event"]["channel"] == "research"
+    assert row["event"]["title"] == body["title"] and row["event"]["text"] == body["summary"]
+    raw = client.get("/api/rsi/campaigns/demo/artifact",params={"path":row["path"],"offset":row["offset"],"length":row["length"]}).json()
+    assert json.loads(raw["text"]) == saved
+    huge = project(event("large-note","research_note",{"title":"t"*10000,"text":"全文"*10000}))
+    assert len(huge["title"]) < 250 and len(huge["text"]) < 1900
+
+
 def test_projection_keeps_tool_lifecycle_usage_errors_and_stream_identity():
     def notification(method, params):
         return project(event(method, "meta_event", {"message": {"method": method, "params": params}}))

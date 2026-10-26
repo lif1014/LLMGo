@@ -13,6 +13,10 @@ description: 为国际象棋RSI从历史实测候选选择模型、Harness与ski
 
 [起点身份卡](references/research-startpoints.json)只保存2026-10-26已核对的历史示例，不是完整候选列表或实时排行榜：r000007/j000022曾得L2 16胜3和1负，r000010/j000027曾得14胜5和1负，两者模型SHA相同，差别在Harness/skills。r7可作为参考或回退候选；有更佳证据时不因该卡继续固定选r7。采用任一组合前检查路径、manifest、metrics、source及skills SHA。
 
+用户当前接受的干净起点建议是：**r000002的Harness/skills＋原始Qwen3.5-4B权重＋修补后的PPO训练代码**。r2权重与initial SHA相同，未经过旧RL；r7的旧4-step在224个样本中也有2个协议失败获得正优势。r2的L2得分率85%，r7为87.5%，这20局差距不证明r7真正更强；建议r2是为了减少旧错误训练的影响、便于归因，不是永久最优保证。身份见卡片的clean_baseline_advice，仍按动态证据自主选择。
+
+采用或拒绝建议时写一条带title、summary、状态和证据路径的research_note：先区分“已推荐”“Meta已选择”“新workspace/manifest已采用”。若选择r2，显式记录原始模型路径与SHA、恢复的Harness/skills SHA、修补训练文件与实际recipe；不能仅凭working仍显示r10就判断尚未分支，也不能仅凭发布建议就声称已采用。网页Memory区显示这些标题与摘要，原始事件保留完整证据。
+
 ## 在注册workspace中采用历史组合
 
 Controller默认按最新working创建workspace，这只是初始副本，不是研究限制。Meta可在当前注册workspace恢复本轮选定候选的src/llmgo/harness目录和skills.json（含包内skills卡），去掉所选版本不存在的后续Harness文件；保留context.json、提案/完成交接机制、Memory与本轮目录。不要改Controller状态中的working/best或历史候选，不在冻结快照上直接编辑。

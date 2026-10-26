@@ -149,6 +149,9 @@ def project(event):
                   "proposal_invalid": "候选校验失败", "experiment_failed": "实验失败",
                   "evaluation": "评测完成", "executor_transition": "任务状态变化", "explicit_retry": "显式恢复任务"}
         view["title"] = labels.get(kind, kind)
+        if kind == "research_note":
+            view.update(title=clipped(body.get("title") or view["title"], 200),
+                        text=clipped(body.get("summary") or body.get("text", "")))
         if kind == "evaluation":
             view["evaluation"] = compact(body)
         if kind in ("proposal_invalid", "experiment_failed"):

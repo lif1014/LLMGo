@@ -20,6 +20,8 @@ bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --web
 
 查看状态：`bash scripts/start_rsi.sh --status`；跟随日志：`bash scripts/start_rsi.sh --logs`，Ctrl-C只退出日志查看。Controller日志在campaign目录的 `controller.log`；网页日志在站点runtime_root下 `launcher/web-7860.log`。需要选择其他控制解释器时设置 `RSI_PYTHON`，不改变系统或其他环境。
 
+维护时可执行`bash scripts/start_rsi.sh --pause-research --web`：将操作员暂停持久化到research-control.json，阻止新Meta和新任务，已提交的Worker继续运行，新版Controller仍收集原任务。`--resume-research`只显式解除这项暂停，不清除真正的NEEDS_INPUT、不重建campaign；Controller已退出时再普通`--web`启动。live bridge的启动闸门也会在旧Controller调用新app-server之前检查暂停，防止模型请求；旧Controller需要在原devspace用一次`--restart-control --web`加载完整控制逻辑，其内嵌Executor轮询会短暂交接，GPU任务保持原ID运行。网页显示暂停原因；已有快照和结果不改写。操作细节见[维护暂停](docs/rsi-operations.md#操作员维护暂停)。
+
 若停在 `NEEDS_INPUT`，先查看具体原因并修复，再执行 `bash scripts/start_rsi.sh --resume --web`。这会保留已完成基线、研究副本和原会话，用新的请求版本继续 Meta 工作，避免直接重放此前缓存的 `needs_input`。它不会升级冻结的评测源码，不与 `--upgrade` 同用。当前只修复 Meta 提前结束时，无需重跑40局基线或重新 init。
 
 若 Meta 已完成研究、写好提案，却因结束回复的格式而退出，且campaign仍为 `PLANNING`，执行 `bash scripts/start_rsi.sh --recover-meta --web`。它从持久日志确认对应thread/turn已完成，解析原最终回复（支持说明文字后的单个JSON代码块），备份状态与session，验证并冻结原提案，再启动评测；不重新调用研究模型，不靠猜测或仅凭磁盘上有proposal就提交。多个互相冲突的JSON、未完成turn、其他workspace或活动进程均拒绝恢复。若运维已完成提案恢复，状态已变成 `EXPERIMENT`/`EVALUATING`/`WAITING`，直接 `bash scripts/start_rsi.sh --web` 继续，不重复加恢复参数。

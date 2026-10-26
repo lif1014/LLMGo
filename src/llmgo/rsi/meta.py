@@ -19,6 +19,7 @@ from .codex_auth import runtime_auth, scrub_known
 from .codex_sandbox import sandbox_mode, thread_sandbox, turn_sandbox
 from .generation_guard import RepetitiveGeneration, StreamRepetitionGuard
 from .meta_protocol import MetaFailure, ResearchHandshake, service_failure
+from .research_control import ResearchPaused, require_research
 
 
 class MetaAgentBackend(Protocol):
@@ -54,6 +55,7 @@ class CodexBackend:
         self.responses = {}
         self.notifications = deque()
         self._secrets = ()
+        self._heartbeat_at = 0.
 
     def _save(self, **changes):
         old_status = self.session.get("status")
@@ -99,8 +101,10 @@ class CodexBackend:
         except queue.Empty:
             if self.proc.poll() is not None:
                 raise MetaFailure(f"Codex exited with status {self.proc.returncode}")
-            self.memory.append("meta_heartbeat", {"thread_id": self.session.get("thread_id"),
-                                                  "turn_id": self.session.get("turn_id")})
+            if time.monotonic()-self._heartbeat_at >= 30:
+                self._heartbeat_at = time.monotonic()
+                self.memory.append("meta_heartbeat", {"thread_id": self.session.get("thread_id"),
+                                                      "turn_id": self.session.get("turn_id")})
             return
         if channel == "eof":
             raise MetaFailure("Codex app-server stream ended")
@@ -117,6 +121,8 @@ class CodexBackend:
             self.notifications.append(value)
 
     def _rpc(self, method, params, timeout=120):
+        if method in {"thread/start", "thread/resume", "turn/start"}:
+            require_research(self.memory.root)
         self.sequence += 1
         rid = self.sequence
         self._send({"id": rid, "method": method, "params": params})
@@ -135,6 +141,7 @@ class CodexBackend:
         return response["result"]
 
     def turn(self, workspace, prompt):
+        require_research(self.memory.root)
         isolation = sandbox_mode(self.site)
         root = self.site["user_root"]
         workspace = inside(root, workspace)
@@ -369,6 +376,11 @@ class CodexBackend:
                 self.memory.append("meta_continuation", {"reason": reason, "turn_id": completed["id"],
                     "previous_answer": answer, "review": review})
         except BaseException as exc:
+            if isinstance(exc, ResearchPaused):
+                self._save(status="paused", updated=utc(), research_control=exc.control)
+                self.memory.append("meta_paused", {"control": exc.control,
+                    "thread_id": self.session.get("thread_id"), "turn_id": self.session.get("turn_id")})
+                raise
             if isinstance(exc, MetaFailure) and exc.code == "completion_protocol":
                 # Only a confirmed terminal turn reaches this branch. A later
                 # scheduled retry must not replay the same exhausted turn.
@@ -418,7 +430,19 @@ class CodexBackend:
         guard = StreamRepetitionGuard()
         repetition = None
         interrupt_deadline = None
+        checked_pause = 0.
         while True:
+            if time.monotonic()-checked_pause >= .5:
+                checked_pause = time.monotonic()
+                try:
+                    require_research(self.memory.root)
+                except ResearchPaused as exc:
+                    try:
+                        self._rpc("turn/interrupt", {"threadId": self.session["thread_id"], "turnId": turn_id}, timeout=30)
+                    except Exception as error:
+                        self.memory.append("meta_pause_interrupt_error", {"error":str(error),
+                            "action":"close this backend's owned child; keep research hold"})
+                    raise exc
             if interrupt_deadline is not None and time.monotonic() >= interrupt_deadline:
                 raise MetaFailure("Meta repetition detected but turn interruption did not finish; inspect before restarting",
                                   code="interrupt_unconfirmed", retryable=False)
@@ -454,7 +478,7 @@ class CodexBackend:
                     texts = [i.get("text", "") for i in turn.get("items", []) if i.get("type") == "agentMessage"]
                     return turn, texts or list(items), acted or any(self._is_action(i) for i in turn.get("items", []))
             remaining = max(.1, interrupt_deadline-time.monotonic()) if interrupt_deadline is not None else 30
-            self._pump(timeout=min(30, remaining))  # no total teacher turn/research timeout
+            self._pump(timeout=min(1, remaining))  # check the operator hold without a research timeout
 
     @staticmethod
     def _answer(text):

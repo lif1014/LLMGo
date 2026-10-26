@@ -225,6 +225,7 @@ def status(name: str):
 @router.get("/campaigns/{name}/overview")
 def overview(name: str):
     root = campaign(name)
+    from llmgo.rsi.research_control import read_control
     state = campaign_state(root)
     jobs = state.get("jobs", {})
     active = state.get("active_job")
@@ -244,7 +245,7 @@ def overview(name: str):
                   recent_jobs=[{k: j.get(k) for k in ("id", "role", "candidate_id", "level", "track", "status", "task_id", "executor_status")}
                                for j in list(jobs.values())[-30:]],
                   meta={k: session.get(k) for k in ("thread_id", "turn_id", "status", "cwd", "updated", "process", "token_usage")},
-                  server_time=time.time())
+                  research_control=read_control(root), server_time=time.time())
     return result
 
 

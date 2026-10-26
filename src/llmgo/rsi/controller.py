@@ -11,6 +11,7 @@ from .evaluator import engine_identity
 from .ladder import evaluation_plan, panel_summary, opponent
 from .memory import CampaignLocked, MemoryStore
 from .meta_protocol import MetaFailure
+from .research_control import ResearchPaused, read_control, require_research
 
 RESEARCH_VERSION = "autonomous-chess-v2"
 
@@ -74,7 +75,8 @@ class Controller:
         # show recovery without loading a multi-megabyte campaign or raw log.
         atomic_json(self.root/"controller-status.json", {"schema_version":1,
             **{key:self.state.get(key) for key in ("campaign_id","phase","round","active_job",
-                                                  "controller_recovery","updated")}})
+                                                  "controller_recovery","updated")},
+            "research_control": read_control(self.root)})
 
     def upgrade(self, site, repo=None):
         """Explicit operator migration: keep old evidence and initial reference immutable."""
@@ -113,6 +115,7 @@ class Controller:
 
     def _new_job(self, kind, role, candidate, *, level=1, track="player", command=None,
                  batch_index=0, comparison=None, resume_from=None):
+        require_research(self.root)
         job_id = f"j{len(self.state['jobs'])+1:06d}"
         folder = inside(self.site["user_root"], self.root/"jobs"/job_id)
         payload = {"schema_version": SCHEMA, "campaign_id": self.state["campaign_id"], "job_id": job_id,
@@ -251,6 +254,7 @@ class Controller:
         return folder
 
     def prepare(self, proposal_path):
+        require_research(self.root)
         if self.state["phase"] != "PLANNING":
             raise ValueError("Prepare proposals during PLANNING")
         path = Path(proposal_path)
@@ -374,9 +378,25 @@ class Controller:
     def step(self, *, proposal=None):
         self.state = self.memory.state()
         verify_source(self.state["source"])
+        control = read_control(self.root)
         if self.state.get("active_job") and self.state["phase"] != "NEEDS_INPUT":
+            job = self.state["jobs"][self.state["active_job"]]
+            if control["paused"]:
+                intent_path = Path(job["manifest"]).with_name("submission.json")
+                confirmed = read_json(intent_path).get("task_id") if intent_path.exists() else None
+                if not confirmed:
+                    return {"status": "research_paused", "control": control,
+                            "pending_job": job["id"], "submission_held": True}
             return self._poll()
         phase = self.state["phase"]
+        if control["paused"]:
+            # Finalize already-collected evaluation evidence, without scheduling work.
+            if phase == "EVALUATING" and self.state.get("candidate"):
+                plan = self.state["candidate"].get("evaluation")
+                count = len(plan["levels"])*len(plan["tracks"]) if plan else 0
+                if self.state.get("evaluation_cursor", 0) >= count:
+                    self._finish()
+            return {"status": "research_paused", "control": control}
         if phase == "BASELINE":
             baseline_plan = evaluation_plan({"levels":self.state.get("baseline_levels", list(range(1,9)))})
             if not self._evaluate_next(self.state["initial"], baseline_plan, "baseline"):
@@ -505,18 +525,23 @@ class Controller:
             iterations = 0
             while max_steps is None or iterations < max_steps:
                 iterations += 1
+                self._publish_control_status()
                 recovery = self.state.get("controller_recovery") or {}
-                if recovery.get("status") == "waiting" and recovery["next_retry_at"] > time.time():
+                if (not read_control(self.root)["paused"] and recovery.get("status") == "waiting"
+                        and recovery["next_retry_at"] > time.time()):
                     time.sleep(min(60, recovery["next_retry_at"]-time.time()))
                     continue
                 try:
                     result = self.step()
+                except ResearchPaused as exc:
+                    result = {"status": "research_paused", "control": exc.control}
                 except Exception as exc:
                     result = self._control_failure(exc, "advance")
                     if result["status"] == "needs_input":
                         return result
                     continue
-                self._clear_recovery("advance")
+                if result["status"] != "research_paused":
+                    self._clear_recovery("advance")
                 if result["status"] == "needs_meta":
                     workspace = Path(result["workspace"])
                     prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
@@ -537,12 +562,17 @@ class Controller:
                         "只有确实需要用户补充信息或权限时返回needs_input，并明确说明实际障碍和需要回答的问题。"
                         f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")
                     try:
+                        require_research(self.root)
                         if backend is None:
                             from .meta import CodexBackend
                             active_backend = CodexBackend(self.site, self.memory)
                         else:
                             active_backend = backend
                         answer = active_backend.turn(workspace, prompt)
+                    except ResearchPaused as exc:
+                        self.memory.append("research_paused", {"control": exc.control, "stage": "meta"})
+                        self._publish_control_status()
+                        continue
                     except Exception as exc:
                         result = self._control_failure(exc, "meta")
                         if result["status"] == "needs_input":
@@ -556,6 +586,9 @@ class Controller:
                         return answer
                     try:
                         self.prepare(answer["proposal_path"])
+                    except ResearchPaused as exc:
+                        self.memory.append("research_paused", {"control": exc.control, "stage": "prepare"})
+                        self._publish_control_status()
                     except (ValueError, FileNotFoundError, TypeError) as exc:
                         self.memory.append("proposal_invalid", {"error": str(exc)})
                         self.state["meta_stalls"] += 1
@@ -571,6 +604,9 @@ class Controller:
                         self._clear_recovery("prepare")
                 elif result["status"] == "waiting":
                     time.sleep(min(60, poll_seconds or self.site.get("poll_seconds", 120)))
+                elif result["status"] == "research_paused":
+                    if max_steps is None:
+                        time.sleep(5)
                 elif result["status"] in ("submission_uncertain", "needs_input"):
                     return result
             return {"status": "step_limit", "phase": self.state["phase"]}

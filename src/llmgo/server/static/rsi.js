@@ -119,6 +119,7 @@ function renderStatus(s,x){
     (s.round===0?" · 初始基线（研究轮次0，不是难度0）":" · 第"+s.round+"轮研究")+(j.level!=null?" · 当前评测 L"+j.level+" / "+j.id:"");
   el("meta-status").textContent="最近记录状态："+show(m.status)+"\n线程："+show(m.thread_id)+"\n轮次："+show(m.turn_id)+"\n工作目录："+show(m.cwd)+
     "\n最近状态时间："+date(m.updated)+"\n记录的进程："+(m.process?m.process.host+" / PID "+m.process.pid:"当前无已记录子进程")+
+    (s.research_control?.paused?"\n研究已暂停 · "+show(s.research_control.reason)+"\n既有任务继续监控；解除需 --resume-research":"")+
     (recovery?"\n控制器："+(recovery.status==="waiting"?"等待自动恢复":"暂停，需要处理")+" · "+recovery.stage+" / "+recovery.code+
       "\n失败次数："+recovery.attempt+" · 最多自动重试 "+recovery.max_retries+"次\n下一次重试："+date(recovery.next_retry_at)+"\n原因："+show(recovery.error):"");
   const left=r.next_check_at?Math.ceil(r.next_check_at-(s.server_time||Date.now()/1000)):null;
@@ -415,8 +416,15 @@ async function refresh(){
         if(c?.schema_version===1&&c.campaign_id===state.campaign){
           s.latest_job??=s.active_job;s.active_job=s.active_job?.id===c.active_job?s.active_job:null;
           s.phase=c.phase;s.round=c.round;s.controller_recovery=c.controller_recovery;s.active_job_id=c.active_job;
+          if(c.research_control)s.research_control=c.research_control;
         }
       }catch(e){/* Legacy campaigns have no compatibility artifact yet. */}
+      if(!s.research_control){
+        try{
+          const page=await json(api("/artifact?"+new URLSearchParams({path:"research-control.json",offset:"0",length:"16384"})));
+          if(page.eof)s.research_control=JSON.parse(page.text);
+        }catch(e){/* An absent file means no operator hold. */}
+      }
       if(generation!==state.generation)return;
     }
     const x=await json(api("/executor"));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await loadArchivedJobs(generation);if(generation!==state.generation)return;renderStatus(s,x);state.totalHours=s.worker_gpu_hours||0;

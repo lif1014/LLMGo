@@ -136,6 +136,22 @@ python /user/lyh4170/LLMGo!/scripts/finish_research.py \
 
 兼容最终JSON：`{"status":"ready","summary":"...","proposal_path":"绝对路径"}`。只解析最后一条助手消息，接受唯一完整JSON围栏，拒绝歧义或不完整对象；完成文件与最终JSON的状态/目标冲突时要求修正。若Controller在接收最终回复前退出，已记录的Meta子进程已结束且完成记录哈希有效时，普通重启可离线接手，不重新调用模型。
 
+### 操作员维护暂停
+
+```bash
+bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --pause-research --web
+# 新版Controller已加载时继续监控/收集既有任务，不启动Meta和新提交。
+bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --resume-research --web
+```
+
+两条命令只改变独立research-control.json，不改campaign phase、workspace或冻结身份；不需要取得Controller长期writer锁。恢复是显式动作，普通启动、--resume、自动重试都不会清除维护暂停。未确认task ID的prepared/uncertain任务保持原样，不在暂停期间发起新的create。
+
+Meta在启动、线程续接/新turn和等待流事件时检查暂停；活动turn请求interrupt并结束自己创建的backend子进程，保存可见事件，不将操作员暂停记成模型故障或进入自动重试。心跳仍最多每30秒，暂停检查不会制造逐秒日志。任务已登记并完成时可以正常收集与结束候选，后续研究停在边界。
+
+旧Controller不能热加载新逻辑。live codex_bridge的app-server启动闸门先按真实cwd确定所属campaign，再在读取凭证/启动桥之前检查暂停；它只阻止该站点研究workspace的新app-server，其他campaign和普通版本/连接检查不受该闸门影响。它为等待原devspace重启提供硬阻断，但旧Controller可能暂时将退出码78当连接失败。应在WAITING且无Meta进程时执行已有`--restart-control --web`，加载新版后保留原task ID；内嵌Executor的轮询有短暂交接，不停止GPU Worker。启动器在维护暂停下跳过Meta推理检查，只恢复控制监控。没有原devspace执行通道的CPU job不能跨容器发信号，需在原devspace执行该命令。
+
+网页兼容读取小型research-control.json与controller-status.json，展示持久暂停原因；不扫描原始上下文或查询cctl。任务监控仍按原5–10分钟节奏。单看标志文件表示暂停已请求，检查Controller回执与会话后才能报告完整控制逻辑已载入。
+
 ### 自动恢复与停止边界
 
 | 情况 | 控制端行为 |

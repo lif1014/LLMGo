@@ -8,6 +8,7 @@ upgrade=false
 resume=false
 recover_meta=false
 restart_control=false
+research_action=
 action=start
 usage() {
   cat <<'HELP'
@@ -15,6 +16,7 @@ usage() {
       bash scripts/start_rsi.sh --restart-control [--web] [--campaign NAME]
       bash scripts/start_rsi.sh --status
       bash scripts/start_rsi.sh --logs
+      bash scripts/start_rsi.sh --pause-research | --resume-research [--web]
 默认检查环境和Meta连接，首次初始化，然后后台启动/恢复同名loop。
 --web 同时后台启动网页，端口默认7860；重复执行不会重启已有loop。
 --upgrade 在旧任务已终止且loop退出后升级现有campaign，保留全部历史。
@@ -22,6 +24,7 @@ usage() {
 --recover-meta 从已完成的Meta原始回复恢复ready提案；不重新调用模型、不重做研究。
 --restart-control 仅在WAITING且无活动Meta时检查并重启Controller，接手原集群任务。
 --status 查看持久状态；--logs 跟随Controller日志，Ctrl-C不停止loop。
+--pause-research 暂停Meta与新任务，保留既有集群任务；--resume-research显式解除，不自动重建loop。
 可用 RSI_PYTHON 指定控制环境解释器，默认沿用已安装的远端专用环境。
 HELP
 }
@@ -32,6 +35,10 @@ while (($#)); do
     --resume) resume=true; shift ;;
     --recover-meta) recover_meta=true; shift ;;
     --restart-control) restart_control=true; shift ;;
+    --pause-research|--resume-research)
+      [[ -z "$research_action" ]] || { echo '研究控制参数不能重复' >&2; exit 2; }
+      [[ "$1" == --pause-research ]] && research_action=pause || research_action=resume
+      shift ;;
     --campaign) [[ $# -ge 2 ]] || { usage; exit 2; }; campaign="$2"; shift 2 ;;
     --status) action=status; shift ;;
     --logs) action=logs; shift ;;
@@ -43,6 +50,7 @@ done
 [[ "$recover_meta" == false || ( "$upgrade" == false && "$resume" == false ) ]] || { echo '--recover-meta不能与--upgrade或--resume同时使用' >&2; exit 2; }
 [[ "$restart_control" == false || ( "$upgrade" == false && "$resume" == false && "$recover_meta" == false && "$action" == start ) ]] || { echo '--restart-control不能与迁移或状态查看参数混用' >&2; exit 2; }
 [[ "$campaign" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$ ]] || { echo 'campaign名称无效' >&2; exit 2; }
+[[ -z "$research_action" || ( "$action" == start && "$upgrade" == false && "$resume" == false && "$recover_meta" == false && "$restart_control" == false ) ]] || { echo '研究暂停/恢复不能与其他控制参数混用' >&2; exit 2; }
 rsi_python="${RSI_PYTHON:-/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python}"
 [[ -x "$rsi_python" ]] || { echo "控制Python不存在：$rsi_python；请在远端devspace执行。" >&2; exit 1; }
 cd "$repo"
@@ -122,6 +130,11 @@ PY
   echo "网页 PID：$web_pid；在平台映射端口$port后访问/rsi"
 }
 
+if [[ -n "$research_action" ]]; then
+  "$rsi_python" scripts/control_research.py "$research_action" --site "$site" --campaign "$campaign"
+  start_web
+  exit 0
+fi
 # Keep this lock in the controller child until it exits. PID files are not locks.
 if [[ "$restart_control" == true ]]; then
   "$rsi_python" scripts/restart_rsi_control.py --site "$site" --campaign "$campaign"
@@ -140,7 +153,16 @@ if [[ -f "$campaign_root/campaign.json" ]] && ! flock -n "$campaign_root/control
 fi
 echo '检查控制环境、集群认证与Meta-Agent连接……'
 "$rsi_python" scripts/rsi.py --site "$site" doctor --platform --codex-auth
-"$rsi_python" scripts/check_meta_connection.py --site "$site" --sandbox-check --tools-check
+if "$rsi_python" - "$campaign_root/research-control.json" <<'PY'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]);raise SystemExit(0 if p.is_file() and json.loads(p.read_text()).get('paused') is True else 1)
+PY
+then
+  echo '研究已暂停：本次启动跳过Meta推理检查，只恢复既有任务监控。'
+else
+  "$rsi_python" scripts/check_meta_connection.py --site "$site" --sandbox-check --tools-check
+fi
 if [[ ! -f "$campaign_root/campaign.json" ]]; then
   "$rsi_python" scripts/rsi.py --site "$site" init "$campaign" >"$runtime/$campaign-init.json"
   echo '已创建campaign：L1–L4，每档10局，共40局初始基线。'

@@ -203,6 +203,16 @@ def compatible_bridge_python(default, *, root=Path('/user/lyh4170')):
 
 
 def launch(arguments, *, prefix='/user/lyh4170/tools/codex-reused-20261023', bridge_python=None):
+    if 'app-server' in arguments:
+        from .research_control import launcher_campaign, require_research, ResearchPaused
+        campaign = launcher_campaign(Path.cwd())
+        if campaign is not None:
+            try:
+                require_research(campaign)
+            except ResearchPaused as exc:
+                print(json.dumps({'status':'research_paused', 'campaign':str(campaign),
+                                  'reason':str(exc)}, ensure_ascii=False), file=sys.stderr)
+                return 78
     prefix = Path(prefix)
     root = Path('/user/lyh4170')
     if bridge_python is None:

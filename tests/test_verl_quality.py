@@ -61,6 +61,18 @@ def test_quality_reports_unavailable_instead_of_zero_when_reasons_are_missing():
     assert quality["valid"] == 0 and quality["failure_counts"] == {"unavailable":2}
 
 
+def test_negative_advantage_fraction_uses_final_guarded_moves(tmp_path):
+    from llmgo.training.advantages import apply_protocol_guard
+    rows = batch([4,4,4,4], reasons=("","","","invalid_final_answer"),
+                 scores=[-.75,-.5,-.25,0.])
+    rows.batch["token_level_rewards"] = rows.batch["token_level_scores"].clone()
+    apply_protocol_guard(rows, tmp_path, 1)
+    quality = rollout_quality(rows, max_response_length=4)
+    # Legal centered advantages [-.25, 0, .25], failed answer -1.
+    assert quality["advantage_negative_fraction"] == .5
+    assert quality["raw_td_negative_fraction"] == .75
+
+
 def test_throughput_is_taken_from_the_measured_generation_timer():
     assert generation_throughput({"timing_per_token_ms/gen":2.}) == pytest.approx(500.)
     assert generation_throughput({"timing_s/gen":60., "response_length/mean":3000.}) == pytest.approx(50.)

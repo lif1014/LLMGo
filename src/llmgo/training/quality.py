@@ -32,6 +32,8 @@ def rollout_quality(batch, *, max_response_length):
         scores = (batch.batch["token_level_scores"].float()*mask).sum(-1)
         advantages = batch.batch["advantages"].float()*mask
         lengths = mask.sum(-1).float()
+        active = lengths > 0
+        move_advantages = advantages.sum(-1)/lengths.clamp(min=1)
         total = int(scores.numel())
         reasons = [str(x) for x in list(batch.non_tensor_batch.get("failure_reason", []))]
         reason_counts = {}
@@ -49,7 +51,8 @@ def rollout_quality(batch, *, max_response_length):
             "score_max":float(scores.max()),
             "advantage_mean":float(advantages.sum()/mask.sum().clamp(min=1)),
             "advantage_min":float(advantages.min()), "advantage_max":float(advantages.max()),
-            "advantage_negative_fraction":float((scores < 0).float().mean()),
+            "advantage_negative_fraction":float(((move_advantages < 0) & active).sum()/active.sum().clamp(min=1)),
+            "raw_td_negative_fraction":float((scores < 0).float().mean()),
             "value_before_mean":sum(values)/len(values) if values else None,
             "response_tokens_mean":float(lengths.mean()),
             "response_tokens_max":int(lengths.max()),

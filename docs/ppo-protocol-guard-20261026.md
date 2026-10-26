@@ -27,6 +27,8 @@
   saved-batch-regression.json
 ```
 
+另修正质量摘要里的`advantage_negative_fraction`：现在按有有效tokens的回答统计最终优势为负的比例；旧代码实际统计原始TD的负比例，现另名`raw_td_negative_fraction`保留。此项只影响诊断，不改更新目标。进行中的维护快照仍使用原冻结版本，该处的旧字段不能当作最终优势比例；最终优势以`protocol-advantages`和保存batch为准。
+
 ## 短训练与比较
 
 独立维护目录冻结r000009的Harness、skills和课程，仅补入训练修复。顺序执行：2-step验收 → 4-step训练 → L2二十局（白黑各十局、固定旧种子及裁判设置）。两次训练都从原始Qwen3.5-4B开始，非从2-step继续4-step；学习率2e-6、每step两epoch、batch56/minibatch14、KL0.05、response16384、CUDA Graph开启、vLLM池0.45、7actor卡加1LC0卡。比较对象是旧4-step的j000022（16胜3和1负，得分率87.5%），不是r10的胜势转换Harness。

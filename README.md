@@ -146,6 +146,8 @@ python3 scripts/package_source.py --teacher-assets /PATH/TO/teacher_assets --out
 
 新训练入口 `scripts/train_ppo.py` 自动切换到自己的独立 verl 环境；安装脚本为 `scripts/bootstrap_verl.py`，依赖见 `requirements-rsi-verl.txt`。基于指定 ptdbench 镜像，固定 verl 0.8.0 / Transformers 5.4.0 / 原镜像 Torch 2.10、vLLM 0.17；不改变评测推理环境。详细配方、资源划分、恢复和证据见 [PPO 与并行操作](docs/rsi-verl-ppo.md)。
 
+PPO默认使用`lc0_td0_protocol_guarded`：合法样本保留LC0逐步TD的相对排序，协议失败始终给负优势，防止旧全批中心化误奖励非法输出。逐样本原始值、最终优势和更新前张量均保留；`scripts/check_ppo_protocol.py`可只读回放可信历史batch。已有研究recipe显式指定的旧模式需手动迁移，新默认不会改写旧快照；维护暂停也不会自动解除。
+
 已有 campaign 的源码和站点配置被冻结，不会因覆盖仓库而自动升级。旧任务确认停止、Controller/Executor退出后，执行一次：
 
 ```bash

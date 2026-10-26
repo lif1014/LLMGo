@@ -11,9 +11,11 @@ import sys
 import uuid
 
 from llmgo.rsi.contracts import atomic_json, digest, file_hash, model_identity, read_json, utc
+from .export_weights import normalize_export_weights
 from .rollout import prompt_for_record
 
 VERL_VERSION = "0.8.0"
+CUDAGRAPH_MODE = "PIECEWISE"
 
 
 def training_config(config, allocated_gpus=8):
@@ -23,7 +25,22 @@ def training_config(config, allocated_gpus=8):
     defaults = {"backend":"verl_ppo", "batch_size":actors*8, "minibatch_size":actors*2,
         "steps":16, "ppo_epochs":4, "learning_rate":1e-5, "clip_ratio":.2,
         "kl_beta":.02, "max_prompt_tokens":8192, "max_response_tokens":2048,
-        "checkpoint_every":4, "seed":4170, "rollout_memory_utilization":.5}
+        "checkpoint_every":4, "seed":4170, "rollout_memory_utilization":.5,
+        # User requirement 2026-10-25: rollout CUDA graphs, so enforce_eager defaults
+        # to False and an eager run must be requested explicitly. Note the frozen
+        # official evaluator serves vLLM with --enforce-eager, so graph mode is a
+        # user requirement for training, not an alignment with the referee.
+        "rollout_enforce_eager":False, "cudagraph_capture_sizes":None,
+        "lr_warmup_steps_ratio":0.0, "advantage_estimator":"lc0_td0_protocol_guarded",
+        "protocol_failure_penalty":1.0,
+        "quality_gate_min_valid":0.0, "preupdate_consistency_samples":0,
+        # 0 means "every step": the round-3 collapse was a distribution shift between
+        # step 1 and step 2, so the actor-vs-rollout agreement has to be measured after
+        # every update, not only on the first two batches.
+        "sync_check_steps":0, "optimizer_offload":"auto",
+        # Round 9: free the trainer's cached-but-unused blocks in ``resume`` before the
+        # colocated vLLM engine re-maps its weights. j000023 died on exactly that remap.
+        "rollout_wake_cache_flush":True}
     if not isinstance(config, dict) or set(config)-set(defaults):
         raise ValueError("Unknown verl PPO configuration; no SFT/GRPO/legacy LoRA fields")
     cfg = {**defaults, **config}
@@ -37,11 +54,131 @@ def training_config(config, allocated_gpus=8):
     for key,low,high in (("learning_rate",0,1),("clip_ratio",0,1),("kl_beta",0,10),("rollout_memory_utilization",0,.95)):
         from llmgo.rsi.contracts import finite
         finite(cfg[key],key,low,high)
-        if key != "kl_beta" and cfg[key] == 0:
+        # learning_rate=0.0 is the documented no-op control: it runs the real
+        # sample -> reward -> update_weights pipeline with bit-identical weights, so a
+        # degraded second rollout isolates the serving/weight-sync path from the update.
+        if key not in ("kl_beta","learning_rate") and cfg[key] == 0:
             raise ValueError(f"{key} must be positive")
     if cfg["max_response_tokens"] > 32768 or cfg["max_prompt_tokens"]+cfg["max_response_tokens"] > 40960:
         raise ValueError("Training sequence exceeds the existing 40960-token context ceiling")
+    if type(cfg["rollout_enforce_eager"]) is not bool:
+        raise ValueError("rollout_enforce_eager must be a boolean")
+    sizes = cfg["cudagraph_capture_sizes"]
+    if sizes is not None:
+        if (not isinstance(sizes,list) or not sizes
+                or any(type(x) is not int or x < 1 for x in sizes)
+                or sizes != sorted(set(sizes))):
+            raise ValueError("cudagraph_capture_sizes must be a sorted list of unique positive integers or null")
+        if cfg["rollout_enforce_eager"]:
+            raise ValueError("cudagraph_capture_sizes requires rollout_enforce_eager=false")
+    if cfg["advantage_estimator"] not in ("lc0_td0","lc0_td0_centered","lc0_td0_protocol_guarded"):
+        raise ValueError("Unknown LC0 advantage estimator")
+    from llmgo.rsi.contracts import finite
+    finite(cfg["protocol_failure_penalty"], "protocol_failure_penalty", 0, 100)
+    if cfg["protocol_failure_penalty"] <= 0:
+        raise ValueError("protocol_failure_penalty must be positive")
+    if type(cfg["preupdate_consistency_samples"]) is not int or not 0 <= cfg["preupdate_consistency_samples"] <= 16:
+        raise ValueError("preupdate_consistency_samples must be an integer from 0 to 16")
+    if type(cfg["sync_check_steps"]) is not int or cfg["sync_check_steps"] < 0:
+        raise ValueError("sync_check_steps must be a nonnegative integer (0 = every step)")
+    if cfg["optimizer_offload"] not in ("auto",True,False):
+        raise ValueError("optimizer_offload must be auto, true or false")
+    if type(cfg["rollout_wake_cache_flush"]) is not bool:
+        raise ValueError("rollout_wake_cache_flush must be a boolean")
+    for key,low,high in (("lr_warmup_steps_ratio",0,1),("quality_gate_min_valid",0,1)):
+        from llmgo.rsi.contracts import finite
+        finite(cfg[key],key,low,high)
     return cfg
+
+
+def actor_memory_preflight(config, allocated_gpus, *, device_bytes=79*2**30, budget_fraction=0.6):
+    """Refuse an actor layout that cannot hold FSDP2 optimizer state on one GPU.
+
+    Round-4 job j000014 requested 2 GPUs, which leaves a single actor GPU for the whole
+    model, and died in the first Adam step with 76.8 GiB allocated (`_multi_tensor_adam`,
+    `exp_avg_sq_sqrt`). With one actor the fp32 master weights plus the two fp32 Adam
+    moments are 12 bytes per parameter before activations, the logits buffer and the
+    colocated vLLM engine. This guard is arithmetic, not a measurement: it fails the
+    configuration before Ray, LC0 and the first rollout are paid for, and it records the
+    estimate so a later run can be compared against the real peak.
+    """
+    actors = allocated_gpus-1 if allocated_gpus > 1 else 1
+    parameters = 4.0e9     # Qwen3.5-4B total parameters
+    vocabulary = 151936    # logits buffer scales with the response token budget
+    estimate = {
+        "actor_gpus":actors,
+        "master_and_optimizer_bytes":int(12*parameters/actors),
+        "compute_copy_bytes":int(2*parameters/actors),
+        "logits_bytes":int(2*vocabulary*config["max_response_tokens"]*2),
+        "activation_reserve_bytes":int(4*2**30),
+        "device_bytes":int(device_bytes),
+        "budget_bytes":int(device_bytes*budget_fraction),
+    }
+    estimate["total_bytes"] = (estimate["master_and_optimizer_bytes"]
+        + estimate["compute_copy_bytes"] + estimate["logits_bytes"]
+        + estimate["activation_reserve_bytes"])
+    estimate["without_optimizer_state_bytes"] = (estimate["total_bytes"]
+        - estimate["master_and_optimizer_bytes"])
+    wanted = config["optimizer_offload"]
+    offload = (estimate["total_bytes"] > estimate["budget_bytes"]) if wanted == "auto" else wanted
+    fitting = estimate["without_optimizer_state_bytes"] if offload else estimate["total_bytes"]
+    estimate["optimizer_offload"] = offload
+    estimate["fits"] = fitting <= estimate["budget_bytes"]
+    if not estimate["fits"]:
+        raise ValueError(
+            f"{actors} actor GPU(s) cannot hold the actor for max_response_tokens="
+            f"{config['max_response_tokens']}: estimated {fitting/2**30:.1f} GiB against a "
+            f"{estimate['budget_bytes']/2**30:.1f} GiB budget. Request more GPUs (7 actors is "
+            "the validated 8-GPU layout) or enable optimizer_offload=true.")
+    return estimate
+
+
+# j000016/j000023 both reported actor/perf/max_memory_reserved_gb 47.8-50.6 with the
+# validated 16384-token response budget on 7 actors. That measurement, not the analytic
+# estimate above (which has no way to see the cached blocks or the FSDP gather), is the
+# one that decided whether the colocated rollout could re-map its weights.
+MEASURED_ACTOR_RESERVED_BYTES_AT_16K = int(50*2**30)
+MEASURED_ACTOR_RESERVED_TOKENS = 16384
+
+
+def coexistence_preflight(config, allocated_gpus, *, device_bytes=79*2**30, reserve_bytes=3*2**30):
+    """Can the actor and the colocated rollout engine share one device across an update?
+
+    Round 8's j000023 died inside vLLM's ``CuMemAllocator.wake_up`` on the third weight
+    remap, with the training process still holding everything its caching allocator had
+    reserved. The two processes share the device but not an allocator, so the engine
+    cannot reuse those blocks: the *live* memory plus the rollout pool has to fit, and the
+    *reserved* memory plus the pool is what actually breaks.
+
+    ``fits_without_flush`` therefore uses the measured reserved peak, and
+    ``fits_with_flush`` uses the analytic live estimate, i.e. what is left once
+    ``torch.cuda.empty_cache()`` (rollout_wake_cache_flush) hands the unused blocks back.
+    This is arithmetic over recorded evidence, not a measurement.
+    """
+    actor = actor_memory_preflight(config, allocated_gpus)
+    pool = int(device_bytes*config["rollout_memory_utilization"])
+    scale = config["max_response_tokens"]/MEASURED_ACTOR_RESERVED_TOKENS
+    reserved = int(MEASURED_ACTOR_RESERVED_BYTES_AT_16K*scale)
+    live = max(actor["without_optimizer_state_bytes"], actor["total_bytes"]
+        if not actor["optimizer_offload"] else actor["without_optimizer_state_bytes"])
+    estimate = {
+        "vllm_pool_bytes":pool,
+        "actor_reserved_hint_bytes":reserved,
+        "actor_live_bytes":live,
+        "reserve_bytes":int(reserve_bytes),
+        "device_bytes":int(device_bytes),
+        "rollout_memory_utilization":config["rollout_memory_utilization"],
+        "rollout_wake_cache_flush":config["rollout_wake_cache_flush"],
+        "needs_cache_flush":pool + reserved + reserve_bytes > device_bytes,
+    }
+    estimate["without_flush_bytes"] = pool + reserved + int(reserve_bytes)
+    estimate["with_flush_bytes"] = pool + live + int(reserve_bytes)
+    estimate["margin_with_flush_bytes"] = int(device_bytes) - estimate["with_flush_bytes"]
+    estimate["fits_without_flush"] = estimate["without_flush_bytes"] <= device_bytes
+    estimate["fits_with_flush"] = estimate["with_flush_bytes"] <= device_bytes
+    estimate["fits"] = estimate["fits_with_flush"] if config["rollout_wake_cache_flush"] \
+        else estimate["fits_without_flush"]
+    return estimate
 
 
 def bootstrap_advantage(token_level_rewards, response_mask, **kwargs):
@@ -53,6 +190,44 @@ def bootstrap_advantage(token_level_rewards, response_mask, **kwargs):
     scores = (token_level_rewards*response_mask).sum(-1, keepdim=True)
     advantages = scores*response_mask
     return advantages, advantages.clone()
+
+
+def centered_advantage(token_level_rewards, response_mask, **kwargs):
+    """Same LC0 TD(0) target, but the batch mean is removed from the per-move advantage.
+
+    The frozen LC0 value is a state-dependent baseline for a *strong* player, so a weak
+    student's TD errors are systematically negative; broadcasting that negative mean over
+    every generated token pushes down the whole response (including the EOS token), which
+    is the observed round-3 collapse. Subtracting the per-batch mean removes exactly that
+    nuisance direction while keeping the within-batch ordering of the moves.
+    """
+    scores = (token_level_rewards*response_mask).sum(-1)
+    scores = scores - scores.mean()
+    advantages = scores.unsqueeze(-1)*response_mask
+    return advantages, advantages.clone()
+
+
+def recipe_override(default_path, argv):
+    """Resolve `--recipe PATH` and `--control` for research jobs.
+
+    `--recipe` lets one proposal register several recipes (for example the no-op
+    control at learning_rate=0) without touching ppo.json. `--control` keeps a
+    diagnostic export out of submission.json so it can never be offered as the
+    candidate model for the following evaluation.
+    """
+    path, control = Path(default_path), False
+    rest = list(argv)
+    while rest:
+        item = rest.pop(0)
+        if item == "--recipe":
+            if not rest:
+                raise ValueError("--recipe needs a path")
+            path = Path(rest.pop(0))
+        elif item == "--control":
+            control = True
+        else:
+            raise ValueError(f"Unknown training entry argument: {item}")
+    return path, control
 
 
 def dataset_rows(records, cards, batch_size):
@@ -71,6 +246,9 @@ def dataset_rows(records, cards, batch_size):
 
 def hydra_overrides(model, dataset, output, config, allocated_gpus, teacher_context, resume=None):
     actors = allocated_gpus-1 if allocated_gpus > 1 else 1
+    offload = config["optimizer_offload"]
+    if offload == "auto":  # train() resolves this before the run; keep one code path
+        offload = actor_memory_preflight(config, allocated_gpus)["optimizer_offload"]
     reward_module = str(Path(__file__).with_name("verl_reward.py"))
     # Strings use JSON quoting so paths containing !/spaces cannot become Hydra syntax.
     values = {
@@ -81,12 +259,14 @@ def hydra_overrides(model, dataset, output, config, allocated_gpus, teacher_cont
         "actor_rollout_ref.actor.strategy":"fsdp2",
         "actor_rollout_ref.actor.fsdp_config.strategy":"fsdp2",
         "actor_rollout_ref.actor.fsdp_config.use_torch_compile":False,
+        "actor_rollout_ref.actor.fsdp_config.optimizer_offload":bool(offload),
         "actor_rollout_ref.actor.use_torch_compile":False,
         "actor_rollout_ref.actor.use_remove_padding":False,
         "actor_rollout_ref.actor.ppo_mini_batch_size":config["minibatch_size"],
         "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu":1,
         "actor_rollout_ref.actor.ppo_epochs":config["ppo_epochs"],
         "actor_rollout_ref.actor.optim.lr":config["learning_rate"],
+        "actor_rollout_ref.actor.optim.lr_warmup_steps_ratio":config["lr_warmup_steps_ratio"],
         "actor_rollout_ref.actor.clip_ratio":config["clip_ratio"],
         "actor_rollout_ref.actor.clip_ratio_low":config["clip_ratio"],
         "actor_rollout_ref.actor.clip_ratio_high":config["clip_ratio"],
@@ -102,12 +282,14 @@ def hydra_overrides(model, dataset, output, config, allocated_gpus, teacher_cont
         "actor_rollout_ref.rollout.n":1,
         "actor_rollout_ref.rollout.calculate_log_probs":True,
         "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu":1,
-        "actor_rollout_ref.rollout.enforce_eager":True,
+        "actor_rollout_ref.rollout.enforce_eager":config["rollout_enforce_eager"],
         "actor_rollout_ref.rollout.max_model_len":config["max_prompt_tokens"]+config["max_response_tokens"],
         "actor_rollout_ref.rollout.gpu_memory_utilization":config["rollout_memory_utilization"],
         "actor_rollout_ref.rollout.agent.num_workers":math.gcd(config["batch_size"],min(actors,4)),
         "critic.enable":False,
-        "algorithm.adv_estimator":"lc0_td0",
+        # Protocol verdicts arrive in non_tensor_batch. The guarded mode is applied
+        # to the full batch in the pre-update hook, after raw TD construction.
+        "algorithm.adv_estimator":"lc0_td0" if config["advantage_estimator"] == "lc0_td0_protocol_guarded" else config["advantage_estimator"],
         "algorithm.gamma":1., "algorithm.lam":0.,
         "algorithm.use_kl_in_reward":False,
         "algorithm.rollout_correction.bypass_mode":True,
@@ -138,9 +320,148 @@ def hydra_overrides(model, dataset, output, config, allocated_gpus, teacher_cont
     }
     result = [f"{k}={json.dumps(v)}" for k,v in values.items()]
     result.append("+actor_rollout_ref.rollout.engine_kwargs.vllm.language_model_only=true")
+    if config["cudagraph_capture_sizes"]:
+        # Bounded capture work: the vLLM default captures decode graphs up to
+        # max_num_seqs (1024), while one actor GPU only ever decodes ~8 sequences.
+        # This must go through engine_kwargs.compilation_config: verl 0.8.0 maps
+        # RolloutConfig.cudagraph_capture_sizes to the CLI flag --cuda-graph-sizes,
+        # which vLLM 0.17.0 does not define (verified in vllm/engine/arg_utils.py at
+        # tag v0.17.0), so the top-level field would abort the rollout server.
+        # PIECEWISE avoids asking for FULL decode graphs on this hybrid-attention
+        # model, where vLLM raises instead of downgrading when the attention backend
+        # never supports cudagraph.
+        result.append("+actor_rollout_ref.rollout.engine_kwargs.vllm.compilation_config="
+            + json.dumps(json.dumps({"cudagraph_capture_sizes":config["cudagraph_capture_sizes"],
+                                     "cudagraph_mode":CUDAGRAPH_MODE})))
     result.append("+data.apply_chat_template_kwargs.enable_thinking=true")
     result.append("+reward.lc0_context="+json.dumps(str(teacher_context)))
+    # Research-only bookkeeping consumed by ResearchTaskRunner inside the trainer process.
+    result.append("+research.quality_gate_min_valid="+json.dumps(config["quality_gate_min_valid"]))
+    result.append("+research.preupdate_consistency_samples="+json.dumps(config["preupdate_consistency_samples"]))
+    result.append("+research.sync_check_steps="+json.dumps(config["sync_check_steps"]))
+    result.append("+research.advantage_estimator="+json.dumps(config["advantage_estimator"]))
+    result.append("+research.protocol_failure_penalty="+json.dumps(config["protocol_failure_penalty"]))
+    result.append("+research.rollout_enforce_eager="+json.dumps(config["rollout_enforce_eager"]))
     return result
+
+
+INFERENCE_TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "vocab.json",
+    "merges.txt", "chat_template.jinja", "preprocessor_config.json", "video_preprocessor_config.json")
+# Files the evaluation stack may load besides the weights. The export must expose the
+# same set the base model does: the merger's transformers-5.x `processor_config.json` has
+# no counterpart in the base directory, and the base directory is the one configuration
+# the pinned evaluator is known to serve.
+AUXILIARY_EXPORT_FILES = INFERENCE_TOKENIZER_FILES + ("processor_config.json",)
+SAFE_TOKENIZER_CLASSES = {"Qwen2Tokenizer", "Qwen2TokenizerFast"}
+
+
+def _tokenizer_vocab(path):
+    """Vocabulary of a model directory as seen by this process, for a compatibility check."""
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(str(path), trust_remote_code=False)
+    return tokenizer.get_vocab()
+
+
+def normalize_export_for_inference(export, base, interpreters=None):
+    """Make an exported checkpoint loadable by the pinned *inference* stack.
+
+    Round-5 job j000018 lost all 20 L2 games before the first move:
+    `ValueError: Tokenizer class TokenizersBackend does not exist or is not currently
+    imported.` The training stack (transformers 5.x) writes a tokenizer_config.json whose
+    `tokenizer_class` is a 5.x-only backend name, while the evaluation image pins
+    transformers 4.57.6 for vLLM. Weights are unaffected, and the vocabulary does not
+    change during RL, so the base model's own tokenizer files - which the evaluation
+    stack is known to load - are grafted onto the export, after proving that both
+    vocabularies are identical. Returns a report; raises if the vocabulary differs.
+    """
+    export, base = Path(export), Path(base)
+    if not (export/"config.json").is_file():
+        raise ValueError(f"Missing HF export: {export}")
+    base_vocab = _tokenizer_vocab(base)
+    export_vocab = _tokenizer_vocab(export)
+    if base_vocab != export_vocab:
+        raise ValueError(f"Export vocabulary differs from {base}; refusing to graft a tokenizer")
+    copied = {}
+    removed = []
+    for name in AUXILIARY_EXPORT_FILES:
+        target = export/name
+        if target.is_file() and not (base/name).is_file():
+            target.unlink()
+            removed.append(name)
+    for name in INFERENCE_TOKENIZER_FILES:
+        source = base/name
+        if not source.is_file():
+            continue
+        target = export/name
+        shutil.copyfile(source, target)
+        copied[name] = file_hash(target)
+    return {"base": str(base), "export": str(export), "vocabulary_size": len(base_vocab),
+        "copied": copied, "removed": removed,
+        "source_hashes": {name: file_hash(base/name) for name in copied},
+        "dynamic_verification": verify_export_tokenizer(export, interpreters)}
+
+
+def verify_export_tokenizer(export, interpreters=None):
+    """Load the exported tokenizer with the pinned inference stack, if it is reachable.
+
+    The training venv ships transformers 5.x, which accepts tokenizer classes that the
+    evaluation image (transformers 4.57.6) rejects, so importing locally cannot answer
+    the only question that matters: does the *evaluator* load this directory? Each
+    candidate interpreter is asked for its transformers version first and only a 4.x
+    interpreter is used. When none is reachable the check reports itself as skipped
+    instead of pretending to have passed.
+    """
+    import subprocess
+    program = ("import json,sys,transformers\n"
+               "from transformers import AutoTokenizer\n"
+               "out={'transformers':transformers.__version__}\n"
+               "try:\n"
+               "    t=AutoTokenizer.from_pretrained(sys.argv[1],trust_remote_code=False)\n"
+               "    out.update(ok=True,klass=type(t).__name__,tokens=len(t))\n"
+               "except Exception as error:\n"
+               "    out.update(ok=False,error=f'{type(error).__name__}: {error}')\n"
+               "print(json.dumps(out))\n")
+    candidates = list(interpreters or []) + [sys.executable, "/usr/bin/python3",
+        shutil.which("python3") or "/usr/bin/python3"]
+    tried = []
+    for interpreter in candidates:
+        if not interpreter or not Path(interpreter).exists():
+            continue
+        try:
+            result = subprocess.run([interpreter, "-c", program, str(export)],
+                capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as error:
+            tried.append({"interpreter": interpreter, "error": f"{type(error).__name__}: {error}"})
+            continue
+        row = None
+        for line in reversed(result.stdout.splitlines()):
+            try:
+                row = json.loads(line)
+                break
+            except ValueError:
+                continue
+        if row is None:
+            tried.append({"interpreter": interpreter,
+                "error": (result.stderr or result.stdout)[-300:] or "no output"})
+            continue
+        row["interpreter"] = interpreter
+        if str(row.get("transformers", "")).startswith("4."):
+            row["skipped"] = False
+            return row
+        tried.append({"interpreter": interpreter, "transformers": row.get("transformers"),
+            "note": "not the pinned inference stack; ignored"})
+    return {"skipped": True, "reason": "no transformers-4 interpreter found",
+        "tried": tried,
+        "static_ok": _static_tokenizer_ok(export)}
+
+
+def _static_tokenizer_ok(export):
+    """Fallback check that needs no second interpreter: no 5.x-only tokenizer class."""
+    config = Path(export)/"tokenizer_config.json"
+    if not config.is_file():
+        return False
+    declared = read_json(config).get("tokenizer_class")
+    return declared is None or declared in SAFE_TOKENIZER_CLASSES
 
 
 def complete_checkpoint(root, actor_gpus):
@@ -175,11 +496,28 @@ def train(model, records, cards, site, reward_config, config, output, *, allocat
         raise ValueError("One-GPU PPO needs a CPU LC0 backend (eigen/blas) or request at least two GPUs")
     if allocated_gpus > 1 and not reward_config["backend"].startswith("cuda"):
         raise ValueError("Multi-GPU default reserves one GPU for LC0; select a CUDA backend")
+    memory = actor_memory_preflight(config, allocated_gpus)
+    config["optimizer_offload"] = memory["optimizer_offload"]
+    coexistence = coexistence_preflight(config, allocated_gpus)
+    if not coexistence["fits_with_flush"]:
+        raise ValueError(
+            "The colocated rollout pool and the actor cannot share one device even with the "
+            f"wake-up cache flush: {coexistence['with_flush_bytes']/2**30:.1f} GiB against "
+            f"{coexistence['device_bytes']/2**30:.1f} GiB. Lower rollout_memory_utilization "
+            f"(now {config['rollout_memory_utilization']}) or shorten max_response_tokens.")
+    if coexistence["needs_cache_flush"] and not config["rollout_wake_cache_flush"]:
+        raise ValueError(
+            "This layout needs rollout_wake_cache_flush=true: the measured actor peak "
+            f"({coexistence['actor_reserved_hint_bytes']/2**30:.1f} GiB reserved) plus the "
+            f"rollout pool ({coexistence['vllm_pool_bytes']/2**30:.1f} GiB) exceeds the device, "
+            "which is how j000023 died in vLLM's wake_up.")
+    atomic_json(output/"memory-preflight.json", {**memory, "coexistence":coexistence})
     identity = {"model":model_identity(model)["sha256"], "records":digest(records), "cards":digest(cards),
         "training":config,"reward":reward_config,"allocated_gpus":allocated_gpus,"verl":VERL_VERSION,
         "runtime":{name:importlib.metadata.version(name) for name in ("verl","transformers","torch","vllm","tokenizers","ray")},
         "code":{name:file_hash(Path(__file__).with_name(name)) for name in
-            ("verl_ppo.py","verl_registration.py","verl_reward.py","vllm_compat.py","rewards.py","rollout.py")},
+            ("verl_ppo.py","verl_registration.py","verl_reward.py","vllm_compat.py","rewards.py",
+             "rollout.py","export_weights.py","verl_memory.py","advantages.py")},
         "lc0_binary":file_hash(site["lc0_bin"])}
     dataset = output/"curriculum.jsonl"
     dataset.write_text("".join(json.dumps(row,ensure_ascii=False)+"\n" for row in dataset_rows(records,cards,config["batch_size"])))
@@ -221,7 +559,9 @@ def train(model, records, cards, site, reward_config, config, output, *, allocat
     ray.init(address="local", num_gpus=allocated_gpus, namespace=namespace,
         _temp_dir=str(Path(site["user_root"])/"r"/namespace[-8:]), runtime_env={"env_vars":{
             "PYTHONPATH":source, "LLMGO_RSI_WORKER":"1", "LLMGO_VERL_OUTPUT":str(output),
-            "TOKENIZERS_PARALLELISM":"false"}})
+            "TOKENIZERS_PARALLELISM":"false",
+            # Read by llmgo.training.verl_registration in every worker process.
+            "LLMGO_WAKE_CACHE_FLUSH":"1" if config["rollout_wake_cache_flush"] else "0"}})
     scorer = None
     try:
         scorer = ray.remote(num_gpus=1 if allocated_gpus>1 else 0, num_cpus=1)(Lc0Scorer).options(name="lc0").remote(site,reward_config,str(output))
@@ -252,10 +592,34 @@ def train(model, records, cards, site, reward_config, config, output, *, allocat
         shutil.rmtree(temporary)
     subprocess.run([sys.executable,"-m","verl.model_merger","merge","--backend","fsdp",
         "--local_dir",str(checkpoint/"actor"),"--target_dir",str(temporary)],check=True)
+    # The merger writes both the tokenizer side and the parameter names with the
+    # training stack's transformers 5.x conventions. The 5.x parameter naming is not
+    # something vLLM can resolve: round-7 jobs j000019/j000020 died at engine start with
+    # `Following weights were not initialized from checkpoint` because the merged names
+    # carry an extra `language_model` level. Remap the names (streaming, payload
+    # untouched) and refuse the run if the result does not match the base checkpoint.
+    weights = normalize_export_weights(temporary, model)
+    # The tokenizer side is normalized for the same reason: round-5 job j000018 lost
+    # every L2 game to a 5.x-only tokenizer class. Normalize before hashing the identity
+    # so the recorded identity is the directory that will actually be evaluated.
+    # The evaluation image pins its inference interpreter in the site manifest; asking it
+    # first is what makes this a check of the evaluator rather than of the training venv.
+    interpreters = [site.get("inference_python")] if site.get("inference_python") else []
+    normalization = normalize_export_for_inference(temporary, model, interpreters)
     exported = model_identity(temporary)
     if target.exists():
         raise FileExistsError("Export already exists; verify the prior submission before retrying")
     temporary.rename(target)
+    normalization["export"] = str(target)
+    verdict = normalization["dynamic_verification"]
+    loadable = verdict.get("ok") if "ok" in verdict else bool(verdict.get("static_ok"))
+    atomic_json(output/"export-preflight.json", {"ok":loadable,"normalization":normalization,
+        "weights":weights,
+        "note":"Tensor payloads are untouched: the parameter names are remapped to the base "
+               "checkpoint naming and the tokenizer/processor side is replaced with the base "
+               "model's own files, after proving the key sets and both vocabularies agree."})
+    if not loadable:
+        raise RuntimeError(f"Exported model is not loadable by the pinned inference stack: {verdict}")
     atomic_json(output/"training-result.json", {"backend":"verl_ppo","sft_enabled":False,
         "allocated_gpu_count":allocated_gpus,"actor_gpus":actors,"lc0_gpus":int(allocated_gpus>1),
         "runtime":identity["runtime"],

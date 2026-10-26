@@ -9,7 +9,9 @@ description: 设计verl PPO与LC0多卡强化学习实验，检查逐步价值�
 
 非终局A=V_after−V_before，V=P(win)−P(lose)，前后保持同一行棋方视角。终局用胜1/和0/负−1减V_before；非法/生成截断是协议惩罚。gamma1/lambda0，一手一segment，没有对手应手和整盘GAE，也不训练critic。教师V不是学生Vπ；只凭reward/loss不能宣称棋力提升。
 
-自定义lc0_td0估计器使用教师算好的TD误差，不做组归一化；verl使用实际vLLM behavior logprobs作old policy、多epoch clipped PPO，reference KL独立。采样默认temperature1/top_p1/top_k-1；不要改了采样却继续使用错误old logprobs。保留thinking分隔符，截断不做随机后备，教师不输出最佳走法。
+默认advantage_estimator=lc0_td0_protocol_guarded：合法样本TD减本批合法样本均值；非法答案、thinking不完整、length截断的最终优势固定为负的protocol_failure_penalty（默认1），不参与合法均值、不再减LC0基线。全批失败拒绝更新；缺少判定或未知基础设施错误直接报错。避免旧centered模式把原始TD=0的非法输出变成正优势。原始教师值和最终优势分开记录，查看protocol-advantages与更新前batch，而非只看reward均值。已有recipe若显式写旧模式不会自动迁移，需明确修改并开始新实验。
+
+verl使用实际vLLM behavior logprobs作old policy、多epoch clipped PPO，reference KL独立。采样默认temperature1/top_p1/top_k-1；不要改了采样却继续使用错误old logprobs。保留thinking分隔符，截断不做随机后备，教师不输出最佳走法。
 
 样本原文/响应token/LC0前后值/优势在training/lc0，rollouts保存verl行为日志；metrics.jsonl/latest.json和resolved-config.json记录训练。完整分片模型、optimizer、RNG及dataloader checkpoint用于恢复，身份/并行数不同则拒绝。最终合并完整HF模型才写submission.json。旧HF LoRA checkpoint不能作为verl checkpoint。
 

@@ -48,7 +48,11 @@ V=P(win)−P(lose)，保持同一学生行棋方视角。学生走一步后棋�
 - 真实终局：A=胜负值−V(s_before)，胜1、和0、负−1，bootstrap为0，不重复计算价值差。
 - 第200半步按协议截断为和棋；非法、缺失完整thinking结束标记、生成长度截断视为协议失败，目标−1，不生成随机替代步。
 
-一手棋为一个训练segment，不是逐token棋步奖励，也没有对手应手或整盘GAE。自定义`lc0_td0`直接把该A广播到本次response的有效tokens，不做GRPO分组/归一化。不训练critic网络；LC0充当外部固定价值估计器，返回的token returns不会用于拟合价值头。
+一手棋为一个训练segment，不是逐token棋步奖励，也没有对手应手或整盘GAE。不训练critic网络；LC0充当外部固定价值估计器，返回的token returns不会用于拟合价值头。
+
+默认`advantage_estimator="lc0_td0_protocol_guarded"`在整批样本进入actor优化器前处理最终优势：合法且有response token的样本，使用原始TD减去本批**合法样本**TD均值；`invalid_final_answer`、`incomplete_thinking`、`length`直接使用`-protocol_failure_penalty`（默认−1），不再减LC0价值或批次均值。有效tokens共享该优势，padding为0；没有任何合法输出则保存诊断并拒绝更新。教师原始TD、终局target仍照常保留，协议惩罚与棋步价值分开记录。未知失败类型或缺少协议判定直接报错，不能把基础设施故障当棋步奖励。
+
+修复原因：旧`lc0_td0_centered`会对所有样本统一减批次均值，非法输出在劣势局面可能原始TD为0，减去负均值后却得到正优势。仅令协议target为−1不足以防止此事。新模式在最终pre-update边界赋值并检查负号；Hydra里的底层估计器显示`lc0_td0`，实际模式以`research.advantage_estimator`和保存的优势张量为准。旧`lc0_td0`/`lc0_td0_centered`仍可作明确指定的研究对照，旧recipe显式指定旧模式时不会被默认值自动覆盖；维护后继续训练需明确更新recipe，改变模式需新实验，不能续用旧身份checkpoint。
 
 verl执行实际clipped PPO、多epoch更新、reference KL和分布式同步。训练采样temperature1/top_p1/top_k−1，不裁掉策略支持集；使用vLLM保存的实际behavior logprobs作为old logprobs（bypass PPO-clip模式）。KL独立施加，不再从教师TD误差中重复扣除或重算bootstrap。
 
@@ -62,11 +66,14 @@ LC0是强教师的价值近似，不是当前学生策略的校准Vπ。不能�
 - `resolved-config.json`、`teacher.json`、`model-preflight.json`：实际verl配置、LC0身份、真实Qwen processor预检；identity同时固定代码和运行时版本。
 - `lc0/sample-*.json`：逐手原始输出、response token IDs、前后FEN、原生WDL、V、target、A、失败/终局原因。
 - `batches/step-*.pt`：更新前实际response、old/rollout/ref logprobs、response mask及advantage张量；`batch-latest.json`索引。
+- `protocol-advantages/step-*.json`及`protocol-advantages-latest.json`：逐样本原始TD、失败原因、最终优势、response长度、合法样本均值与源码样本路径；`metrics.jsonl`同步保存`protocol_guard/*`摘要。
 - `rollouts/*.jsonl`：verl生成日志；`metrics.jsonl`、`latest.json`：每步PPO指标。
 - `checkpoints/global_step_N/`：全rank模型、optimizer、extra/RNG和dataloader状态。
 - `model/`、`training-result.json`：经过合并、完整HF身份核验的导出，成功后写`output/submission.json`。
 
 恢复只接受身份相同、并行数相同且所有rank文件齐全的verl checkpoint。旧HF LoRA checkpoint不能直接恢复为verl。新的独立research提案可以在argv前用`env LLMGO_RESUME_FROM=/user/lyh4170/.../output {python} scripts/train_ppo.py`指定原输出；常规失败重试由Worker传递该变量。变更reward/课程/卡数应作为新实验开始并记录区别。
+
+可在有Torch的环境离线回放可信的自有历史batch，输入只读、不运行模型：`python scripts/check_ppo_protocol.py --batches /user/lyh4170/.../training/batches --output /user/lyh4170/.../replay.json`。可重复`--batches`。脚本读取包含NumPy元数据的pickle，只用于可信自有产物，报告旧非法正优势数与修复后数量。回放通过证明优势符号修复，不能代替新GPU训练、导出与棋力评测。
 
 评测逐局写带身份和日誌SHA的`game_results`。每GPU顺序处理其分配棋局，各GPU并行；单局/服务故障最多尝试3次，旧未完成日志移到`incomplete_games`，异常写`attempts`。同任务或显式失败恢复只复用身份一致且原始日志未变的完成局。全部局数、种子、白黑配对齐全才发布metrics；不把部分结果当成功。没有该回执格式的旧版本结果不能当缓存。
 

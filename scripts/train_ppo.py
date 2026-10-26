@@ -9,6 +9,18 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from llmgo.rsi.contracts import atomic_json, read_json
 
 
+def exec_into_verl(prefix, script, argv):
+    """Re-exec this entry point inside the pinned verl venv, forwarding every argument.
+
+    Round 4 (job j000014) dropped the argument vector here, so the submitted
+    `--recipe ppo-control-sync.json --control` job silently ran ppo.json as an
+    ordinary training run: the control that was supposed to isolate the serving and
+    weight-sync path never executed and its learning_rate was 2e-6, not 0.
+    """
+    interpreter = str(prefix/"bin/python")
+    os.execve(interpreter, [interpreter, str(script), *argv], os.environ.copy())
+
+
 def main():
     manifest = read_json(os.environ["LLMGO_SITE"])["payload"]
     site = manifest["site"]
@@ -16,13 +28,22 @@ def main():
     if Path(sys.prefix).resolve() != prefix.resolve():
         repo = Path(__file__).resolve().parents[1]
         subprocess.run([sys._base_executable,str(repo/"scripts/bootstrap_verl.py"),"--prefix",str(prefix)],check=True)
-        os.execve(str(prefix/"bin/python"),[str(prefix/"bin/python"),str(Path(__file__).resolve())],os.environ.copy())
-    from llmgo.training.verl_ppo import train, training_config
+        exec_into_verl(prefix, Path(__file__).resolve(), sys.argv[1:])
+    from llmgo.training.verl_ppo import recipe_override, train, training_config
     from llmgo.training.rewards import validate_reward
     from llmgo.training.rollout import load_curriculum
     output = Path(os.environ["LLMGO_OUTPUT"])
     candidate = Path(os.environ["LLMGO_CANDIDATE"])
-    recipe = read_json(candidate/"ppo.json")
+    recipe_path, control = recipe_override(candidate/"ppo.json", sys.argv[1:])
+    recipe = read_json(recipe_path)
+    # A no-op (learning_rate=0) run is a diagnostic by construction: it must never be
+    # able to publish itself as the candidate the next evaluation would measure.
+    control_reason = "flag"
+    if not control and recipe.get("training",{}).get("learning_rate") == 0:
+        control, control_reason = True, "learning_rate=0"
+    atomic_json(output/"recipe.json", {"recipe_path":str(recipe_path),"control":control,
+        "control_reason":control_reason if control else None,"argv":sys.argv[1:],
+        "recipe":recipe})
     gpus = manifest.get("resources",{}).get("gpu_count",site["gpu_count"])
     config = training_config(recipe.get("training",{}),gpus)
     reward = validate_reward(recipe.get("reward",{}))
@@ -30,7 +51,13 @@ def main():
     model = train(os.environ["LLMGO_MODEL"],load_curriculum(candidate/"curriculum.jsonl"),
         read_json(candidate/"skills.json"),site,reward,config,output/"training",
         allocated_gpus=gpus,resume_from=os.environ.get("LLMGO_RESUME_FROM") or None)
-    atomic_json(output/"submission.json", {"model_path":str(model),"method":"verl_ppo/lc0_td0", "sft_enabled":False})
+    if control:
+        # A diagnostic recipe (for example learning_rate=0) must never become the
+        # candidate model that the next evaluation measures.
+        atomic_json(output/"control-result.json", {"model_path":str(model),"control":True,
+            "note":"Diagnostic export; submission.json intentionally not written."})
+    else:
+        atomic_json(output/"submission.json", {"model_path":str(model),"method":"verl_ppo/lc0_td0", "sft_enabled":False})
 
 
 if __name__ == "__main__":

@@ -1,11 +1,30 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "campaign_root": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2",
-  "scope": "preferred historical L2 research starting point, not global L1-L8 best",
-  "selection": "May branch from r000007 instead of newest r000010; no automatic campaign reset",
+  "scope": "historical examples verified on 2026-10-26, not a live ranking or complete candidate set",
+  "selection": "Re-evaluate current comparable evidence each round. No fixed candidate; r7 is a historical reference/fallback only. Research alternatives are allowed with recorded rationale.",
   "training_code": "Historical training code is not a trusted baseline. Preserve fixed live PPO or audit replacement; do not restore old training code together with Harness.",
   "resume": "Exported HF weights can initialize a new experiment; old optimizer resume requires matching code/reward/data/config identity.",
-  "preferred": {
+  "selection_policy": {
+    "mode": "dynamic_evidence_based",
+    "fixed_candidate": null,
+    "refresh_each_round": true,
+    "allow_research_alternatives": true,
+    "evidence_sources": [
+      "latest context and handoff",
+      "Memory evaluation/research_note",
+      "completed job manifests and metrics"
+    ],
+    "compare": [
+      "opponent level",
+      "track",
+      "protocol",
+      "colors and seeds",
+      "sample size",
+      "model/Harness/skills identities"
+    ]
+  },
+  "historical_anchor": {
     "candidate_id": "r000007",
     "evaluation_job": "j000022",
     "metrics_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000022/output/metrics.json",
@@ -46,7 +65,7 @@
       "sha256": "426c40592adcaff6e4d1ee05b33957654b1637ee7fb696f413352553d84178f8"
     }
   },
-  "latest_compared": {
+  "historical_comparison": {
     "candidate_id": "r000010",
     "evaluation_job": "j000027",
     "metrics_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000027/output/metrics.json",

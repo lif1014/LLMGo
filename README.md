@@ -148,7 +148,7 @@ python3 scripts/package_source.py --teacher-assets /PATH/TO/teacher_assets --out
 
 PPO默认使用`lc0_td0_protocol_guarded`：合法样本保留LC0逐步TD的相对排序，协议失败始终给负优势，防止旧全批中心化误奖励非法输出。逐样本原始值、最终优势和更新前张量均保留；`scripts/check_ppo_protocol.py`可只读回放可信历史batch。已有研究recipe显式指定的旧模式需手动迁移，新默认不会改写旧快照；维护暂停也不会自动解除。
 
-Meta可修改训练源码，并可从历史较佳候选开始研究。新增[rsi-ppo-audit](.agents/skills/rsi-ppo-audit/SKILL.md)和[rsi-startpoint](.agents/skills/rsi-startpoint/SKILL.md)说明如何核对实际PPO状态、发现优化目标错误、恢复r7的16胜L2组合，同时保留训练修补；详细授权、组合身份与远端通知方式见[Meta研究指引](docs/meta-ppo-guidance-20261026.md)。
+Meta可修改训练源码，并按每轮最新可比证据自主选择研究起点，不固定继承最新版本或r7。新增[rsi-ppo-audit](.agents/skills/rsi-ppo-audit/SKILL.md)和[rsi-startpoint](.agents/skills/rsi-startpoint/SKILL.md)说明如何核对实际PPO状态、发现优化目标错误、动态选择并恢复历史组合，同时保留训练修补；r7的16胜L2记录是历史示例，详细授权、组合身份与远端通知方式见[Meta研究指引](docs/meta-ppo-guidance-20261026.md)。
 
 已有 campaign 的源码和站点配置被冻结，不会因覆盖仓库而自动升级。旧任务确认停止、Controller/Executor退出后，执行一次：
 

@@ -10,9 +10,13 @@
 
 两项新技能也镜像到`/home/lif/skills_rsi`。远端发布到live仓库与实际CODEX_HOME的skills目录，并在AGENTS.md写带唯一标记的短指引；持久Memory的research_note和最新handoff/operator_notes同样记录入口。这样后续workspace即使继承旧候选，也可按绝对路径读取新技能，无须改变历史快照。
 
-## 可选较佳起点
+## 动态选择与历史参考点
 
-| L2二十局玩家评测 | 16胜组合 | 最新14胜组合 |
+每轮根据最新Memory、已完成评测和可比协议重新选择，不固定从r7或最新working起跑。有更佳可比候选时可自主采用；也可因对照、稳定性或课程研究选择其他起点并记录理由。无需仅为选择起点再征求许可。
+
+下面是2026-10-26核对的历史示例，不是实时排行榜或完整候选列表。
+
+| L2二十局玩家评测 | 历史16胜组合 | 当时较新的14胜组合 |
 |---|---|---|
 | candidate / job | r000007 / j000022 | r000010 / j000027 |
 | 胜/和/负 | 16/3/1 | 14/5/1 |
@@ -28,7 +32,7 @@ skills：/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000007/skil
 原评测：/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000022/output/metrics.json
 ```
 
-source、skills、model和原评测文件SHA记录在`rsi-startpoint/references/research-startpoints.json`。这是已测L2候选间可用的较佳研究起点，不是完整L1–L8全局best或统计显著性结论。用户允许选择，并非要求每轮强制回滚；Meta可根据证据选择其他起点。
+source、skills、model和原评测文件SHA记录在`rsi-startpoint/references/research-startpoints.json`。身份卡schema 2把旧preferred字段改为historical_anchor，显式标记只作历史参考；新候选不必列入此卡才可采用。不能把单档胜局数跨难度排序，也不把小样本差异当作统计显著性。选择及证据在每轮Memory中更新，不将历史卡当作永久推荐。
 
 Controller默认从最近working拷贝workspace。Meta可在该可编辑副本中恢复历史Harness/skills，在proposal显式填写model_path并记录恢复来源；不修改冻结candidate、原成绩或Controller状态。若从HF导出继续新RL，优化器和reference按新实验重新建立；代码/目标已经变化时，不能把旧优化器状态冒充同一实验续训。
 

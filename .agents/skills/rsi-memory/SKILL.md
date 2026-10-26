@@ -5,6 +5,8 @@ description: 在自主国际象棋研究的轮次开始、恢复或实验设计�
 
 先读本轮 context.json，确认 working、best、recommended、当前任务及失败。best 是完整 L1–L8 玩家评测的实测最高分，不代表统计显著提高；没有自动通关或升档。
 
+同时读最新handoff中的operator_notes及research_note，区分新指令、历史总结与已验证事实。working只是最近研究候选，不要求下一轮从它开始；用户允许从r7的16胜L2组合分支，见[rsi-startpoint](../rsi-startpoint/SKILL.md)。旧训练实现有已验证问题并允许修改，不能因过去摘要说“训练没有问题”而跳过[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)的实际张量检查。
+
 context 只是入口。按需检索 campaign 的 decision、hypothesis、evaluation、experiment_failed 和 research_note；相同思路可以重试，但先说明新证据。短日志定位局面，再按 request_id/ply/raw_ref 读取完整输出、prompt、usage、finish_reason、工具和后备。不要以截断日志断言模型没有考虑某步。
 
 原始轮询和平台输出位于 executor/events.jsonl；正常等待只读 executor 短报告，不反复发 shell 查询。把路径、观察、反证和下一步持久化，不把全日志粘进下一轮。

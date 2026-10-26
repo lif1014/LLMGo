@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "campaign_root": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2",
+  "scope": "preferred historical L2 research starting point, not global L1-L8 best",
+  "selection": "May branch from r000007 instead of newest r000010; no automatic campaign reset",
+  "training_code": "Historical training code is not a trusted baseline. Preserve fixed live PPO or audit replacement; do not restore old training code together with Harness.",
+  "resume": "Exported HF weights can initialize a new experiment; old optimizer resume requires matching code/reward/data/config identity.",
+  "preferred": {
+    "candidate_id": "r000007",
+    "evaluation_job": "j000022",
+    "metrics_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000022/output/metrics.json",
+    "metrics_file_sha256": "827b160baa255ad3fb13cd5aa6b4b9c5ea385dc7578d92b2ecd1943f44ad3a3b",
+    "manifest_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000022/manifest.json",
+    "manifest_file_sha256": "a1cee62f044d748e891bd43bed7417131a2c2211b5147b3b611b68e16c30ff5b",
+    "skills_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000007/skills.json",
+    "skills_sha256": "60df0ee9f3010766e64f8a96f305e834f7f20d3e14b18cd2bbabf7e19f867ea3",
+    "model_path": "/user/lyh4170/rsi_checkpoints/rsi-r7-stability4-keyfix/model",
+    "model_sha256": "8df3af3df90383bfc061155375ea4053ec05807dbf1b4bfb624e16ad3df63292",
+    "level_id": "L2",
+    "track": "player",
+    "statistics": {
+      "black_score": 0.75,
+      "draws": 3,
+      "games": 20,
+      "losses": 1,
+      "pair_scores": [
+        0.75,
+        1.0,
+        1.0,
+        0.5,
+        1.0,
+        0.75,
+        0.75,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "pair_standard_error": 0.05590169943749474,
+      "score": 0.875,
+      "truncated": 2,
+      "white_score": 1.0,
+      "wins": 16
+    },
+    "source": {
+      "root": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000007/source",
+      "sha256": "426c40592adcaff6e4d1ee05b33957654b1637ee7fb696f413352553d84178f8"
+    }
+  },
+  "latest_compared": {
+    "candidate_id": "r000010",
+    "evaluation_job": "j000027",
+    "metrics_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000027/output/metrics.json",
+    "metrics_file_sha256": "ab589b72837c96447713d8dec2baf4e2baa4d5a13bd172b8e75c5f9ac59096f4",
+    "manifest_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/jobs/j000027/manifest.json",
+    "manifest_file_sha256": "c59166be90fd058549a751886e4488f8b2de47bb7089e05644fff03788cbdff1",
+    "skills_path": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000010/skills.json",
+    "skills_sha256": "d2113288976716cd7d1447c5e737e57c40c846fc2bb3ceffbea0a036751d4cc5",
+    "model_path": "/user/lyh4170/rsi_checkpoints/rsi-r7-stability4-keyfix/model",
+    "model_sha256": "8df3af3df90383bfc061155375ea4053ec05807dbf1b4bfb624e16ad3df63292",
+    "level_id": "L2",
+    "track": "player",
+    "statistics": {
+      "black_score": 0.95,
+      "draws": 5,
+      "games": 20,
+      "losses": 1,
+      "pair_scores": [
+        1.0,
+        1.0,
+        0.75,
+        0.5,
+        0.75,
+        1.0,
+        1.0,
+        0.75,
+        0.75,
+        0.75
+      ],
+      "pair_standard_error": 0.053359368645273735,
+      "score": 0.825,
+      "truncated": 3,
+      "white_score": 0.7,
+      "wins": 14
+    },
+    "source": {
+      "root": "/user/lyh4170/rsi_campaigns/chess-autonomous-v2/candidates/r000010/source",
+      "sha256": "8ba4798c890ed718077356df79bb3143eb8e6e49c1893ed6084ee83772f106d1"
+    }
+  }
+}

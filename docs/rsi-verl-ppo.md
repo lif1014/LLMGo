@@ -31,7 +31,7 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
     "mode": "full_game_ppo_lc0",
     "games_per_batch": 14,
     "concurrent_games": 7,
-    "opponent_level": 1,
+    "opponent_level": 2,
     "steps": 2,
     "whole_batch_update": true,
     "ppo_epochs": 1,
@@ -50,13 +50,15 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
 
 默认 `concurrent_games` 等于 actor 卡数（8 卡任务为 7），`games_per_batch` 为 actor 卡数的两倍（14）。7 是同时在进行的棋局上限，不是每批总局数；一局结束后补入本批下一局。已有 ppo.json 的显式值仍优先，应将旧的 2 局配置改为 14/7 才会采用新设置。增加并行通常能提高多卡利用率，具体吞吐需实测，不保证七倍加速。
 
+训练对手默认 Fairy-Stockfish L2（`opponent_level=2`，skill=-5、depth=5、每步时间上限0.10秒）。LC0仍只作为离线value教师。**Meta-Agent可按研究证据自行修改ppo.json的opponent_level，选择L1–L8，不要求始终停在L2**；修改时记录难度及实验身份，改变训练对手不修改正式评测的固定难度面板。
+
 默认 `whole_batch_update=true`：本批全部真实请求做一个全局 minibatch，native verl 以 microbatch=1 梯度累积；`ppo_epochs=1` 时每批一次 optimizer step，避免两个完整局展开后悄悄变成几十次更新。可显式关闭以研究多个 minibatch；`minibatch_size` 默认按 actor 数匹配，亦作为补齐粒度。
 
 thinking 开启。训练每请求最多 16384 tokens，每手共享 32768 tokens、最多 2 次请求，请求/整手超时为 540/1800 秒。每次请求保留真实上下文、token IDs、behavior logprobs 和原文；失败后成功的重试也计入同一手的训练样本。一手各请求按生成 token 数分配权重，再按手等权，不因重试更多而多算棋步。padding 行 response mask/reward/advantage 均为 0，不重复最后一手凑样本。
 
 默认 `internal_validation=false`：不打更新前基线或更新后内部验证局，不导入旧验证基线。仍保留训练批次的质量、reference KL、actor/rollout 同步、非有限值、完整存档及导出加载检查；棋力由独立正式评测判断。导出回执明确写入内部验证 disabled、passed=null，不能描述为“验证通过”。
 
-可显式设置 `internal_validation=true` 恢复固定完整局验证，并配置 `validation_games=2`、`validation_every=1`（后者须为 checkpoint_every 的倍数）。训练和启用后的验证均使用 temperature=1、top_p=1、top_k=-1，确保 actor/ref 重算与 behavior logprobs 一致。内部验证固定独立种子、白黑均衡，不用来更新模型；它不请求LC0标注，轨迹中的value=0明确标记为占位，不当作教师预测；正式受保护评测仍使用其冻结的 0.9/0.95/20 和原预算。二者的得分不可直接混为同一统计。
+按用户要求保持内部验证关闭；若用户以后明确要求恢复，可设置 `internal_validation=true`，并配置 `validation_games=2`、`validation_every=1`（后者须为 checkpoint_every 的倍数）。训练和启用后的验证均使用 temperature=1、top_p=1、top_k=-1，确保 actor/ref 重算与 behavior logprobs 一致。内部验证固定独立种子、白黑均衡，不用来更新模型；它不请求LC0标注，轨迹中的value=0明确标记为占位，不当作教师预测；正式受保护评测仍使用其冻结的 0.9/0.95/20 和原预算。二者的得分不可直接混为同一统计。
 
 ## 终止、诊断与恢复
 

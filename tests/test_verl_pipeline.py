@@ -15,6 +15,7 @@ def test_verl_resource_partition_and_configuration():
     cfg = training_config({},8)
     assert cfg['games_per_batch']==14 and cfg['minibatch_size']==14
     assert cfg['concurrent_games']==7 and cfg['internal_validation'] is False
+    assert cfg['opponent_level']==2
     overrides = hydra_overrides('/weights','/data',Path('/output/training'),cfg,8,'/teacher')
     assert 'trainer.n_gpus_per_node=7' in overrides
     assert 'critic.enable=false' in overrides
@@ -40,6 +41,16 @@ def test_internal_validation_can_be_disabled_without_a_validation_checkpoint_sch
     for value in ('false',0,None):
         with pytest.raises(ValueError,match='internal_validation must be boolean'):
             training_config({'internal_validation':value})
+
+
+def test_meta_can_override_training_opponent_without_changing_evaluation_ladder():
+    from llmgo.rsi.ladder import opponent
+    for level in range(1,9):
+        cfg=training_config({'opponent_level':level})
+        assert cfg['opponent_level']==level and cfg['internal_validation'] is False
+    assert opponent(2)['skill']==-5 and opponent(2)['movetime_sec']==.1
+    for level in (0,9,True,'L2'):
+        with pytest.raises(ValueError):training_config({'opponent_level':level})
 
 
 def test_checkpoint_rejects_partial_rank_and_wrong_world(tmp_path):

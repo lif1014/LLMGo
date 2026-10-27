@@ -24,7 +24,7 @@ def training_config(config, allocated_gpus=8):
         raise ValueError("verl PPO requires 1-8 allocated GPUs")
     actors = allocated_gpus-1 if allocated_gpus > 1 else 1
     defaults = {"backend":"verl_ppo", "mode":"full_game_ppo_lc0",
-        "games_per_batch":actors*2,"concurrent_games":actors,"opponent_level":1,
+        "games_per_batch":actors*2,"concurrent_games":actors,"opponent_level":2,
         "minibatch_size":actors*2,"whole_batch_update":True,"steps":2,"ppo_epochs":1,"learning_rate":1e-6,
         "gamma":1.,"gae_lambda":.95,"clip_ratio":.2,"kl_beta":.05,
         "max_prompt_tokens":6144,"max_response_tokens":16384,"move_token_budget":32768,

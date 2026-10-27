@@ -146,7 +146,7 @@ python3 scripts/package_source.py --teacher-assets /PATH/TO/teacher_assets --out
 
 新训练入口 `scripts/train_ppo.py` 自动切换到自己的独立 verl 环境；安装脚本为 `scripts/bootstrap_verl.py`，依赖见 `requirements-rsi-verl.txt`。基于指定 ptdbench 镜像，固定 verl 0.8.0 / Transformers 5.4.0 / 原镜像 Torch 2.10、vLLM 0.17；不改变评测推理环境。详细配方、资源划分、恢复和证据见 [PPO 与并行操作](docs/rsi-verl-ppo.md)。
 
-PPO默认使用`lc0_td0_protocol_guarded`：合法样本保留LC0逐步TD的相对排序，协议失败始终给负优势，防止旧全批中心化误奖励非法输出。逐样本原始值、最终优势和更新前张量均保留；`scripts/check_ppo_protocol.py`可只读回放可信历史batch。已有研究recipe显式指定的旧模式需手动迁移，新默认不会改写旧快照；维护暂停也不会自动解除。
+PPO默认使用 `full_game_ppo_lc0`：Qwen 从标准开局与 Fairy 下完整局，中间 reward=0、终局胜/负/和为 +1/−1/0；LC0 提供固定学生视角的 V，按棋步计算 γ=1、λ=0.95 的 GAE，再用 verl 更新。默认整批游戏做一次全局 minibatch 更新，保留真实行为概率、reference KL、合法率、权重同步检查和更新后的完整局验证。配置只需 ppo.json（training/teacher）与 skills.json，不再要求历史课程。训练重试耗尽时，随机合法后备作为学生该手继续完整局，原始输出仍参与GAE/loss；只在真实终局给分并单独记录后备率。旧单手 TD、自写 HF PPO、中心化协议优势已移除，旧 recipe 必须显式迁移；原有远端暂停不会自动解除。配置、日志、恢复和已移除文件见[完整对局 PPO](docs/rsi-verl-ppo.md)。 本次检查范围、GPU任务和异步前后对照产物见[验证记录](docs/full-game-ppo-validation-20261027.md)。
 
 Meta可修改训练源码，并按每轮最新可比证据自主选择研究起点，不固定继承最新版本或r7。新增[rsi-ppo-audit](.agents/skills/rsi-ppo-audit/SKILL.md)和[rsi-startpoint](.agents/skills/rsi-startpoint/SKILL.md)说明如何核对实际PPO状态、发现优化目标错误、动态选择并恢复历史组合，同时保留训练修补；r7的16胜L2记录是历史示例，详细授权、组合身份与远端通知方式见[Meta研究指引](docs/meta-ppo-guidance-20261026.md)。
 
@@ -169,3 +169,5 @@ CUDA Graph诊断脚本现为`scripts/graph_ab.py`：按最终答案检查走法�
 
 
 8GPU训练验收已通过（任务1350755）：7卡PPO＋1卡LC0，2个训练步、每步2个PPO epoch，第二步重新采样，非零有限梯度、完整分片checkpoint与HF导出均完成。正式评测的多难度完整比赛尚未重跑；这次短验收不代表棋力提升。回执在 `/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/`，详细证据见 `docs/environment-status.json`。
+
+本次研究基线为原始Qwen3.5-4B权重＋r000002 Harness/skills；已完成短训的checkpoint与评测模型见[起点与模型身份](docs/rsi-research-baseline.md)。

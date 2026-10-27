@@ -18,7 +18,7 @@ const nodes=new Map(),el=id=>{if(!nodes.has(id))nodes.set(id,new Element());retu
 const row=(i,channel='coach',category='text')=>({ordinal:i,event:{id:'e'+i,ts:'2026-10-21',kind:'meta_event',channel,category,title:'event '+i,text:'visible '+i},offset:i*100,length:100,path:'events.jsonl'});
 let teacher=Array.from({length:180},(_,i)=>row(i+1)),studentEvents=[],evaluations=[{candidate_id:'initial',level:1,statistics:{score:.75}}];
 let gameList=[{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}],gamePages=null,overviewJob='j1';
-let delay=null,compatibilityStatus=null;
+let delay=null,compatibilityStatus=null,maintenancePlan=null;
 const manifests={};
 const requests=[];
 const document={hidden:false,getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
@@ -42,6 +42,9 @@ function body(url){
     const out={events:studentEvents.map(event=>({event,offset:0,length:100})),cursor:10};studentEvents=[];return out;
   }
   if(u.pathname.endsWith('/artifact')){
+    if(maintenancePlan&&u.searchParams.get('path')==='maintenance/active.json')return {text:JSON.stringify(maintenancePlan),eof:true};
+    if(maintenancePlan&&u.searchParams.get('path')==='maintenance/run/A/output/progress.json')return {text:'{"stage":"ppo_update"}',eof:true};
+    if(maintenancePlan&&u.searchParams.get('path')==='maintenance/run/A/output/training/health.json')return {text:JSON.stringify({stage:'update_completed',quality:{valid_rate:.98,valid:55,samples:56},diagnostics:{reference_kl_move_mean:.02},validation:{step:2,valid_rate:1,legal_td_mean:-.04,passed:true}}),eof:true};
     if(u.searchParams.get('path')==='controller-status.json'&&compatibilityStatus)return {text:JSON.stringify(compatibilityStatus),eof:true};
     if(u.searchParams.get('path')==='archived-jobs.json')return {text:'{"jobs":[]}',eof:true};
     const job=u.searchParams.get('path')?.match(/^jobs\/([^/]+)\/manifest.json$/)?.[1];
@@ -208,5 +211,17 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   assert.match(el('meta-status').textContent,/下一次重试/);
   assert(!requests.some(url=>url.includes('path=campaign.json')||url.includes('path=events.jsonl')),
     'compatibility reads a small status artifact, never full state or research logs');
+  maintenancePlan={schema_version:1,run_id:'controlled',jobs:[{id:'A',label:'conservative',task_id:123,output:'maintenance/run/A/output'}]};
+  run('state.maintenanceRefresh=0');before=requests.length;await run('maintenance(state.generation)');
+  assert.equal(requests.length-before,3,'maintenance uses only bounded plan/progress/health');
+  assert.match(el('maintenance-state').textContent,/123/);assert.match(el('maintenance-state').textContent,/98.0%/);
+  assert.match(el('maintenance-state').textContent,/固定验证 step 2：100.0%/);
+  before=requests.length;await run('maintenance(state.generation)');
+  assert.equal(requests.length,before,'maintenance is throttled independently of the three-second dashboard');
+  assert(!requests.slice(before-3).some(url=>url.includes('research.log')||url.includes('metrics.jsonl')),'no automatic raw log reads');
+  run("renderMaintenance({run_id:'full-game'},[{job:{id:'train',label:'full-game',task_id:456,output:'maintenance/run/train/output'},progress:{stage:'game_rollout',split:'train',completed_games:1,total_games:2},health:{validation:{step:2,valid_rate:1,score:.75,wins:1,draws:1,losses:0,passed:true}},gameProgress:{games:[{episode_id:'train-1',student_color:'black',plies:44,decisions:22,completed:false}]}}])");
+  assert.match(el('maintenance-state').textContent,/完整对局：1\/2/);
+  assert.match(el('maintenance-state').textContent,/半回合 44/);
+  assert.match(el('maintenance-state').textContent,/得分率 75.0%/);
   console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, difficulty, win rates and asynchronous races');
 })().catch(error=>{console.error(error);process.exitCode=1;});

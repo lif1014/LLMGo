@@ -54,7 +54,7 @@ def load_curriculum(path):
     return result
 
 
-def prompt_for_record(record, cards, config=None):
+def prompt_for_record(record, cards, config=None, *, correction=None):
     cfg = config or HarnessConfig.from_dict()
     board = board_from_record(record)
     history_board = chess.Board(record["initial_fen"])
@@ -64,10 +64,12 @@ def prompt_for_record(record, cards, config=None):
         history_board.push_uci(uci)
     candidates, observations = prepare_candidates(board)
     selected = select_skills(board, "move", cfg.skills_limit, candidates=candidates, cards=cards)
-    prompt = move_prompt(board, history, candidates, observations, skills=selected, history_plies=cfg.history_plies)
+    prompt = move_prompt(board, history, candidates, observations, skills=selected,
+                         history_plies=cfg.history_plies, correction=correction)
     return {"prompt": prompt, "messages": [{"role": "user", "content": prompt}],
             "legal_moves": [move.uci() for move in board.legal_moves],
-            "position_id": record_identity(record), "skills": [c["id"] for c in selected]}
+            "position_id": record_identity(record), "skills": [c["id"] for c in selected],
+            "candidates":candidates,"observations":observations}
 
 
 def seed_curriculum(count=16, seed=4170):

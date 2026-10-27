@@ -54,7 +54,8 @@ def test_wake_cache_flush_reports_false_instead_of_breaking_an_unknown_build(mon
         pass
     monkeypatch.setitem(sys.modules, name, _fake_adapter_module(Renamed)[1])
     assert verl_memory.install_wake_cache_flush() is False
-    monkeypatch.delitem(sys.modules, name, raising=False)
+    # Explicitly simulate an unavailable import even on Workers with real verl.
+    monkeypatch.setitem(sys.modules, name, None)
     assert verl_memory.install_wake_cache_flush() is False
 
 

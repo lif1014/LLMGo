@@ -1,7 +1,7 @@
 "use strict";
 const el=id=>document.getElementById(id), freshStream=()=>({cursor:null,before:null,follow:true,request:0,recent:[]});
 const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set(),cards:new Map(),streams:{research:freshStream(),executor:freshStream()},
-  evaluations:[],totalHours:0,evaluationRefresh:0,job:"",autoJob:true,game:"",autoGame:true,viewer:null,raw:null,
+  evaluations:[],totalHours:0,evaluationRefresh:0,maintenanceRefresh:0,job:"",autoJob:true,game:"",autoGame:true,viewer:null,raw:null,
   jobs:[],manifests:new Map(),fileData:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
 const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
@@ -433,10 +433,70 @@ async function refresh(){
     for(const source of ["research","executor"])if(state.streams[source].follow)await readActivity(source);
     if(generation!==state.generation)return;
     if(Date.now()-state.evaluationRefresh>20000){const rows=await json(api("/evaluations"));if(generation!==state.generation)return;state.evaluations=rows;state.evaluationRefresh=Date.now();curve();results(rows);}
-    await files(generation);await student(generation);
+    await files(generation);await student(generation);await maintenance(generation);
     if(generation===state.generation){el("connection").textContent="最近读取 "+new Date().toLocaleTimeString()+" · 3秒增量刷新";el("connection").className="";}
   }catch(e){if(generation===state.generation&&e.name!=="AbortError"){el("connection").textContent=e.message;el("connection").className="error";}}
   finally{state.busy=false;}
+}
+async function maintenance(generation){
+  if(Date.now()-state.maintenanceRefresh<20000)return;state.maintenanceRefresh=Date.now();
+  const read=async path=>{
+    const page=await json(api("/artifact?"+new URLSearchParams({path,offset:"0",length:"32768"})));
+    if(!page.eof)throw Error("维护摘要缺失或超过32KiB");return JSON.parse(page.text);
+  };
+  try{
+    const plan=await read("maintenance/active.json");
+    if(plan.schema_version!==1||!Array.isArray(plan.jobs)||plan.jobs.length>8)throw Error("维护任务清单格式无效");
+    const rows=await Promise.all(plan.jobs.map(async job=>{
+      if(!job.output?.startsWith("maintenance/")||job.output.split("/").includes(".."))throw Error("维护任务路径无效");
+      let progress,health,gameProgress,evaluation=[];
+      try{progress=await read(job.output+"/progress.json");}catch(e){return {job,pending:true};}
+      try{health=await read(job.output+"/training/health.json");}catch(e){/* Evaluation/queued tasks have no PPO health. */}
+      if(progress?.progress_path?.endsWith("game-progress.json")) {try{gameProgress=await read(job.output+"/training/game-progress.json");}catch(e){/* Bounded summary may still be pending. */}}
+      if(job.id.startsWith("eval-"))evaluation=(await Promise.all((job.levels||[2,3]).filter(n=>Number.isInteger(n)&&n>=1&&n<=8).slice(0,8).map(async level=>{
+        try{return {level,...await read(job.output+"/evaluation/L"+level+"/progress.json")};}catch(e){return null;}
+      }))).filter(Boolean);
+      return {job,progress,health,gameProgress,evaluation};
+    }));
+    if(generation!==state.generation)return;renderMaintenance(plan,rows);
+  }catch(e){if(generation===state.generation)el("maintenance-state").textContent="当前未读取到有效维护清单："+e.message;}
+}
+function renderMaintenance(plan,rows){
+  const lines=["验证："+show(plan.run_id)+" · 主研究暂停状态见上方面板"];
+  if(plan.summary)lines.push(plan.summary);
+  el("maintenance-files").replaceChildren();
+  if(plan.comparison_path?.startsWith("maintenance/")&&!plan.comparison_path.split("/").includes("..")){
+    const button=document.createElement("button");button.textContent="完整前后对照报告";button.onclick=()=>openRaw({path:plan.comparison_path,offset:0,length:65536,dynamic:true});el("maintenance-files").append(button);
+  }
+  for(const {job,progress:p,health:h,gameProgress:g,evaluation=[],pending} of rows){
+    const v=h?.validation,q=h?.quality,d=h?.diagnostics;
+    lines.push("\n"+job.id+" · "+show(job.label)+" · 平台ID "+show(job.task_id)+"\n阶段："+
+      (pending?"排队/尚无Worker记录":show(p?.stage))+" / "+show(h?.stage)+" · 更新："+date(h?.updated??p?.updated));
+    if(typeof p?.completed_games==="number")lines.push("完整对局："+p.completed_games+"/"+p.total_games+" · "+show(p.split));
+    if(g?.games)for(const game of g.games.slice(0,32)){
+      lines.push(game.episode_id+" · "+game.student_color+" · 半回合 "+game.plies+" · 学生决策 "+game.decisions+" · 随机后备 "+(game.random_moves||0)+" · "+(game.completed?"终局 "+game.result+" / "+game.reason:"进行中"));
+      if(/^(train|validation)-[0-9]{8}-[0-9]{4}$/.test(game.episode_id))for(const name of ["summary.json","events.jsonl","trajectory.json"]){
+        const button=document.createElement("button"),path=job.output+"/training/episodes/"+game.episode_id+"/"+name;
+        button.textContent=game.episode_id+" · "+name;button.onclick=()=>openRaw({path,offset:0,length:65536,dynamic:true});el("maintenance-files").append(button);
+      }
+    }
+    if(g?.omitted_games)lines.push("其余 "+g.omitted_games+" 局摘要保存在episode目录；此处仅显示最近32局。");
+    if(p?.scenario)lines.push("采样探针场景："+p.scenario+" · 局面数 "+show(p.samples)+" · PPO更新 "+show(p.updates));
+    if(typeof p?.formal_valid_rate==="number")lines.push("探针固定题集合法率："+percent(p.formal_valid_rate));
+    for(const result of evaluation)lines.push("L"+result.level+"实战："+result.completed_games+"/"+result.total_games+"局 · "+show(result.stage)+" · 异常 "+(result.failures?.length||0));
+    if(q)lines.push("本批请求合法率："+percent(q.valid_rate)+"（"+q.valid+"/"+q.samples+"）");
+    if(d)lines.push("reference KL（每手）："+show(d.reference_kl_move_mean)+" · 警戒："+show(d.reference_kl_warning));
+    if(v)lines.push(typeof v.score==="number"?"固定完整局验证 step "+v.step+"：合法率 "+percent(v.valid_rate)+" · 得分率 "+percent(v.score)+" · 胜/和/负 "+show(v.wins)+"/"+show(v.draws)+"/"+show(v.losses)+" · "+(v.passed?"通过":"未通过"):"固定验证 step "+v.step+"："+percent(v.valid_rate)+" · 历史单步TD均值 "+show(v.legal_td_mean)+" · "+(v.passed?"通过":"未通过"));
+    if(typeof v?.random_moves==="number")lines.push("验证随机后备："+v.random_moves+"手 · 占比 "+percent(v.random_rate));
+    if(typeof h?.metrics?.["game/random_moves"]==="number")lines.push("训练随机后备："+h.metrics["game/random_moves"]+"手 · 占比 "+percent(h.metrics["game/random_rate"]));
+    if(h?.selected_checkpoint_step)lines.push("选用checkpoint：step "+h.selected_checkpoint_step+" · 提前停止："+show(h.stopped_early));
+    if(h?.reason)lines.push("停止原因："+h.reason);
+    for(const name of (job.id.startsWith("eval-")?["progress.json","research.log","evaluation/comparison.json"]:job.id.startsWith("pilot")?["progress.json","research.log","probe-summary.json","probe-result.json"]:["progress.json","research.log","training/health.json","training/stability-stop.json","training/checkpoint-selection.json","training/validation-latest.json","training/game-progress.json","training/identity.json"])){
+      const button=document.createElement("button"),path=job.output+"/"+name;
+      button.textContent=job.id+" · "+name;button.onclick=()=>openRaw({path,offset:0,length:65536,dynamic:true});el("maintenance-files").append(button);
+    }
+  }
+  el("maintenance-state").textContent=lines.join("\n");
 }
 async function openRaw(row,tail=false){
   state.raw={...row,relative:tail?Math.max(0,row.length-65536):0,generation:state.generation,request:0};el("raw").showModal();await rawPage();
@@ -446,12 +506,14 @@ async function rawPage(){
   try{const length=Math.max(1,Math.min(65536,raw.length-raw.relative)),offset=raw.offset+raw.relative;
     const data=await json(api("/artifact?path="+encodeURIComponent(raw.path||"events.jsonl")+"&offset="+offset+"&length="+length));
     if(state.raw!==raw||raw.generation!==state.generation||request!==raw.request)return;
+    if(raw.dynamic&&typeof data.next_offset==="number")raw.length=data.eof?data.next_offset-raw.offset:data.next_offset-raw.offset+65536;
     el("raw-content").textContent=data.text;el("raw-position").textContent=(raw.path||"events.jsonl")+" · 字节 "+raw.relative+"–"+Math.min(raw.length,raw.relative+length)+" / "+raw.length+"（原文区间，可含交错事件）";
     el("raw-prev").disabled=raw.relative===0;el("raw-next").disabled=raw.relative+length>=raw.length;
   }catch(e){if(state.raw===raw&&raw.generation===state.generation)el("raw-content").textContent=e.message;}
 }
 function selectCampaign(){
   for(const request of state.requests)request.abort();state.generation++;state.campaign=el("campaign").value;
+  state.maintenanceRefresh=0;
   resetGame();state.games=[];state.jobs=[];state.manifests=new Map();state.fileData=null;state.gamesScope=null;state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.autoGame=true;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
   state.archivedJobs=new Set();state.archivesLoaded=false;state.activeJobId=null;el("show-archived-jobs").checked=false;
   el("evaluation-jobs").replaceChildren();el("evaluation-jobs").dataset.signature="";el("job-context").textContent="正在读取任务参数…";el("evaluation-scope").textContent="";

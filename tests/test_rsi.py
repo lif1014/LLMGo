@@ -18,8 +18,8 @@ from llmgo.rsi.controller import Controller
 from llmgo.rsi.ladder import batch_stats, opponent, panel_summary, evaluation_plan
 from llmgo.rsi.memory import MemoryStore
 from llmgo.server.rsi import router
-from llmgo.training.ppo import training_config
-from llmgo.training.rewards import evaluate_action, terminal_value
+from llmgo.training.verl_ppo import training_config
+from llmgo.training.lc0 import terminal_value
 from llmgo.training.rollout import board_from_record, load_curriculum, prompt_for_record, record_identity, write_curriculum
 
 
@@ -168,15 +168,6 @@ def test_reward_actor_pov_and_no_teacher_answers_in_prompt(tmp_path):
     assert terminal_value(board, chess.BLACK) == 1
     assert terminal_value(board, chess.WHITE) == 0
     record = {"initial_fen": chess.STARTING_FEN, "moves": ["f2f3", "e7e5", "g2g4"], "split": "train"}
-    class Critic:
-        def value(self, board, actor):
-            return .6, {"mock": True}
-    judgement = evaluate_action(record, "</think>\nd8h4", Critic())
-    assert judgement["environment_reward"] == 1
-    assert judgement["bootstrap"] == 0
-    assert judgement["advantage"] == pytest.approx(.8)
-    assert evaluate_action(record, "</think>\nd8h4", Critic(), truncated=True)["failure_reason"] == "length"
-    assert evaluate_action(record, "</think>\na1a8", Critic())["uci"] is None
     prompt = prompt_for_record(record, [])
     assert "d8h4" in prompt["legal_moves"] and "reward" not in prompt["prompt"].lower()
     invalid = {**record, "teacher_answer": "d8h4"}
@@ -194,9 +185,9 @@ def test_history_is_preserved_and_unknown_training_commands_rejected(tmp_path):
     path = tmp_path/"positions.jsonl"
     assert write_curriculum(path, [first, first, second]) == 2
     assert len(load_curriculum(path)) == 2
-    with pytest.raises(ValueError, match="Unknown RL"):
+    with pytest.raises(ValueError, match="Unknown full-game"):
         training_config({"sft": True})
-    assert training_config({})["backend"] == "hf_ppo"
+    assert training_config({})["backend"] == "verl_ppo"
 
 
 def test_readonly_dashboard_cursor_raw_artifact_and_path_containment(tmp_path, monkeypatch):

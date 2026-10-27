@@ -1,111 +1,100 @@
-# verl PPO + LC0 与多 GPU pipeline
+# 完整对局 PPO、终局奖励与 LC0 value
 
-默认路线是课程局面 → 当前Qwen策略采样一手 → LC0逐步打分 → verl PPO更新 → 完整HF导出 → Fairy-Stockfish实战。禁止SFT，使用SFT最终得0分。LC0不是正式玩家或正式对手，不向学生prompt提供最佳着法。
+当前训练模式为 `full_game_ppo_lc0`：从标准初始局面下完 Qwen-vs-Fairy 对局，再做 verl PPO 更新。禁止 SFT、行为克隆和教师答案蒸馏。LC0 只离线提供 value，不给学生最佳着法，也不参与正式选步。
 
-## 资源与环境
+## 一批训练
 
-每项任务最多8 GPU，默认8。评测每卡启动独立Qwen/vLLM副本，同时处理棋局；10局初始档仍是白黑各5局，20局候选档仍是白黑各10局。并行不增加比赛数，不改种子或难度。
+1. 冻结当前 Qwen、Harness/skills 和对手配置。
+2. 白黑均衡地并行下完整局。学生决策→学生走子→对手回复→下一次学生决策，构成一条转移；强制唯一合法步由环境执行，不创建虚假的模型样本。
+3. 中间环境奖励为 0，最后一个学生转移按学生视角给胜 +1、负 −1、和 0。双方总计 200 半回合上限按和棋；对手刚刚将杀也写入最后一个学生转移。
+4. LC0 用 native WDL 标注每个学生决策状态，`V=P(win)−P(lose)`，执黑仍固定学生视角。
+5. 按每局从后向前计算 GAE，再展开为逐手/逐请求的 token 训练数据。
+6. 使用 verl 原生 actor/reference、clipped PPO、FSDP2、优化器、权重同步及 checkpoint。完整局采样期间不更新权重，下一批才使用新策略。
 
-训练用verl 0.8.0的RayPPOTrainer、FSDP2和vLLM：8卡任务中7卡用于actor/rollout/reference，1卡固定分配给LC0。支持2–8卡，actor数=总卡数−1；单卡可以运行，但必须显式选择LC0 CPU后端，速度会慢。预留教师GPU避免LC0与rollout争用显存。
+```text
+delta_t = r_t + gamma * (1-done_t) * V_LC0(s_next) - V_LC0(s_t)
+A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
+```
 
-指定镜像中原来没有安装verl，独立环境为`/user/lyh4170/venvs/llmgo-verl-ppo-tf54-20261024`。`scripts/train_ppo.py`自动调用`bootstrap_verl.py`建立/检查此环境，再切换解释器。依赖在`requirements-rsi-verl.txt`，固定verl0.8.0、Transformers5.4.0、mistral-common1.10.0，保留镜像Torch2.10/CUDA/vLLM0.17/tokenizers。由于vLLM0.17的包元数据声明Transformers<5，而Qwen3.5训练需要5.x，这个组合已在任务1350755完成8GPU、2步/每步2epoch的实际PPO与完整HF导出；这不代表完整棋力评测已完成。评测继续使用原独立inference环境。安装只写本研究专属venv/cache，不改系统、原控制环境或其他任务环境。
+默认 `gamma=1、gae_lambda=0.95`。终局 bootstrap 为 0，不叠加价值差奖励，不中心化、不覆盖成旧协议优势，也不新增可学习 critic。LC0 并不是当前学生的校准 Vπ，bootstrap 存在教师/学生策略不匹配的偏差；完整局 `lambda=1` 可作后续对照，此时 A=实际终局得分−当前 V。和棋的环境奖励为 0，也可能产生非零优势。
 
-安装使用中科大PyPI镜像，直连不通时使用集群已有代理。安装失败不会创建成功marker，可修复后重试。不要安装`verl[vllm]` extras去降级镜像GPU栈。
+## 入口和配方
 
-## 训练提案
+入口仍是 `scripts/train_ppo.py`，在注册 Worker 中读取 `LLMGO_MODEL / LLMGO_CANDIDATE / LLMGO_SITE / LLMGO_OUTPUT`，自动切换既有独立 verl 环境。候选目录准备 `skills.json` 与 `ppo.json`，不再要求 curriculum.jsonl。
 
-在研究workspace准备`curriculum.jsonl`、`skills.json`、`ppo.json`。课程每行保存initial_fen、完整moves、来源及split=train，不含教师答案；可以从自己的events提取局面。默认训练输入仍是现有合法着法选择题prompt，thinking开启。
+小规模配方例子（训练步是采完一批完整游戏后的一次更新，不是棋步）：
 
 ```json
 {
-  "training": {"backend":"verl_ppo","steps":16,"ppo_epochs":4,"learning_rate":0.00001},
-  "reward": {"mode":"lc0_bootstrap","nodes":10000,"backend":"cuda-auto"}
+  "training": {
+    "backend": "verl_ppo",
+    "mode": "full_game_ppo_lc0",
+    "games_per_batch": 2,
+    "concurrent_games": 2,
+    "opponent_level": 1,
+    "steps": 2,
+    "whole_batch_update": true,
+    "ppo_epochs": 1,
+    "learning_rate": 0.000001,
+    "gamma": 1.0,
+    "gae_lambda": 0.95,
+    "validation_games": 2,
+    "validation_every": 2,
+    "checkpoint_every": 1,
+    "cudagraph_capture_sizes": [1, 2, 4, 8]
+  },
+  "teacher": {"mode": "lc0_value", "nodes": 10000, "backend": "cuda-auto"}
 }
 ```
 
-默认8卡时batch_size=56、minibatch_size=14、每卡microbatch=1；根据actor卡数自动调整默认batch。若显式设置，batch必须整除minibatch，minibatch必须是actor卡数的倍数。满参数FSDP2训练，默认不使用LoRA。
+默认 8 GPU：7 张 actor/rollout/reference、1 张 LC0；每任务最多 8 张，可选择 2–8 张；单卡必须显式选 LC0 CPU 后端。保留用户指定 ptdbench 镜像、已有路径和独立环境，不重装系统或其他任务的 GPU 栈。CUDA Graph 默认开启，保留 wake 前缓存释放与导出兼容修复。
 
-```json
-{
-  "hypothesis":"根据实战错误提炼skills并用LC0逐步反馈改善选步",
-  "jobs":[{
-    "label":"verl PPO + LC0",
-    "argv":["{python}","scripts/train_ppo.py"],
-    "resources":{"gpu_count":8,"cpu":64,"memory_gib":512}
-  }],
-  "evaluation":{"levels":[2],"tracks":["player"]},
-  "evaluation_gpus":8
-}
-```
+默认 `whole_batch_update=true`：本批全部真实请求做一个全局 minibatch，native verl 以 microbatch=1 梯度累积；`ppo_epochs=1` 时每批一次 optimizer step，避免两个完整局展开后悄悄变成几十次更新。可显式关闭以研究多个 minibatch；`minibatch_size` 默认按 actor 数匹配，亦作为补齐粒度。
 
-Executor提交、轮询和收集，Meta-Agent无需周期性查询。默认site也是8GPU/64CPU/512Gi，可按需降低CPU、内存和GPU请求。所有任务仍为rsi / beijing / model-autosft / NORMAL；devspace保持0GPU。
+thinking 开启。训练每请求最多 16384 tokens，每手共享 32768 tokens、最多 2 次请求，请求/整手超时为 540/1800 秒。每次请求保留真实上下文、token IDs、behavior logprobs 和原文；失败后成功的重试也计入同一手的训练样本。一手各请求按生成 token 数分配权重，再按手等权，不因重试更多而多算棋步。padding 行 response mask/reward/advantage 均为 0，不重复最后一手凑样本。
 
-## 逐步反馈与PPO
+训练和内部完整局验证均使用 temperature=1、top_p=1、top_k=-1，确保 actor/ref 重算与 behavior logprobs 一致。内部验证固定独立种子、白黑均衡，不用来更新模型；它不请求LC0标注，轨迹中的value=0明确标记为占位，不当作教师预测；正式受保护评测仍使用其冻结的 0.9/0.95/20 和原预算。二者的得分不可直接混为同一统计。
 
-V=P(win)−P(lose)，保持同一学生行棋方视角。学生走一步后棋盘轮到对方，但LC0值必须转回原行棋方。
+## 终止、诊断与恢复
 
-- 非终局：A=V(s_after)−V(s_before)，环境奖励0，gamma1/lambda0。
-- 真实终局：A=胜负值−V(s_before)，胜1、和0、负−1，bootstrap为0，不重复计算价值差。
-- 第200半步按协议截断为和棋；非法、缺失完整thinking结束标记、生成长度截断视为协议失败，目标−1，不生成随机替代步。
+- 用尽重试/固定模型预算仍无合法答案时，从当前全部合法走子中按episode种子均匀随机选一步，作为学生这一手继续整局；不再因格式失败直接判负，不追加中间奖励或处罚。正式裁判原有随机后备规则不变。棋盘没有合法步时仍按将杀/逼和终局规则处理，不尝试随机走子。
+- 引擎/网络/服务故障或集群停止属于 aborted，不编造输棋或和棋奖励；未完成局不进入梯度。负局和协议失败样本不按结果筛除。
+- `quality_gate_min_valid` 与内部 `validation_min_valid` 默认 0.5，拒绝全部失败的批次；更新后的固定验证还要求合法率不低于原始验证基线减 `validation_max_drop=0.1`（10个百分点）。不要求原模型先达到90%才能学习。训练批次与固定验证的局面不同，不直接比较两者合法率。reference KL 警戒/停止默认 0.05/0.1，actor/rollout 平均绝对 logprob 差停止默认 0.1；异常值和缺失证据不会默认通过。KL 是独立正则，不是环境奖励。受保护正式评测规则保持不变。
+- 不把所有负优势、非法输出 A=0 或 GAE 下的个别正优势一概当成程序错误；检查实际 r/V/delta/A/λ/边界。旧非法输出被全批中心化推正的故障已随旧目标移除。
+- 导出只接受有通过更新后完整局/协议/KL/同步检查回执的完整全 rank checkpoint。安全停止只能回退至此前已验证且完整的 checkpoint；普通 OOM/运行错误不得转换为成功导出。
+- 恢复要求模型、代码、Harness/skills、配方、教师及卡数身份相同。`games.json` 保存已更新 episode 清单、下一批种子和原始验证基线；恢复不重置基线，不将旧策略前半局与新策略后半局混用。中断的未完成局保留 aborted 证据，重采完整局。
+- 从 r000002 框架起跑指原始 Qwen 权重+r2 Harness/skills+当前修复后的训练代码，不能将 r2 的旧训练实现一并恢复。
 
-一手棋为一个训练segment，不是逐token棋步奖励，也没有对手应手或整盘GAE。不训练critic网络；LC0充当外部固定价值估计器，返回的token returns不会用于拟合价值头。
+## 保存的证据
 
-默认`advantage_estimator="lc0_td0_protocol_guarded"`在整批样本进入actor优化器前处理最终优势：合法且有response token的样本，使用原始TD减去本批**合法样本**TD均值；`invalid_final_answer`、`incomplete_thinking`、`length`直接使用`-protocol_failure_penalty`（默认−1），不再减LC0价值或批次均值。有效tokens共享该优势，padding为0；没有任何合法输出则保存诊断并拒绝更新。教师原始TD、终局target仍照常保留，协议惩罚与棋步价值分开记录。未知失败类型或缺少协议判定直接报错，不能把基础设施故障当棋步奖励。
+| 路径（相对 output/training） | 内容 |
+|---|---|
+| identity.json / resolved-config.json / teacher.json | 实际模型、训练源码、环境、配方与教师身份 |
+| episodes/EPISODE/events.jsonl | 逐手工具观测、prompt、请求、原始思考/答案、token IDs/logprobs、对手着法和终止原因 |
+| episodes/EPISODE/trajectory.json | 完整棋谱状态、r/V/delta/GAE、重试请求及学生视角 |
+| agent_requests/*.json | 请求完成即保存的原始token/思考/logprobs；同批其他请求或后续奖励接口失败不会抹掉已完成输出 |
+| requests/*.pt / batches/step-*.pt | 实际采样张量与最终进入优化器的张量；仅加载可信自有 pickle |
+| lc0/*.json | 每个学生决策的 native WDL、value、搜索节点及延迟 |
+| game-progress.json / health.json / latest.json | 有界进度与质量/KL/同步摘要 |
+| validation/step-*.json / validation-baseline.json | 固定完整局验证与原始基线 |
+| sync-check.jsonl / update-diagnostics/*.json | actor/rollout 对照、reference KL、思考/答案的系数质量 |
+| checkpoint-selection.json / training-result.json | 实际选择的已验证存档与完整 HF 模型 |
 
-修复原因：旧`lc0_td0_centered`会对所有样本统一减批次均值，非法输出在劣势局面可能原始TD为0，减去负均值后却得到正优势。仅令协议target为−1不足以防止此事。新模式在最终pre-update边界赋值并检查负号；Hydra里的底层估计器显示`lc0_td0`，实际模式以`research.advantage_estimator`和保存的优势张量为准。旧`lc0_td0`/`lc0_td0_centered`仍可作明确指定的研究对照，旧recipe显式指定旧模式时不会被默认值自动覆盖；维护后继续训练需明确更新recipe，改变模式需新实验，不能续用旧身份checkpoint。
+网页周期性读小摘要，逐局原文按需分页。GPU 平台轮询仍由独立 Executor 每 300–600 秒处理，不让 Meta 或页面直接高频查询 cctl。
 
-verl执行实际clipped PPO、多epoch更新、reference KL和分布式同步。训练采样temperature1/top_p1/top_k−1，不裁掉策略支持集；使用vLLM保存的实际behavior logprobs作为old logprobs（bypass PPO-clip模式）。KL独立施加，不再从教师TD误差中重复扣除或重算bootstrap。
+## 已移除的旧入口
 
-LC0是强教师的价值近似，不是当前学生策略的校准Vπ。不能仅凭reward/loss变好宣称棋力提升，必须看多个Fairy难度的实战。
+旧 `training/ppo.py` 自写 HF/LoRA PPO、`rewards.py` 单手 TD、`advantages.py` guarded/balanced 中心化，以及旧单步检查/验证采样脚本已退出当前路径；有效 LC0/棋规/梯度映射/恢复覆盖迁移至完整局测试。旧配方字段显式报错，不能静默切换目标续写同一实验。历史只读快照、旧模型和实测成绩不删除或覆写。
 
-## 证据与恢复
+## 验收边界
 
-`output/training/`保留：
-
-- `identity.json`：输入模型、课程、skills、reward、训练配置、GPU数、verl版本。
-- `resolved-config.json`、`teacher.json`、`model-preflight.json`：实际verl配置、LC0身份、真实Qwen processor预检；identity同时固定代码和运行时版本。
-- `lc0/sample-*.json`：逐手原始输出、response token IDs、前后FEN、原生WDL、V、target、A、失败/终局原因。
-- `batches/step-*.pt`：更新前实际response、old/rollout/ref logprobs、response mask及advantage张量；`batch-latest.json`索引。
-- `protocol-advantages/step-*.json`及`protocol-advantages-latest.json`：逐样本原始TD、失败原因、最终优势、response长度、合法样本均值与源码样本路径；`metrics.jsonl`同步保存`protocol_guard/*`摘要。
-- `rollouts/*.jsonl`：verl生成日志；`metrics.jsonl`、`latest.json`：每步PPO指标。
-- `checkpoints/global_step_N/`：全rank模型、optimizer、extra/RNG和dataloader状态。
-- `model/`、`training-result.json`：经过合并、完整HF身份核验的导出，成功后写`output/submission.json`。
-
-恢复只接受身份相同、并行数相同且所有rank文件齐全的verl checkpoint。旧HF LoRA checkpoint不能直接恢复为verl。新的独立research提案可以在argv前用`env LLMGO_RESUME_FROM=/user/lyh4170/.../output {python} scripts/train_ppo.py`指定原输出；常规失败重试由Worker传递该变量。变更reward/课程/卡数应作为新实验开始并记录区别。
-
-可在有Torch的环境离线回放可信的自有历史batch，输入只读、不运行模型：`python scripts/check_ppo_protocol.py --batches /user/lyh4170/.../training/batches --output /user/lyh4170/.../replay.json`。可重复`--batches`。脚本读取包含NumPy元数据的pickle，只用于可信自有产物，报告旧非法正优势数与修复后数量。回放通过证明优势符号修复，不能代替新GPU训练、导出与棋力评测。
-
-评测逐局写带身份和日誌SHA的`game_results`。每GPU顺序处理其分配棋局，各GPU并行；单局/服务故障最多尝试3次，旧未完成日志移到`incomplete_games`，异常写`attempts`。同任务或显式失败恢复只复用身份一致且原始日志未变的完成局。全部局数、种子、白黑配对齐全才发布metrics；不把部分结果当成功。没有该回执格式的旧版本结果不能当缓存。
-
-程序通讯异常（harness_error）以aborted结束，保留轨迹后触发重试，不写为完成局，也不把它计为模型败局。历史版本曾写出的错误胜负回执会被拒绝；跨评测版本恢复记录 `resume-skipped.json`，跳过旧身份结果，旧文件保持原样。同一任务已有的错误回执移至 `invalid_game_results/`，重新执行该局。候选桥采用最大64MiB的长度前缀JSON，推理期间独立接收候选事件，避免大响应及双向流阻塞；关闭包含有界写入、排空与进程退出等待。正式原始响应、可见思考和token记录继续保存，不为绕过通讯限制截断模型输出。
-
-网页显示每GPU状态、当前局、重试次数、完成数和PPO步骤；日志只在点击时加载，目录列表有限，不周期性读全部训练/思考原文。平台轮询仍留在Executor：GPU任务300秒起退避至600秒，纯CPU任务保留较短间隔。
-
-## 已有 campaign 升级
-
-旧源码/协议和初始参考Harness不可原地改写。自己的旧GPU任务确认停止、Controller和独立Executor退出后，执行以下脚本（自动使用已安装控制环境）：
-
-```bash
-bash scripts/start_rsi.sh --upgrade --web
-```
-
-升级备份旧state，增加新版本快照，更新默认资源和研究副本来源，保留原始基线、参考Harness和所有任务证据。失败基线登记新的job ID与intent。若仍有活动任务或锁，升级拒绝执行。新campaign无需upgrade，直接start。
+CPU 数学/棋规测试、远端实际 verl 接口检查、真实 GPU 更新导出与实战棋力是四项独立证据。此次维护先少量更新，再用同一 r2 Harness、种子、白黑和正式预算对比训练前后 L2/L3；用户授权的每档 10 局属于快速探针，不作为 20 局候选扶正或完整 L1–L8 排名。
 
 
-## 已定位的兼容故障（2026-10-24）
+## 随机后备与训练归属（2026-10-27）
 
-首个8GPU验证任务1348078在vLLM配置初始化时失败：vLLM 0.17的Qwen3.5回移植配置传入list，而Transformers 5.2进行set并集。`llmgo.training.vllm_compat`只在当前训练进程内、固定版本组合、vLLM Qwen3.5配置类上将忽略键转成set，通过verl的external_lib覆盖各模型/采样服务进程；不写site-packages、不改学生config.json、不改变RoPE数值。启动还会在创建Ray worker前预检真实模型配置。
+按用户要求，随机后备归属学生玩家的这一手，参与同一条完整轨迹的终局reward、LC0 value、GAE与actor loss，整手不屏蔽。`uci`是实际执行步，`model_uci`保留解析出的模型答案（后备时为null），`action_source=random`、`fallback_reason`和fallback事件记录来源；summary与metrics分别统计random_moves/random_rate。失败请求的failure_reason不改成成功，不伪造随机UCI的token或behavior logprob；优化器仍使用这一手实际生成的原始回答及其真实概率。
 
-旧任务输出保留。后续GPU验证以各自readiness/result.json为准，不能把import和配置检查当成完整PPO通过。
+这相当于环境把无效回答映射成随机合法落子。中间reward仍为0，只有真实终局给±1/0；因此随机后备后的胜局也可能给失败回答正优势。这是当前终局奖励与用户要求的归属方式的结果，不能当作实现自动过滤了非法正优势。应同时看合法率、后备率和实战表现，不能只看胜率。
 
-
-第二个8GPU验证任务1349962已通过模型和vLLM初始化，随后在7条样本/4个AgentLoop worker的分块处失败。配置现在根据batch与可用worker上限的最大公约数选择worker数，保证均分；已加入1–8GPU、三种批量倍率的回归检查。任务1350249随后在分布式actor前向遇到CUDA错误；后续定位与最终通过记录见下一节。
-
-
-## 8GPU验收通过（2026-10-24）
-
-任务1350755成功：verl0.8.0 / Transformers5.4.0 / Torch2.10.0+cu129 / vLLM0.17.0 / tokenizers0.22.2 / Ray2.54.0，8卡中7卡actor、1卡LC0。实际执行2个训练步、每步2个PPO epoch，正常异步CUDA，第二步使用更新策略重新采样。两步actor grad_norm分别为21.8264、21.1634；已保存old/ref logprobs、教师标注、优化器与完整分片checkpoint，并成功合并完整HF模型。验收用64-token生成上限和LC0 nodes1，只验证运行链路；默认研究配方的2048 tokens/nodes10000不变，不把验收模型作为棋力提升结论或正式champion。
-
-此前1350249通过采样与LC0评分、在分布式actor前向出现CUDA非法访存；独立单卡回放1350451可完成同一笔资料的策略前向/反向，故不能把报错行直接认定为LC0奖励问题。依据[上游同堆叠问题](https://github.com/verl-project/verl/issues/6549)另建Transformers5.4环境；旧5.2环境保留。1350597暴露旧mistral-common1.9.1与5.4 processor的导入冲突，已在专属环境固定1.10.0。1350733实际验证native/vLLM processor和thinking模板；rollout明确language_model_only，模型结构和原权重路径保持不变。
-
-最终checkpoint：`/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/training/checkpoints/global_step_2`；HF导出在同目录的`training/model`，主回执`result.json`、指标`training/metrics.jsonl`。正式多难度评测仍由独立裁判执行，未拿此短验收冒充实战改善。
+环境语义写进training identity；原协议负局版本的optimizer状态/初始验证不能直接冒充新版续训基线。旧冻结任务、旧checkpoint和正在运行的评测不热改。当前研究起点与已导出模型见[rsi-research-baseline.md](rsi-research-baseline.md)。

@@ -30,8 +30,7 @@ def main():
         subprocess.run([sys._base_executable,str(repo/"scripts/bootstrap_verl.py"),"--prefix",str(prefix)],check=True)
         exec_into_verl(prefix, Path(__file__).resolve(), sys.argv[1:])
     from llmgo.training.verl_ppo import recipe_override, train, training_config
-    from llmgo.training.rewards import validate_reward
-    from llmgo.training.rollout import load_curriculum
+    from llmgo.training.lc0 import teacher_config
     output = Path(os.environ["LLMGO_OUTPUT"])
     candidate = Path(os.environ["LLMGO_CANDIDATE"])
     recipe_path, control = recipe_override(candidate/"ppo.json", sys.argv[1:])
@@ -46,10 +45,11 @@ def main():
         "recipe":recipe})
     gpus = manifest.get("resources",{}).get("gpu_count",site["gpu_count"])
     config = training_config(recipe.get("training",{}),gpus)
-    reward = validate_reward(recipe.get("reward",{}))
+    if set(recipe)-{"training","teacher"}:
+        raise ValueError("Full-game recipe accepts training/teacher; migrate old reward/curriculum recipe")
+    reward = teacher_config(recipe.get("teacher",{}))
     atomic_json(output/"progress.json", {"stage":"ppo_starting","message":"启动 verl PPO + LC0", "allocated_gpu_count":gpus})
-    model = train(os.environ["LLMGO_MODEL"],load_curriculum(candidate/"curriculum.jsonl"),
-        read_json(candidate/"skills.json"),site,reward,config,output/"training",
+    model = train(os.environ["LLMGO_MODEL"],read_json(candidate/"skills.json"),site,reward,config,output/"training",
         allocated_gpus=gpus,resume_from=os.environ.get("LLMGO_RESUME_FROM") or None)
     if control:
         # A diagnostic recipe (for example learning_rate=0) must never become the
@@ -57,7 +57,11 @@ def main():
         atomic_json(output/"control-result.json", {"model_path":str(model),"control":True,
             "note":"Diagnostic export; submission.json intentionally not written."})
     else:
-        atomic_json(output/"submission.json", {"model_path":str(model),"method":"verl_ppo/lc0_td0", "sft_enabled":False})
+        result = read_json(output/"training/training-result.json")
+        atomic_json(output/"submission.json", {"model_path":str(model),
+            "method":"verl_ppo/"+config["mode"],"loss_agg_mode":config["loss_agg_mode"],
+            "selected_checkpoint_step":result.get("selected_checkpoint_step"),
+            "stopped_early":result.get("stopped_early",False),"sft_enabled":False})
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ Controller默认按最新working创建workspace，这只是初始副本，不是
 
 在proposal的model_path显式指定身份卡中的HF导出路径；hypothesis及evidence_refs说明实际恢复来源、原评测和后续改变。Controller的parent_id可能仍记录本轮注册工作流的父节点，另用研究证据说明逻辑研究起点，不篡改历史谱系。Harness、skills、模型分开登记；每次比较说明哪一项改变。
 
-**训练模块独立处理。** 恢复历史Harness/skills不意味着恢复当年的训练实现。旧PPO存在已证实的非法正优势问题，先读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)；从live采用已修训练文件，或自主修改并验证新的训练代码。注意旧recipe显式lc0_td0_centered会覆盖新默认。保留已修的导出、缓存释放和同步诊断。
+**训练模块独立处理。** 恢复历史Harness/skills不意味着恢复当年的训练实现。旧PPO存在已证实的非法正优势问题，先读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)；从live采用已修训练文件，或自主修改并验证新的训练代码。当前已改为完整对局PPO+LC0 GAE，旧recipe的lc0_td0_centered等字段会被明确拒绝，需按docs/rsi-verl-ppo.md迁移；不要恢复旧ppo.py/rewards.py。保留已修的导出、缓存释放和同步诊断。
 
 ## 权重起跑和断点恢复
 

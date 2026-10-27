@@ -26,6 +26,11 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
+  <section aria-label="PPO维护验证">
+    <h2>PPO 稳定性验证</h2>
+    <p class="muted">独立维护任务与主研究Loop分开。每20秒读取小型状态文件；原始输出按需打开，页面不查询集群。</p>
+    <pre id="maintenance-state">尚未读取维护任务</pre><div id="maintenance-files" class="files"></div>
+  </section>
   <section class="evaluation-panel" aria-label="评测难度与胜负统计">
     <h2>评测难度与胜负统计</h2>
     <label><input id="show-archived-jobs" type="checkbox"> 显示已归档任务</label><span id="archived-job-count" class="muted"></span>
@@ -83,7 +88,7 @@
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
   <script>
     const dashboard = document.createElement("script");
-    dashboard.src = "static/rsi.js?v=archived-jobs-1";
+    dashboard.src = "static/rsi.js?v=fullgame-ppo-3";
     document.body.append(dashboard);
   </script>
 </body></html>

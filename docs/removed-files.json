@@ -36,5 +36,22 @@
     "src/llmgo/runtime/prompt.py",
     "src/llmgo/runtime/player.py"
   ],
-  "removed_orphan_bytecode": 36
+  "removed_orphan_bytecode": 36,
+  "full_game_ppo_20261027": {
+    "reason": "Replace legacy self-written HF PPO and one-step TD/protocol objectives with full-game verl PPO and LC0 GAE",
+    "deleted": [
+      "src/llmgo/training/ppo.py",
+      "src/llmgo/training/rewards.py",
+      "src/llmgo/training/advantages.py",
+      "src/llmgo/training/validation_sampling.py",
+      "scripts/check_ppo_protocol.py",
+      "scripts/probe_validation_sampling.py",
+      "tests/test_rsi_gradient.py",
+      "tests/test_rsi_qwen_ppo.py",
+      "tests/test_protocol_advantages.py",
+      "tests/test_validation_sampling.py",
+      "tests/test_verl_stability_hooks.py"
+    ],
+    "coverage": "LC0 WDL/POV, chess boundaries, GAE, retry weighting, real verl tensors, checkpoint gates and export coverage retained/migrated; frozen historical artifacts not deleted"
+  }
 }

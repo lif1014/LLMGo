@@ -193,7 +193,7 @@ class CodexBackend:
             "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
             "每轮先读持久 Memory、失败记录与跨难度评测。只能通过强化学习（RL）和改进skills这两种方法提升Qwen3.5-4B，可以单独使用或组合。"
             "禁止使用SFT（监督微调），包括SFT预热、辅助SFT损失、行为克隆和对教师答案的监督蒸馏；使用SFT，最终得分为0分。"
-            "可自主修改RL算法、reward、数据、课程，以及为RL和skills服务的Harness、prompt、工具、skills内容/触发/选择、研究流程；默认训练入口scripts/train_ppo.py现为verl 0.8.0 PPO+LC0，可研究修改，不要求沿用现有PPO。"
+            "可自主修改RL算法、reward、数据、课程，以及为RL和skills服务的Harness、prompt、工具、skills内容/触发/选择、研究流程；默认训练入口scripts/train_ppo.py现为verl 0.8.0完整对局PPO+LC0：每批从标准开局下到终局，中间reward0、终局胜负和为+1/-1/0，LC0提供同一学生视角V，gamma1/lambda0.95按棋步GAE。只需ppo.json(training/teacher)和skills.json，不再使用单步课程。默认训练耗尽合法回答预算时随机选全部合法步之一，归属学生该手继续完整局、参与GAE/loss；保留真实输出概率及随机来源。可修改训练源码及配方，先读docs/rsi-verl-ppo.md，禁止恢复旧单步训练代码。"
             "离线教师可用于RL奖励/价值估计、局面分析和提炼skills，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
             "最终会把成果对战固定L1-L8 Fairy-Stockfish，最低档skill -9/depth5/0.05秒；只刷简单档没有用。"
             "新campaign先做L1-L4基线，每档10局、白黑各5局，共40局，然后开始研究；初始基线不是完整八档成绩。"

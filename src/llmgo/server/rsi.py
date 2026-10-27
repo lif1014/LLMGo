@@ -305,7 +305,9 @@ def job_files(name: str, job_id: str):
     for pattern in ("output/gpu-*/*.log", "output/attempts/*.json", "output/training/lc0/*.json", "output/training/rollouts/*.jsonl"):
         for artifact in islice((job).glob(pattern), 8):
             names += (artifact.relative_to(job).as_posix(),)
-    names += ("output/training/model-preflight.json", "output/training/resolved-config.json", "output/training/identity.json", "output/training/teacher.json", "output/training/training-result.json", "output/training/batch-latest.json", "output/training/metrics.jsonl")
+    names += ("output/training/model-preflight.json", "output/training/resolved-config.json", "output/training/identity.json", "output/training/teacher.json", "output/training/training-result.json", "output/training/batch-latest.json", "output/training/metrics.jsonl",
+              "output/training/game-progress.json", "output/training/game-context.json", "output/training/validation-latest.json", "output/training/health.json", "output/training/validation-split.json", "output/training/validation-baseline.json", "output/training/validation.jsonl",
+              "output/training/update-diagnostics-latest.json", "output/training/checkpoint-selection.json", "output/training/stability-stop.json")
     files = []
     for name in names:
         path = inside(root, job/name)

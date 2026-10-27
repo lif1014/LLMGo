@@ -61,16 +61,6 @@ def test_quality_reports_unavailable_instead_of_zero_when_reasons_are_missing():
     assert quality["valid"] == 0 and quality["failure_counts"] == {"unavailable":2}
 
 
-def test_negative_advantage_fraction_uses_final_guarded_moves(tmp_path):
-    from llmgo.training.advantages import apply_protocol_guard
-    rows = batch([4,4,4,4], reasons=("","","","invalid_final_answer"),
-                 scores=[-.75,-.5,-.25,0.])
-    rows.batch["token_level_rewards"] = rows.batch["token_level_scores"].clone()
-    apply_protocol_guard(rows, tmp_path, 1)
-    quality = rollout_quality(rows, max_response_length=4)
-    # Legal centered advantages [-.25, 0, .25], failed answer -1.
-    assert quality["advantage_negative_fraction"] == .5
-    assert quality["raw_td_negative_fraction"] == .75
 
 
 def test_throughput_is_taken_from_the_measured_generation_timer():
@@ -93,7 +83,7 @@ def test_sync_check_records_agreement_and_never_raises(tmp_path):
 
 def test_gate_threshold_is_configurable_and_rejects_collapsed_rollouts():
     from llmgo.training.verl_ppo import training_config
-    assert training_config({},8)["quality_gate_min_valid"] == 0.0
+    assert training_config({},8)["quality_gate_min_valid"] == .5
     assert training_config({"quality_gate_min_valid":.5},8)["quality_gate_min_valid"] == .5
     for value in (-.1, 1.1, "0.5"):
         with pytest.raises(ValueError):

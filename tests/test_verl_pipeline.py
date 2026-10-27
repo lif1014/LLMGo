@@ -13,11 +13,11 @@ from llmgo.rsi.contracts import atomic_json, digest, file_hash
 
 def test_verl_resource_partition_and_configuration():
     cfg = training_config({},8)
-    assert cfg['batch_size']==56 and cfg['minibatch_size']==14
+    assert cfg['games_per_batch']==14 and cfg['minibatch_size']==14
     overrides = hydra_overrides('/weights','/data',Path('/output/training'),cfg,8,'/teacher')
     assert 'trainer.n_gpus_per_node=7' in overrides
     assert 'critic.enable=false' in overrides
-    assert 'algorithm.adv_estimator="lc0_td0"' in overrides
+    assert 'algorithm.adv_estimator="full_game_lc0_gae"' in overrides
     assert 'algorithm.rollout_correction.bypass_mode=true' in overrides
     assert 'actor_rollout_ref.rollout.n=1' in overrides
     assert '+actor_rollout_ref.rollout.engine_kwargs.vllm.language_model_only=true' in overrides
@@ -45,10 +45,10 @@ def test_checkpoint_rejects_partial_rank_and_wrong_world(tmp_path):
 
 
 def test_dataset_is_positions_without_teacher_answers():
-    rows=dataset_rows(seed_curriculum(3),[],14)
+    rows=dataset_rows([],14)
     assert len(rows)==14
     assert all(row['reward_model']['ground_truth']=='' for row in rows)
-    assert all('moves' in json.loads(row['extra_info']['record_json']) for row in rows)
+    assert all(row['extra_info']['bootstrap_only'] for row in rows)
     assert all(row['prompt'][0]['role']=='user' for row in rows)
 
 
@@ -132,10 +132,10 @@ def test_rope_compat_is_scoped_idempotent_and_does_not_mutate_callers(monkeypatc
 @pytest.mark.parametrize("multiplier",[1,2,8])
 def test_rollout_worker_count_always_divides_training_batch(gpus,multiplier):
     actors=max(gpus-1,1)
-    cfg=training_config({"batch_size":actors*multiplier,"minibatch_size":actors},gpus)
+    cfg=training_config({"games_per_batch":2*multiplier,"minibatch_size":actors},gpus)
     args=hydra_overrides('/weights','/data',Path('/out'),cfg,gpus,'/teacher')
     workers=int(next(x.split('=',1)[1] for x in args if x.startswith('actor_rollout_ref.rollout.agent.num_workers=')))
-    assert 1<=workers<=4 and cfg['batch_size']%workers==0
+    assert 1<=workers<=4 and cfg['minibatch_size']%workers==0
 
 
 

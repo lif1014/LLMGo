@@ -547,7 +547,7 @@ class Controller:
                     prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
                         f"完整证据在 {self.root}。只能通过RL和改进skills提升Qwen3.5-4B，可单独或组合使用。"
                         "禁止SFT（监督微调），包括预热、辅助SFT损失、行为克隆和监督蒸馏；使用SFT，最终得分为0分。"
-                        "在此范围内自主修改本研究副本的RL、reward、数据、Harness、prompt、skills、工具或配置，现有 PPO/LC0 只是可用起点。"
+                        "在此范围内自主修改本研究副本的RL、reward、数据、Harness、prompt、skills、工具或配置，现有完整对局 PPO/LC0 只是可用起点；默认中间reward0、终局+1/-1/0、LC0 value、gamma1/lambda0.95多步GAE，允许修改训练代码。默认训练耗尽合法回答预算时随机选全部合法步之一，归属学生该手继续完整局、参与GAE/loss；保留真实输出概率及随机来源。先读docs/rsi-verl-ppo.md，旧单步recipe需迁移。"
                         "教师只能用于RL奖励/价值、分析和提炼skills，不能作为SFT答案目标。最终会对战固定 L1-L8 Fairy-Stockfish，"
                         "最低档仍是 skill -9/depth5/0.05秒；只刷简单档没有用。"
                         "新campaign只先跑L1-L4基线，每档10局、白黑各5局，共40局；之后进入研究。"

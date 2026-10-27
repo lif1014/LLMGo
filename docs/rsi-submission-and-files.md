@@ -96,6 +96,8 @@ logs子命令不用 `-o json` 或 `--no-input`。日志归档可能不可用，�
 
 默认多卡（2026-10-23）：每项任务最多8 GPU，site默认8；评测为每卡独立Qwen副本并行棋局，`request_evaluation.py --level L2 --gpus N`可选1–8卡。默认训练已改为verl PPO+LC0，8卡任务使用7卡actor/rollout/reference＋1卡LC0，详见docs/rsi-verl-ppo.md。逐局回执核验后恢复，完整批次才合并成正式成绩。轮询仍由Executor处理，网页只读进度摘要和按需日志。已有campaign需显式upgrade，不重写历史快照。
 
-本次新增的verl入口与实现：`requirements-rsi-verl.txt`、`scripts/bootstrap_verl.py`、`src/llmgo/training/verl_ppo.py`（配置、数据、分布式训练、恢复、导出）、`verl_registration.py`（注册TD0与记录PPO批次/指标）、`verl_reward.py`（专用LC0 GPU与逐手评分）、`vllm_compat.py`（固定版本配置兼容）；`scripts/train_ppo.py`已切到这套实现。`docs/rsi-verl-ppo.md`给出完整提交样例与验收证据。新增`tests/test_verl_pipeline.py`，覆盖资源划分、任意合法批量的分块、断点完整性、并行游戏、重试与结果核验。
+本次新增的verl入口与实现：`requirements-rsi-verl.txt`、`scripts/bootstrap_verl.py`、`src/llmgo/training/verl_ppo.py`（配置、数据、分布式训练、恢复、导出）、`verl_registration.py`（安装完整局训练编排）、`verl_reward.py`（专用LC0 GPU状态值服务）、`game.py`/`trajectories.py`/`verl_games.py`（完整对局、多步GAE和变长批次）、`vllm_compat.py`（固定版本配置兼容）；`scripts/train_ppo.py`已切到这套实现。`docs/rsi-verl-ppo.md`给出完整提交样例与验收证据。新增`tests/test_verl_pipeline.py`，覆盖资源划分、任意合法批量的分块、断点完整性、并行游戏、重试与结果核验。
 
 现有入口更新：`scripts/start_rsi.sh --upgrade --web`可在旧loop退出后，使用专用控制Python升级并恢复现有campaign。`scripts/request_evaluation.py --level L2 --gpus 8`登记单档20局；`scripts/evaluate.py --gpus N`供GPU job中的独立测试使用。Evaluator/Controller/CctlExecutor/Executor、网页进度和研究skills同时支持1–8卡评测与逐局恢复。GPU轮询300–600秒，CPU任务保留较短间隔。指定镜像、原始模型路径、Fairy难度、正式比赛协议均保留。
+
+2026-10-27：默认完整局PPO，旧自写ppo.py、rewards.py及单步中心化分支已删除；入口与配方迁移见[rsi-verl-ppo.md](rsi-verl-ppo.md)，具体删除清单见removed-files.json。

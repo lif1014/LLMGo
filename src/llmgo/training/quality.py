@@ -34,30 +34,34 @@ def rollout_quality(batch, *, max_response_length):
         lengths = mask.sum(-1).float()
         active = lengths > 0
         move_advantages = advantages.sum(-1)/lengths.clamp(min=1)
-        total = int(scores.numel())
+        selected = active.cpu().tolist()
+        total = int(active.sum())
+        real_scores = scores[active]
         reasons = [str(x) for x in list(batch.non_tensor_batch.get("failure_reason", []))]
+        if len(reasons)==len(selected):
+            reasons = [r for r,keep in zip(reasons,selected) if keep]
         reason_counts = {}
         for reason in reasons:
             key = reason or "ok"
             reason_counts[key] = reason_counts.get(key,0)+1
         if len(reasons) != total:
             reason_counts = {"unavailable": total}
-        values = [float(x) for x in list(batch.non_tensor_batch.get("value_before", []))]
+        values = [float(x) for x,keep in zip(batch.non_tensor_batch.get("value_before", []),selected) if keep]
         valid = sum(1 for reason in reasons if not reason)
         return {"samples":total, "valid":valid, "invalid":total-valid,
             "valid_rate":valid/total if total else 0.,
             "failure_counts":reason_counts,
-            "score_mean":float(scores.mean()), "score_min":float(scores.min()),
-            "score_max":float(scores.max()),
+            "score_mean":float(real_scores.mean()), "score_min":float(real_scores.min()),
+            "score_max":float(real_scores.max()),
             "advantage_mean":float(advantages.sum()/mask.sum().clamp(min=1)),
             "advantage_min":float(advantages.min()), "advantage_max":float(advantages.max()),
             "advantage_negative_fraction":float(((move_advantages < 0) & active).sum()/active.sum().clamp(min=1)),
-            "raw_td_negative_fraction":float((scores < 0).float().mean()),
+            "environment_reward_negative_fraction":float((real_scores < 0).float().mean()),
             "value_before_mean":sum(values)/len(values) if values else None,
-            "response_tokens_mean":float(lengths.mean()),
+            "response_tokens_mean":float(lengths[active].mean()),
             "response_tokens_max":int(lengths.max()),
             "response_tokens_total":int(lengths.sum()),
-            "at_token_cap_fraction":float((lengths >= max_response_length).float().mean())}
+            "at_token_cap_fraction":float((lengths[active] >= max_response_length).float().mean())}
 
 
 def enforce_quality_gate(quality, minimum, *, output):
@@ -107,7 +111,7 @@ def sync_check(trainer, batch, *, samples, output):
         old, _ = trainer._compute_old_log_prob(batch)
         actor_logprobs = old.batch["old_log_probs"].float()
         rollout_logprobs = batch.batch["rollout_log_probs"].float()
-        delta = (actor_logprobs-rollout_logprobs).abs()
+        delta = actor_logprobs-rollout_logprobs
         mask = batch.batch["response_mask"].bool()
         if samples and samples < delta.shape[0]:
             # Slice every tensor together: round 5 (j000015/j000016) sliced delta and the
@@ -116,13 +120,15 @@ def sync_check(trainer, batch, *, samples, output):
             # probability agreement was never measured.
             delta, mask = delta[:samples], mask[:samples]
             actor_logprobs, rollout_logprobs = actor_logprobs[:samples], rollout_logprobs[:samples]
-        values = delta[mask]
+        signed = delta[mask]
+        values = signed.abs()
         if values.numel() == 0:
             raise ValueError("No response tokens to compare")
-        ratio = torch.exp(-values)
+        ratio = torch.exp(signed.clamp(-20, 20))
         row = {"step":int(trainer.global_steps), "samples":int(delta.shape[0]),
             "tokens":int(values.numel()), "mean_abs_logprob_delta":float(values.mean()),
             "max_abs_logprob_delta":float(values.max()),
+            "mean_signed_logprob_delta":float(signed.mean()),
             "fraction_ratio_outside_0.8_1.2":float(((ratio < .8) | (ratio > 1.2)).float().mean()),
             "old_logprob_mean":float(actor_logprobs[mask].mean()),
             "rollout_logprob_mean":float(rollout_logprobs[mask].mean()),

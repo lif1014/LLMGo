@@ -89,15 +89,15 @@ Meta-Agent 在研究 workspace 执行 `python scripts/request_evaluation.py --le
 
 ## 5. 默认 verl PPO + LC0 配方
 
-详细配置、样例、资源和恢复见 [rsi-verl-ppo.md](rsi-verl-ppo.md)。在workspace准备 curriculum.jsonl、skills.json 和 ppo.json：
+详细配置、样例、资源和恢复见 [rsi-verl-ppo.md](rsi-verl-ppo.md)。在workspace准备 skills.json 和 ppo.json，不再要求单步课程：
 
 ```json
-{"training":{"backend":"verl_ppo","steps":16,"ppo_epochs":4},"reward":{"mode":"lc0_bootstrap","nodes":10000,"backend":"cuda-auto"}}
+{"training":{"backend":"verl_ppo","mode":"full_game_ppo_lc0","games_per_batch":2,"concurrent_games":2,"steps":2,"ppo_epochs":1,"gamma":1.0,"gae_lambda":0.95},"teacher":{"mode":"lc0_value","nodes":10000,"backend":"cuda-auto"}}
 ```
 
-在proposal.jobs登记 `{"argv":["{python}","scripts/train_ppo.py"],"resources":{"gpu_count":8}}`。默认7卡verl FSDP2 actor/rollout/reference＋1卡LC0。批量自动适配actor卡数（8卡任务batch56/minibatch14）。训练每个样本是一手棋，LC0离线给V=P(win)−P(lose)，非终局A=V_after−V_before，终局真实结果减V_before，gamma1/lambda0，不训练critic、不做GRPO、不做SFT。
+在proposal.jobs登记 `{"argv":["{python}","scripts/train_ppo.py"],"resources":{"gpu_count":8}}`。默认7卡verl FSDP2 actor/rollout/reference＋1卡LC0。同一策略从标准开局采样完整局，中间环境r=0、终局胜/负/和为+1/−1/0；LC0给固定学生视角的V，按棋步计算gamma1/lambda0.95的GAE，不训练critic、不做SFT。学生走子加Fairy回复构成一个转移，终局bootstrap0。
 
-该A广播至本次走棋的response tokens，verl负责clipped PPO、多epoch、优化器、分布式同步、checkpoint及HF导出。采样使用temperature1/top_p1/top_k-1，保存vLLM实际behavior logprobs并作为old logprobs，固定reference KL。LC0值已形成TD误差，不再把它叠加到另一个价值差奖励。
+完整局展开为逐手与逐请求，优势映射到实际模型tokens；重试合并为一手等权，padding零mask。verl负责clipped PPO、梯度累积、原生优化器、分布式同步、checkpoint及HF导出。默认whole_batch_update=true、epochs1，每完整批次一次optimizer更新。训练及内部完整局验证采样temperature1/top_p1/top_k-1，记录实际behavior logprobs，reference KL独立检查。正式受保护评测保留原采样。旧TD/guarded/balanced配方和旧HF入口已删除，旧recipe显式报错，不能混用旧优化器身份续跑。
 
 每任务最多8GPU；评测默认8副本，可用 `python scripts/request_evaluation.py --level L2 --gpus 4` 调整并行数，比赛数不变。训练产物、教师标注、失败与恢复规则见专文。Meta-Agent可以继续修改RL和skills方案，但禁止SFT、正式评测禁用教师的边界不变。
 

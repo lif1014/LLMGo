@@ -1,20 +1,22 @@
 ---
 name: rsi-training
-description: 设计verl PPO与LC0多卡强化学习实验，检查逐步价值视角、采样概率与恢复证据。
+description: 使用verl执行完整棋局PPO，核对终局奖励、LC0学生视角、move-level GAE、真实行为概率及多卡恢复证据。
 ---
 
-只能通过RL和改进skills提升Qwen3.5-4B。禁止SFT、SFT预热、辅助SFT损失、行为克隆、监督蒸馏；使用SFT最终得0分。离线教师可用于RL奖励/价值估计和提炼skills，不能把教师答案当学生监督目标。可修改RL算法、reward、课程、Harness与skills触发；正式评测不加载教师。
+先读 docs/rsi-verl-ppo.md 和当前任务 identity/resolved-config。允许修改自己的训练Python源码、RL配方、Harness、prompt与skills；只能通过RL和skills提升Qwen，禁止SFT/预热/辅助SFT/行为克隆/监督蒸馏，使用SFT最终0分。教师不提供监督答案或正式最佳着法。受保护裁判及历史快照不可改。
 
-用户明确允许修改训练Python源码（包括train_ppo.py、verl_ppo.py、verl_registration.py、奖励与优势实现、采样和优化逻辑），原训练代码不是受保护且已正确的基线。旧实现曾使非法输出获得正优势；训练前、异常或棋力下降时读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)。允许从历史较佳模型/Harness/skills组合起跑，非必须继承最新working，方法见[rsi-startpoint](../rsi-startpoint/SKILL.md)。修改只在自己的研究副本，保留正式裁判与冻结证据。
+默认入口 scripts/train_ppo.py、模式 full_game_ppo_lc0，候选需 ppo.json（training/teacher）和skills.json。真正使用verl0.8、FSDP2、vLLM与原生PPO优化器。原始模型+r000002 Harness/skills可作干净起点，但保留当前训练修复；不要恢复其旧training目录。选择起点按[rsi-startpoint](../rsi-startpoint/SKILL.md)动态比较证据。
 
-先读 docs/rsi-verl-ppo.md。默认入口 scripts/train_ppo.py，配置 ppo.json、curriculum.jsonl、skills.json。真正调用verl 0.8.0 RayPPOTrainer、FSDP2、vLLM，不再默认使用自写HF PPO。GPU任务默认8卡：7卡actor/rollout/reference，1卡LC0；每任务最多8卡，可指定2–8卡（留1卡LC0），单卡需显式CPU教师后端。batch/minibatch必须整除actor并行数，默认自动匹配。
+每批冻结同一策略，从标准开局下完白黑均衡完整局；一条转移包含学生走子及Fairy回复，直到再次轮到学生。中间r=0、终局胜/负/和为+1/-1/0，终局bootstrap=0；总计200半回合上限为协议和棋。LC0给V=P(win)-P(lose)，固定该局学生颜色。按每局倒序算delta=r+gamma*(1-done)*V_next-V，再A=delta+gamma*lambda*(1-done)*A_next，默认gamma1/lambda0.95。没有可学习critic、没有LC0价值差环境奖励、没有旧guarded/balanced中心化。LC0不等于学生Vπ；lambda1完整局退化为真实回报减状态baseline，可作为明确的新实验。
 
-非终局A=V_after−V_before，V=P(win)−P(lose)，前后保持同一行棋方视角。终局用胜1/和0/负−1减V_before；非法/生成截断是协议惩罚。gamma1/lambda0，一手一segment，没有对手应手和整盘GAE，也不训练critic。教师V不是学生Vπ；只凭reward/loss不能宣称棋力提升。
+完整局结束后再展开各手与重试请求。prompt、工具、Fairy及padding不承担策略损失，真实请求保留thinking和EOS；每手等权，重试按该手生成tokens分配权重。默认whole_batch_update=true、epochs1，即每批完整局做一次梯度累积更新；关闭时记录实际minibatch/optimizer步数，不把2批下棋说成只有2次更新。训练/内部验证采样均temperature1/top_p1/top_k-1，与真实behavior logprobs和actor/ref重算匹配；正式评测采样保持冻结协议。
 
-默认advantage_estimator=lc0_td0_protocol_guarded：合法样本TD减本批合法样本均值；非法答案、thinking不完整、length截断的最终优势固定为负的protocol_failure_penalty（默认1），不参与合法均值、不再减LC0基线。全批失败拒绝更新；缺少判定或未知基础设施错误直接报错。避免旧centered模式把原始TD=0的非法输出变成正优势。原始教师值和最终优势分开记录，查看protocol-advantages与更新前batch，而非只看reward均值。已有recipe若显式写旧模式不会自动迁移，需明确修改并开始新实验。
+预算内重试成功可继续，全部请求保留；耗尽重试/预算仍无合法答案时，从全部合法步按种子随机选一步，作为学生该手继续；原始请求正常参与终局reward/LC0/GAE/actor loss，不屏蔽整手、不伪造随机UCI的token/logprob。保留model_uci、action_source、fallback_reason及random_rate；失败请求不改记成功。服务/引擎/网络错误为aborted，不能造奖励。不能筛掉负局再训练。完整局采样期间不切权重，不能用旧策略前半局拼新策略后半局。按请求、回合与整局区分合法率。
 
-verl使用实际vLLM behavior logprobs作old policy、多epoch clipped PPO，reference KL独立。采样默认temperature1/top_p1/top_k-1；不要改了采样却继续使用错误old logprobs。保留thinking分隔符，截断不做随机后备，教师不输出最佳走法。
+训练前/退化时读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)。更新前及更新后固定完整局验证均检查实际reference KL、协议与actor/rollout一致性。默认KL警戒0.05/停止0.1、同步平均绝对差停止0.1；这是可调初始设置，不是棋力保证。只导出有通过更新后验证回执的完整checkpoint。恢复保存原始验证基线、模型/优化器/RNG/episode批次身份；代码/目标改变另开实验，旧HF LoRA或单步优化器不能接入。
 
-样本原文/响应token/LC0前后值/优势在training/lc0，rollouts保存verl行为日志；metrics.jsonl/latest.json和resolved-config.json记录训练。完整分片模型、optimizer、RNG及dataloader checkpoint用于恢复，身份/并行数不同则拒绝。最终合并完整HF模型才写submission.json。旧HF LoRA checkpoint不能作为verl checkpoint。
+默认最多8卡：7 actor/rollout/reference+1 LC0；2–8卡留一张教师卡，单卡明确CPU LC0。保持CUDA Graph、wake缓存释放和HF导出兼容修复。只用beijing/model-autosft/NORMAL、只写/user/lyh4170、devspace0GPU，不改他人环境或停止他人任务。
 
-训练通过proposal.jobs交给Executor，不反复shell轮询。用request_evaluation.py --level L2 --gpus 8做20局探针；最终需要不同难度的实战证据，只刷最低档无效。所有计算beijing/model-autosft/NORMAL，devspace0GPU，只写/user/lyh4170，不停止他人任务，不改其他环境。
+提交通过proposal.jobs交Executor，GPU每300–600秒轮询。正式单档接口request_evaluation.py --level L2 --gpus 8仍为20局；用户授权的10局快速探针可用scripts/probe_strength.py，明确不是正式候选扶正。最终需多个难度实战，不以LC0均值或训练loss代替棋力。
+
+证据在training/episodes/*/{events.jsonl,trajectory.json,summary.json}、requests、lc0、batches、metrics/health、validation、checkpoint-selection和training-result。网页读小摘要，原文按需；只加载可信自有.pt。暂停不会因为维护验证完成而自动解除。

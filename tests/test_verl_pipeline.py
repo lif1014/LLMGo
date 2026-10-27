@@ -14,6 +14,7 @@ from llmgo.rsi.contracts import atomic_json, digest, file_hash
 def test_verl_resource_partition_and_configuration():
     cfg = training_config({},8)
     assert cfg['games_per_batch']==14 and cfg['minibatch_size']==14
+    assert cfg['concurrent_games']==7 and cfg['internal_validation'] is False
     overrides = hydra_overrides('/weights','/data',Path('/output/training'),cfg,8,'/teacher')
     assert 'trainer.n_gpus_per_node=7' in overrides
     assert 'critic.enable=false' in overrides
@@ -24,10 +25,21 @@ def test_verl_resource_partition_and_configuration():
     for gpus in range(1,9):
         cfg = training_config({},gpus)
         assert cfg['minibatch_size']%(gpus-1 or 1)==0
+        assert cfg['concurrent_games']==(gpus-1 or 1)
     for gpus in (0,9,True):
         with pytest.raises(ValueError):training_config({},gpus)
     for config in ({'sft':True},{'backend':'hf_ppo'},{'group_size':8},{'batch_size':8},{'learning_rate':float('nan')}):
         with pytest.raises(ValueError):training_config(config)
+
+
+def test_internal_validation_can_be_disabled_without_a_validation_checkpoint_schedule():
+    assert training_config({'checkpoint_every':3})['internal_validation'] is False
+    with pytest.raises(ValueError,match='Validation interval'):
+        training_config({'internal_validation':True,'checkpoint_every':3})
+    assert training_config({'internal_validation':True,'checkpoint_every':3,'validation_every':3})
+    for value in ('false',0,None):
+        with pytest.raises(ValueError,match='internal_validation must be boolean'):
+            training_config({'internal_validation':value})
 
 
 def test_checkpoint_rejects_partial_rank_and_wrong_world(tmp_path):

@@ -110,3 +110,37 @@ def select_validated_checkpoint(output, actors, *, validation_identity=None):
         raise RuntimeError("No complete, post-update game-validated checkpoint eligible for export")
     _,checkpoint,row = max(eligible,key=lambda item:item[0])
     return checkpoint,row
+
+
+def select_export_checkpoint(output, actors, *, internal_validation, experiment_digest):
+    """Select a validated checkpoint, or an explicitly unvalidated completed update."""
+    if internal_validation:
+        return select_validated_checkpoint(output, actors)
+    from .verl_ppo import complete_checkpoint
+    output = Path(output)
+    eligible = []
+    for path in (output/'checkpoints').glob('global_step_*'):
+        try:
+            step = int(path.name.removeprefix('global_step_'))
+        except ValueError:
+            continue
+        checkpoint = complete_checkpoint(output/'checkpoints',actors,
+            allowed_steps={step},require_game_state=True)
+        if checkpoint is None or step < 1:
+            continue
+        state = read_json(checkpoint/'games.json')
+        update = state.get('update',{})
+        metrics = update.get('metrics',{})
+        if (state.get('identity') != experiment_digest or state.get('step') != step
+                or state.get('internal_validation') is not False
+                or state.get('validation_baseline') is not None
+                or update.get('stage') != 'update_completed' or update.get('step') != step
+                or metrics.get('training/global_step') != step
+                or not all(math.isfinite(float(v)) for v in metrics.values() if isinstance(v,(int,float)))):
+            continue
+        eligible.append((step,checkpoint))
+    if not eligible:
+        raise RuntimeError('No complete checkpoint with a finite optimizer update eligible for export')
+    step,checkpoint = max(eligible,key=lambda item:item[0])
+    return checkpoint,{'step':step,'enabled':False,'stage':'disabled','passed':None,
+        'reason':'internal_validation_disabled','formal_evaluation_required':True}

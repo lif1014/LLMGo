@@ -146,7 +146,7 @@ python3 scripts/package_source.py --teacher-assets /PATH/TO/teacher_assets --out
 
 新训练入口 `scripts/train_ppo.py` 自动切换到自己的独立 verl 环境；安装脚本为 `scripts/bootstrap_verl.py`，依赖见 `requirements-rsi-verl.txt`。基于指定 ptdbench 镜像，固定 verl 0.8.0 / Transformers 5.4.0 / 原镜像 Torch 2.10、vLLM 0.17；不改变评测推理环境。详细配方、资源划分、恢复和证据见 [PPO 与并行操作](docs/rsi-verl-ppo.md)。
 
-PPO默认使用 `full_game_ppo_lc0`：Qwen 从标准开局与 Fairy 下完整局，中间 reward=0、终局胜/负/和为 +1/−1/0；LC0 提供固定学生视角的 V，按棋步计算 γ=1、λ=0.95 的 GAE，再用 verl 更新。默认整批游戏做一次全局 minibatch 更新，保留真实行为概率、reference KL、合法率、权重同步检查和更新后的完整局验证。配置只需 ppo.json（training/teacher）与 skills.json，不再要求历史课程。训练重试耗尽时，随机合法后备作为学生该手继续完整局，原始输出仍参与GAE/loss；只在真实终局给分并单独记录后备率。旧单手 TD、自写 HF PPO、中心化协议优势已移除，旧 recipe 必须显式迁移；原有远端暂停不会自动解除。配置、日志、恢复和已移除文件见[完整对局 PPO](docs/rsi-verl-ppo.md)。 本次检查范围、GPU任务和异步前后对照产物见[验证记录](docs/full-game-ppo-validation-20261027.md)。
+PPO默认使用 `full_game_ppo_lc0`：Qwen 从标准开局与 Fairy 下完整局，中间 reward=0、终局胜/负/和为 +1/−1/0；LC0 提供固定学生视角的 V，按棋步计算 γ=1、λ=0.95 的 GAE，再用 verl 更新。默认 8 卡时每批 14 局、最多 7 局并行，整批游戏做一次全局 minibatch 更新。internal_validation=false 默认不打训练前/后内部验证局；保留真实行为概率、reference KL、合法率、权重同步、有限值与导出加载检查，棋力通过独立正式评测判断。关闭时导出最新完整更新存档并明确标记未做内部验证；可显式开启 internal_validation=true 恢复固定验证及已验证存档选择。配置只需 ppo.json（training/teacher）与 skills.json，不再要求历史课程。训练重试耗尽时，随机合法后备作为学生该手继续完整局，原始输出仍参与GAE/loss；只在真实终局给分并单独记录后备率。旧单手 TD、自写 HF PPO、中心化协议优势已移除，旧 recipe 必须显式迁移；原有远端暂停不会自动解除。配置、日志、恢复和已移除文件见[完整对局 PPO](docs/rsi-verl-ppo.md)。 本次检查范围、GPU任务和异步前后对照产物见[验证记录](docs/full-game-ppo-validation-20261027.md)。
 
 Meta可修改训练源码，并按每轮最新可比证据自主选择研究起点，不固定继承最新版本或r7。新增[rsi-ppo-audit](.agents/skills/rsi-ppo-audit/SKILL.md)和[rsi-startpoint](.agents/skills/rsi-startpoint/SKILL.md)说明如何核对实际PPO状态、发现优化目标错误、动态选择并恢复历史组合，同时保留训练修补；r7的16胜L2记录是历史示例，详细授权、组合身份与远端通知方式见[Meta研究指引](docs/meta-ppo-guidance-20261026.md)。
 

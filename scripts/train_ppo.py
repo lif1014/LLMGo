@@ -61,6 +61,7 @@ def main():
         atomic_json(output/"submission.json", {"model_path":str(model),
             "method":"verl_ppo/"+config["mode"],"loss_agg_mode":config["loss_agg_mode"],
             "selected_checkpoint_step":result.get("selected_checkpoint_step"),
+            "internal_validation":result["internal_validation"],"validation":result["validation"],
             "stopped_early":result.get("stopped_early",False),"sft_enabled":False})
 
 

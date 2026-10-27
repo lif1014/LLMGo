@@ -273,3 +273,79 @@ def test_agent_completed_output_survives_a_failed_sibling(monkeypatch,tmp_path):
     good=next(row for row in logs if row['status']=='generation_completed')
     assert good['response_ids']==[7,8] and good['behavior_logprobs']==[-.2,-.3]
     assert good['response']=='raw </think> e2e4' and good['receipt']['finish_reason']=='stop'
+
+
+@pytest.mark.parametrize('validation_enabled',[False,True])
+@pytest.mark.parametrize('resume_step',[0,1])
+def test_fit_updates_checkpoints_and_resumes_with_optional_internal_validation(
+        monkeypatch,tmp_path,validation_enabled,resume_step):
+    import json
+    import ray
+    from llmgo.rsi.contracts import atomic_json,read_json
+    from llmgo.training import verl_games
+    from llmgo.training.validation import validation_identity
+    from llmgo.training.stability import select_export_checkpoint
+    settings=training_config({'steps':2,'games_per_batch':2,'internal_validation':validation_enabled})
+    settings['game_context']=str(tmp_path/'context.json')
+    atomic_json(tmp_path/'context.json',{'output':str(tmp_path),'identity':'experiment','cards':[]})
+    atomic_json(tmp_path/'lc0-context.json',{'namespace':'test','name':'lc0'})
+    if resume_step and validation_enabled:
+        atomic_json(tmp_path/'validation-baseline.json',{'passed':True,'stage':'baseline','valid_rate':1.,
+            'validation_identity':validation_identity(settings,'experiment')})
+    class Score:
+        @staticmethod
+        def remote(metadata):return [{'value':.2} for row in metadata]
+    monkeypatch.setattr(ray,'get_actor',lambda *a,**kw:SimpleNamespace(score_game=Score()))
+    monkeypatch.setattr(ray,'get',lambda x:x)
+    calls=[];updates=[]
+    def collect(trainer,context,*,count,step,validation=False):
+        calls.append(('validation' if validation else 'train',step))
+        episodes=[];tensors={}
+        for i in range(count):
+            key=f'{validation}-{step}-{i}'
+            e=episode(key,[[(key,2)]],1)
+            e.result=1.;e.reason='checkmate';e.output=tmp_path/'episodes'/key
+            e.transitions[0]['record']={'initial_fen':'unused','moves':[]}
+            atomic_json(e.output/'summary.json',{'decisions':1,'random_moves':0})
+            episodes.append(e);tensors[key]=sample(2)
+        return episodes,tensors,.01
+    monkeypatch.setattr(verl_games,'complete_games',collect)
+    trainer=SimpleNamespace(config=SimpleNamespace(research=settings,
+        algorithm=SimpleNamespace(rollout_correction=None),
+        actor_rollout_ref=SimpleNamespace(actor=SimpleNamespace(ppo_mini_batch_size=14,policy_loss=None))),
+        checkpoint_manager=SimpleNamespace(update_weights=lambda step:None,sleep_replicas=lambda:None),
+        use_reference_policy=True,tokenizer=SimpleNamespace(convert_tokens_to_ids=lambda t:11,eos_token_id=13))
+    def load():trainer.global_steps=resume_step
+    trainer._load_checkpoint=load
+    trainer._compute_ref_log_prob=lambda batch:DataProto.from_dict(tensors={
+        'ref_log_prob':torch.zeros_like(batch.batch['rollout_log_probs'])})
+    trainer._compute_old_log_prob=lambda batch:(DataProto.from_dict(tensors={
+        'old_log_probs':torch.zeros_like(batch.batch['rollout_log_probs'])}),None)
+    def update(batch):
+        assert trainer.config.actor_rollout_ref.actor.ppo_mini_batch_size==len(batch)
+        updates.append(trainer.global_steps)
+        return SimpleNamespace(meta_info={'metrics':{'actor/grad_norm':.2}})
+    trainer._update_actor=update
+    def save():
+        path=tmp_path/'checkpoints'/f'global_step_{trainer.global_steps}'
+        atomic_json(path/'actor/huggingface/config.json',{})
+        (path/'data.pt').write_text('state')
+        for kind in ('model','optim','extra_state'):
+            for rank in range(7):
+                (path/'actor'/f'{kind}_world_size_7_rank_{rank}.pt').write_text('shard')
+    trainer._save_checkpoint=save
+    monkeypatch.setattr('verl.trainer.ppo.rollout_corr_helper.apply_bypass_mode',lambda **kw:None)
+    verl_games.fit_games(trainer)
+    assert updates==list(range(resume_step+1,3))
+    assert [step for split,step in calls if split=='train']==updates
+    validations=[step for split,step in calls if split=='validation']
+    assert validations==(([0] if not resume_step else [])+updates if validation_enabled else [])
+    state=read_json(tmp_path/'checkpoints/global_step_2/games.json')
+    assert state['internal_validation'] is validation_enabled and state['update']['step']==2
+    assert (state['validation_baseline'] is not None) is validation_enabled
+    assert (tmp_path/'validation-baseline.json').exists() is validation_enabled
+    assert read_json(tmp_path/'internal-validation.json')['enabled'] is validation_enabled
+    chosen,receipt=select_export_checkpoint(tmp_path,7,
+        internal_validation=validation_enabled,experiment_digest='experiment')
+    assert chosen.name=='global_step_2'
+    assert receipt['passed'] is (True if validation_enabled else None)

@@ -24,7 +24,7 @@ def training_config(config, allocated_gpus=8):
         raise ValueError("verl PPO requires 1-8 allocated GPUs")
     actors = allocated_gpus-1 if allocated_gpus > 1 else 1
     defaults = {"backend":"verl_ppo", "mode":"full_game_ppo_lc0",
-        "games_per_batch":actors*2,"concurrent_games":actors*2,"opponent_level":1,
+        "games_per_batch":actors*2,"concurrent_games":actors,"opponent_level":1,
         "minibatch_size":actors*2,"whole_batch_update":True,"steps":2,"ppo_epochs":1,"learning_rate":1e-6,
         "gamma":1.,"gae_lambda":.95,"clip_ratio":.2,"kl_beta":.05,
         "max_prompt_tokens":6144,"max_response_tokens":16384,"move_token_budget":32768,
@@ -35,7 +35,7 @@ def training_config(config, allocated_gpus=8):
         "quality_gate_min_valid":.5,"preupdate_consistency_samples":16,
         "reference_kl_warning":.05,"reference_kl_stop":.1,
         "sync_max_mean_abs_logprob_delta":.1,"sync_check_steps":0,
-        "validation_games":2,"validation_every":1,"validation_min_valid":.5,
+        "internal_validation":False,"validation_games":2,"validation_every":1,"validation_min_valid":.5,
         "validation_max_drop":.1,"validation_temperature":1.,"validation_top_p":1.,
         "validation_top_k":-1,"validation_seed":914170,"export_validated_on_stop":True,
         "optimizer_offload":"auto","rollout_wake_cache_flush":True}
@@ -79,7 +79,7 @@ def training_config(config, allocated_gpus=8):
         raise ValueError("Training sequence exceeds the 40960-token ceiling")
     if cfg["validation_seed"] == cfg["seed"]:
         raise ValueError("Training and fixed validation need separate seed schedules")
-    if cfg["validation_every"] % cfg["checkpoint_every"]:
+    if cfg["internal_validation"] and cfg["validation_every"] % cfg["checkpoint_every"]:
         raise ValueError("Validation interval must be a multiple of checkpoint_every")
     if cfg["reference_kl_stop"] and cfg["reference_kl_warning"] > cfg["reference_kl_stop"]:
         raise ValueError("KL warning exceeds stop threshold")
@@ -87,7 +87,7 @@ def training_config(config, allocated_gpus=8):
         raise ValueError("Sync safety requires checking every update")
     if cfg["loss_agg_mode"] != "seq-mean-token-mean":
         raise ValueError("Full-game PPO uses equal move weighting")
-    for key in ("rollout_enforce_eager","rollout_wake_cache_flush","export_validated_on_stop","whole_batch_update"):
+    for key in ("internal_validation","rollout_enforce_eager","rollout_wake_cache_flush","export_validated_on_stop","whole_batch_update"):
         if type(cfg[key]) is not bool:
             raise ValueError(f"{key} must be boolean")
     if cfg["optimizer_offload"] not in ("auto",True,False):
@@ -525,7 +525,7 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
             "which is how j000023 died in vLLM's wake_up.")
     atomic_json(output/"memory-preflight.json", {**memory, "coexistence":coexistence})
     identity = experiment_identity(model,cards,site,reward_config,config,allocated_gpus)
-    from .stability import select_validated_checkpoint
+    from .stability import select_export_checkpoint
     atomic_json(output/"agent-loops.json", [{"name":"chess_turn_agent",
         "_target_":"llmgo.training.verl_agent.ChessTurnAgentLoop"}])
     dataset = output/"worker-bootstrap.jsonl"
@@ -545,7 +545,12 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
         state = read_json(resume/"games.json")
         if state["identity"] != digest(identity):
             raise ValueError("Resume full-game state identity changed")
-        atomic_json(output/"validation-baseline.json",state["validation_baseline"])
+        if state.get("internal_validation") is not config["internal_validation"]:
+            raise ValueError("Resume internal validation mode changed")
+        if config["internal_validation"]:
+            atomic_json(output/"validation-baseline.json",state["validation_baseline"])
+        elif state.get("validation_baseline") is not None:
+            raise ValueError("Validation-disabled resume has an unexpected baseline")
     atomic_json(output/"identity.json",identity)
     import ray
     from hydra import compose, initialize_config_dir
@@ -599,7 +604,7 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
         except Exception as error:
             # Ray wraps the typed safety stop. An unrelated OOM/runtime error must
             # never be converted into an apparently successful model export.
-            if not (config["export_validated_on_stop"]
+            if not (config["internal_validation"] and config["export_validated_on_stop"]
                     and (output/"stability-stop.json").is_file() and "TrainingSafetyStop" in str(error)):
                 raise
             stopped_early = True
@@ -612,7 +617,8 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
                 ray.kill(scorer)
         ray.shutdown()
     try:
-        checkpoint, selection = select_validated_checkpoint(output,actors)
+        checkpoint, selection = select_export_checkpoint(output,actors,
+            internal_validation=config["internal_validation"],experiment_digest=digest(identity))
     except RuntimeError:
         atomic_json(output/"checkpoint-selection.json", {"status":"no_eligible_checkpoint",
             "stopped_early":stopped_early,"action":"no model exported"})
@@ -620,8 +626,10 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
             raise stopping_error
         raise
     atomic_json(output/"checkpoint-selection.json", {"checkpoint":str(checkpoint),
-        "stopped_early":stopped_early,"validation":selection,
-        "rule":"complete checkpoint and passed post-update full games, KL and sync; formal chess required"})
+        "stopped_early":stopped_early,"internal_validation":config["internal_validation"],"validation":selection,
+        "rule":("complete checkpoint and passed post-update full games, KL and sync; formal chess required"
+            if config["internal_validation"] else
+            "latest complete checkpoint with a recorded finite optimizer update; internal validation disabled; formal chess required")})
     target = output/"model"
     temporary = output/"model.exporting"
     if temporary.exists():
@@ -657,7 +665,7 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
     if not loadable:
         raise RuntimeError(f"Exported model is not loadable by the pinned inference stack: {verdict}")
     atomic_json(output/"training-result.json", {"backend":"verl_ppo","mode":"full_game_ppo_lc0","sft_enabled":False,
-        "environment":identity['environment'],
+        "environment":identity['environment'],"internal_validation":config["internal_validation"],
         "stopped_early":stopped_early,"selected_checkpoint_step":int(checkpoint.name.removeprefix("global_step_")),
         "validation":selection,
         "allocated_gpu_count":allocated_gpus,"actor_gpus":actors,"lc0_gpus":int(allocated_gpus>1),
@@ -665,5 +673,6 @@ def train(model, cards, site, reward_config, config, output, *, allocated_gpus=8
         "checkpoint":str(checkpoint),"model_identity":{**exported,"path":str(target)},"utc":utc()})
     atomic_json(output/"health.json", {"stage":"exported_for_evaluation","updated":utc(),
         "stopped_early":stopped_early,"selected_checkpoint_step":int(checkpoint.name.removeprefix("global_step_")),
+        "internal_validation":config["internal_validation"],
         "validation":selection,"model_identity":{**exported,"path":str(target)}})
     return target

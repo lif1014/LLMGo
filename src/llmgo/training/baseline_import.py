@@ -24,6 +24,8 @@ def import_baseline(previous_output, destination, identity, *, previous_manifest
     approved_agent_hashes explicitly attests an operator-reviewed logging-only
     revision. Arbitrary collector, prompt, sampling or environment edits fail.
     """
+    if not identity['training']['internal_validation']:
+        raise ValueError('Baseline import requires internal_validation=true')
     old=Path(previous_output)/'training';out=Path(destination)
     prior=read_json(old/'identity.json');manifest=read_json(previous_manifest)
     if manifest['sha256'] != digest(manifest['payload']):raise ValueError('Manifest integrity changed')

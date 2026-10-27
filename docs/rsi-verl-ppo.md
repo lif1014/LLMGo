@@ -22,15 +22,15 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
 
 入口仍是 `scripts/train_ppo.py`，在注册 Worker 中读取 `LLMGO_MODEL / LLMGO_CANDIDATE / LLMGO_SITE / LLMGO_OUTPUT`，自动切换既有独立 verl 环境。候选目录准备 `skills.json` 与 `ppo.json`，不再要求 curriculum.jsonl。
 
-小规模配方例子（训练步是采完一批完整游戏后的一次更新，不是棋步）：
+默认 8 卡配方例子（每批 14 局保持白黑均衡，最多 7 局同时进行；训练步是采完一批完整游戏后的一次更新，不是棋步）：
 
 ```json
 {
   "training": {
     "backend": "verl_ppo",
     "mode": "full_game_ppo_lc0",
-    "games_per_batch": 2,
-    "concurrent_games": 2,
+    "games_per_batch": 14,
+    "concurrent_games": 7,
     "opponent_level": 1,
     "steps": 2,
     "whole_batch_update": true,
@@ -38,8 +38,7 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
     "learning_rate": 0.000001,
     "gamma": 1.0,
     "gae_lambda": 0.95,
-    "validation_games": 2,
-    "validation_every": 2,
+    "internal_validation": false,
     "checkpoint_every": 1,
     "cudagraph_capture_sizes": [1, 2, 4, 8]
   },
@@ -49,11 +48,15 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
 
 默认 8 GPU：7 张 actor/rollout/reference、1 张 LC0；每任务最多 8 张，可选择 2–8 张；单卡必须显式选 LC0 CPU 后端。保留用户指定 ptdbench 镜像、已有路径和独立环境，不重装系统或其他任务的 GPU 栈。CUDA Graph 默认开启，保留 wake 前缓存释放与导出兼容修复。
 
+默认 `concurrent_games` 等于 actor 卡数（8 卡任务为 7），`games_per_batch` 为 actor 卡数的两倍（14）。7 是同时在进行的棋局上限，不是每批总局数；一局结束后补入本批下一局。已有 ppo.json 的显式值仍优先，应将旧的 2 局配置改为 14/7 才会采用新设置。增加并行通常能提高多卡利用率，具体吞吐需实测，不保证七倍加速。
+
 默认 `whole_batch_update=true`：本批全部真实请求做一个全局 minibatch，native verl 以 microbatch=1 梯度累积；`ppo_epochs=1` 时每批一次 optimizer step，避免两个完整局展开后悄悄变成几十次更新。可显式关闭以研究多个 minibatch；`minibatch_size` 默认按 actor 数匹配，亦作为补齐粒度。
 
 thinking 开启。训练每请求最多 16384 tokens，每手共享 32768 tokens、最多 2 次请求，请求/整手超时为 540/1800 秒。每次请求保留真实上下文、token IDs、behavior logprobs 和原文；失败后成功的重试也计入同一手的训练样本。一手各请求按生成 token 数分配权重，再按手等权，不因重试更多而多算棋步。padding 行 response mask/reward/advantage 均为 0，不重复最后一手凑样本。
 
-训练和内部完整局验证均使用 temperature=1、top_p=1、top_k=-1，确保 actor/ref 重算与 behavior logprobs 一致。内部验证固定独立种子、白黑均衡，不用来更新模型；它不请求LC0标注，轨迹中的value=0明确标记为占位，不当作教师预测；正式受保护评测仍使用其冻结的 0.9/0.95/20 和原预算。二者的得分不可直接混为同一统计。
+默认 `internal_validation=false`：不打更新前基线或更新后内部验证局，不导入旧验证基线。仍保留训练批次的质量、reference KL、actor/rollout 同步、非有限值、完整存档及导出加载检查；棋力由独立正式评测判断。导出回执明确写入内部验证 disabled、passed=null，不能描述为“验证通过”。
+
+可显式设置 `internal_validation=true` 恢复固定完整局验证，并配置 `validation_games=2`、`validation_every=1`（后者须为 checkpoint_every 的倍数）。训练和启用后的验证均使用 temperature=1、top_p=1、top_k=-1，确保 actor/ref 重算与 behavior logprobs 一致。内部验证固定独立种子、白黑均衡，不用来更新模型；它不请求LC0标注，轨迹中的value=0明确标记为占位，不当作教师预测；正式受保护评测仍使用其冻结的 0.9/0.95/20 和原预算。二者的得分不可直接混为同一统计。
 
 ## 终止、诊断与恢复
 
@@ -61,8 +64,8 @@ thinking 开启。训练每请求最多 16384 tokens，每手共享 32768 tokens
 - 引擎/网络/服务故障或集群停止属于 aborted，不编造输棋或和棋奖励；未完成局不进入梯度。负局和协议失败样本不按结果筛除。
 - `quality_gate_min_valid` 与内部 `validation_min_valid` 默认 0.5，拒绝全部失败的批次；更新后的固定验证还要求合法率不低于原始验证基线减 `validation_max_drop=0.1`（10个百分点）。不要求原模型先达到90%才能学习。训练批次与固定验证的局面不同，不直接比较两者合法率。reference KL 警戒/停止默认 0.05/0.1，actor/rollout 平均绝对 logprob 差停止默认 0.1；异常值和缺失证据不会默认通过。KL 是独立正则，不是环境奖励。受保护正式评测规则保持不变。
 - 不把所有负优势、非法输出 A=0 或 GAE 下的个别正优势一概当成程序错误；检查实际 r/V/delta/A/λ/边界。旧非法输出被全批中心化推正的故障已随旧目标移除。
-- 导出只接受有通过更新后完整局/协议/KL/同步检查回执的完整全 rank checkpoint。安全停止只能回退至此前已验证且完整的 checkpoint；普通 OOM/运行错误不得转换为成功导出。
-- 恢复要求模型、代码、Harness/skills、配方、教师及卡数身份相同。`games.json` 保存已更新 episode 清单、下一批种子和原始验证基线；恢复不重置基线，不将旧策略前半局与新策略后半局混用。中断的未完成局保留 aborted 证据，重采完整局。
+- 关闭内部验证时，导出选择具有同一实验身份、有限数值 optimizer 更新记录及完整全 rank 文件的最新 checkpoint；不依赖验证基线。安全停止或普通 OOM/运行错误仍令任务失败，不转成成功导出。启用内部验证时仍只选择有通过更新后完整局回执的 checkpoint，且只有此模式支持 export_validated_on_stop 回退。
+- 恢复要求模型、代码、Harness/skills、配方、教师及卡数身份相同。`games.json` 保存已更新 episode 清单、更新记录、下一批种子及 internal_validation 开关；关闭时 validation_baseline=null，启用时保留原始验证基线。不能将旧验证模式的 optimizer 直接混入新实验。中断的未完成局保留 aborted 证据，重采完整局。
 - 从 r000002 框架起跑指原始 Qwen 权重+r2 Harness/skills+当前修复后的训练代码，不能将 r2 的旧训练实现一并恢复。
 
 ## 保存的证据
@@ -76,9 +79,10 @@ thinking 开启。训练每请求最多 16384 tokens，每手共享 32768 tokens
 | requests/*.pt / batches/step-*.pt | 实际采样张量与最终进入优化器的张量；仅加载可信自有 pickle |
 | lc0/*.json | 每个学生决策的 native WDL、value、搜索节点及延迟 |
 | game-progress.json / health.json / latest.json | 有界进度与质量/KL/同步摘要 |
-| validation/step-*.json / validation-baseline.json | 固定完整局验证与原始基线 |
+| internal-validation.json | 本次内部验证开关，关闭明确记 disabled |
+| validation/step-*.json / validation-baseline.json | 仅启用内部验证时生成的固定完整局验证与原始基线 |
 | sync-check.jsonl / update-diagnostics/*.json | actor/rollout 对照、reference KL、思考/答案的系数质量 |
-| checkpoint-selection.json / training-result.json | 实际选择的已验证存档与完整 HF 模型 |
+| checkpoint-selection.json / training-result.json | 实际存档、内部验证状态与完整 HF 模型 |
 
 网页周期性读小摘要，逐局原文按需分页。GPU 平台轮询仍由独立 Executor 每 300–600 秒处理，不让 Meta 或页面直接高频查询 cctl。
 

@@ -19,7 +19,7 @@ def fixture(root):
         code[name]=file_hash(p)
     h=source/'src/llmgo/harness/prompt.py';h.parent.mkdir(parents=True);h.write_text('# harness')
     identity={'model':'base','objective':'full_game_ppo_lc0','cards':'cards','reward':{},'runtime':{},
-        'allocated_gpus':8,'verl':'.8','lc0_binary':'lc0','training':training_config({}),
+        'allocated_gpus':8,'verl':'.8','lc0_binary':'lc0','training':training_config({'internal_validation':True}),
         'code':code,'harness':{'prompt.py':file_hash(h)},
         'fairy':{'binary_sha256':'engine','nnue_sha256':'nnue'}}
     prior=copy.deepcopy(identity);prior.pop('harness');prior.pop('fairy')

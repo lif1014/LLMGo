@@ -228,6 +228,9 @@ def fit_games(trainer):
     trainer.checkpoint_manager.update_weights(trainer.global_steps)
     trainer.max_steps_duration = 0.
     baseline_path = out/'validation-baseline.json'
+    validation_enabled = settings['internal_validation']
+    atomic_json(out/'internal-validation.json',{'enabled':validation_enabled,
+        'status':'enabled' if validation_enabled else 'disabled','utc':utc()})
 
     def persist_metrics(metrics, stage, **extra):
         row = {'step':int(trainer.global_steps),'utc':utc(),'backend':'verl_ppo',
@@ -237,6 +240,7 @@ def fit_games(trainer):
         atomic_json(out/'latest.json',row)
         atomic_json(out/'health.json',{'updated':utc(),**row})
         print(json.dumps(row,ensure_ascii=False),flush=True)
+        return row
 
     def inspect(batch, stage):
         # Both validation and training use untruncated temperature=1 sampling, so
@@ -288,13 +292,15 @@ def fit_games(trainer):
         if not row['passed']:safety_stop(out,'fixed_game_validation_gate',row)
         return row
 
-    if baseline_path.exists():
+    if not validation_enabled and baseline_path.exists():
+        raise ValueError('Internal validation is disabled but a validation baseline exists; use a new output directory')
+    if validation_enabled and baseline_path.exists():
         baseline = read_json(baseline_path)
         if (not baseline.get('passed') or baseline.get('stage')!='baseline'
                 or baseline['validation_identity'] != validation_identity(settings,context['identity'])):
             raise ValueError('Preseeded/resumed baseline does not match this experiment')
         minimum_valid_rate(settings,baseline)
-    if not baseline_path.exists():
+    if validation_enabled and not baseline_path.exists():
         if trainer.global_steps:raise ValueError('Resume lost original validation baseline')
         validate()
         trainer.checkpoint_manager.update_weights(trainer.global_steps)
@@ -343,10 +349,10 @@ def fit_games(trainer):
             'research/generation_tokens_per_s':quality['response_tokens_total']/generation_seconds})
         if any(not math.isfinite(float(v)) for v in metrics.values() if isinstance(v,(int,float))):
             safety_stop(out,'nonfinite_update_metrics',{'step':step,'metrics':metrics})
-        persist_metrics(metrics,'update_completed',quality=quality,diagnostics=diag)
+        update_record = persist_metrics(metrics,'update_completed',quality=quality,diagnostics=diag)
         trainer.checkpoint_manager.update_weights(step)
         final = step==settings['steps']
-        if step%settings['validation_every']==0 or final:
+        if validation_enabled and (step%settings['validation_every']==0 or final):
             validate()
         else:
             trainer.checkpoint_manager.sleep_replicas()
@@ -354,7 +360,9 @@ def fit_games(trainer):
             trainer._save_checkpoint()
             atomic_json(out/'checkpoints'/f'global_step_{step}'/'games.json',{
                 'step':step,'identity':context['identity'],'episodes':[e.id for e in episodes],
-                'validation_baseline':read_json(baseline_path),'next_seed':settings['seed']+(step+1)*100000})
+                'internal_validation':validation_enabled,'update':update_record,
+                'validation_baseline':read_json(baseline_path) if validation_enabled else None,
+                'next_seed':settings['seed']+(step+1)*100000})
         trainer.max_steps_duration = max(trainer.max_steps_duration,time.monotonic()-started)
         if not final:trainer.checkpoint_manager.update_weights(step)
     if hasattr(trainer,'_shutdown_dump_executor'):trainer._shutdown_dump_executor()

@@ -22,14 +22,14 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
 
 入口仍是 `scripts/train_ppo.py`，在注册 Worker 中读取 `LLMGO_MODEL / LLMGO_CANDIDATE / LLMGO_SITE / LLMGO_OUTPUT`，自动切换既有独立 verl 环境。候选目录准备 `skills.json` 与 `ppo.json`，不再要求 curriculum.jsonl。
 
-默认 8 卡配方例子（每批 14 局保持白黑均衡，最多 7 局同时进行；训练步是采完一批完整游戏后的一次更新，不是棋步）：
+默认 8 卡配方例子（每批 7 局，最多 7 局同时进行；相邻批次交替4白3黑与3白4黑，两批合计白黑均衡；训练步是采完一批完整游戏后的一次更新，不是棋步）：
 
 ```json
 {
   "training": {
     "backend": "verl_ppo",
     "mode": "full_game_ppo_lc0",
-    "games_per_batch": 14,
+    "games_per_batch": 7,
     "concurrent_games": 7,
     "opponent_level": 2,
     "steps": 2,
@@ -48,7 +48,7 @@ A_t     = delta_t + gamma * lambda * (1-done_t) * A_next
 
 默认 8 GPU：7 张 actor/rollout/reference、1 张 LC0；每任务最多 8 张，可选择 2–8 张；单卡必须显式选 LC0 CPU 后端。保留用户指定 ptdbench 镜像、已有路径和独立环境，不重装系统或其他任务的 GPU 栈。CUDA Graph 默认开启，保留 wake 前缓存释放与导出兼容修复。
 
-默认 `concurrent_games` 等于 actor 卡数（8 卡任务为 7），`games_per_batch` 为 actor 卡数的两倍（14）。7 是同时在进行的棋局上限，不是每批总局数；一局结束后补入本批下一局。已有 ppo.json 的显式值仍优先，应将旧的 2 局配置改为 14/7 才会采用新设置。增加并行通常能提高多卡利用率，具体吞吐需实测，不保证七倍加速。
+默认 `concurrent_games` 等于 actor 卡数（8 卡任务为 7），`games_per_batch=max(2, actor卡数)`（8 卡任务每批 7 局）。本批所有游戏完成后更新一次，再用新权重采下一批；无需等待14局。奇数训练批次根据step交替多一局白方或黑方，相邻两批合计均衡，断点恢复继续原step的配色；固定验证保留白黑成对。已有 ppo.json 的显式值仍优先，应将旧的 2 局或 14 局配置改为 7/7 才会采用新设置。单次更新的数据减半，实际等待仍受最长对局、模型生成和LC0标注耗时影响。
 
 训练对手默认 Fairy-Stockfish L2（`opponent_level=2`，skill=-5、depth=5、每步时间上限0.10秒）。LC0仍只作为离线value教师。**Meta-Agent可按研究证据自行修改ppo.json的opponent_level，选择L1–L8，不要求始终停在L2**；修改时记录难度及实验身份，改变训练对手不修改正式评测的固定难度面板。
 

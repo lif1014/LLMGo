@@ -13,7 +13,7 @@ from llmgo.rsi.contracts import atomic_json, digest, file_hash
 
 def test_verl_resource_partition_and_configuration():
     cfg = training_config({},8)
-    assert cfg['games_per_batch']==14 and cfg['minibatch_size']==14
+    assert cfg['games_per_batch']==7 and cfg['minibatch_size']==14
     assert cfg['concurrent_games']==7 and cfg['internal_validation'] is False
     assert cfg['opponent_level']==2
     overrides = hydra_overrides('/weights','/data',Path('/output/training'),cfg,8,'/teacher')
@@ -27,10 +27,35 @@ def test_verl_resource_partition_and_configuration():
         cfg = training_config({},gpus)
         assert cfg['minibatch_size']%(gpus-1 or 1)==0
         assert cfg['concurrent_games']==(gpus-1 or 1)
+        assert cfg['games_per_batch']==max(2,gpus-1)
     for gpus in (0,9,True):
         with pytest.raises(ValueError):training_config({},gpus)
     for config in ({'sft':True},{'backend':'hf_ppo'},{'group_size':8},{'batch_size':8},{'learning_rate':float('nan')}):
         with pytest.raises(ValueError):training_config(config)
+
+
+@pytest.mark.parametrize('count',[2,3,7,14])
+def test_training_batch_colors_balance_across_updates_and_keep_validation_fixed(count):
+    from llmgo.training.verl_games import episode_color
+    assert training_config({'games_per_batch':count})['games_per_batch']==count
+    first=[episode_color(i,count=count,step=1) for i in range(count)]
+    second=[episode_color(i,count=count,step=2) for i in range(count)]
+    resumed=[episode_color(i,count=count,step=3) for i in range(count)]
+    assert (first+second).count('white')==count
+    assert (first+second).count('black')==count
+    assert resumed==first
+    if count==7:
+        assert first.count('white')==4 and second.count('white')==3
+    for step in (0,1,2,3):
+        assert [episode_color(i,count=2,step=step,validation=True) for i in range(2)]==['white','black']
+
+
+def test_training_allows_odd_batches_but_fixed_validation_still_requires_pairs():
+    assert training_config({'games_per_batch':7})['games_per_batch']==7
+    for value in (0,1,True,7.0):
+        with pytest.raises(ValueError):training_config({'games_per_batch':value})
+    with pytest.raises(ValueError,match='validation_games'):
+        training_config({'validation_games':7})
 
 
 def test_internal_validation_can_be_disabled_without_a_validation_checkpoint_schedule():

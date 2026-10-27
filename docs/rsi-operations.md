@@ -92,7 +92,7 @@ Meta-Agent 在研究 workspace 执行 `python scripts/request_evaluation.py --le
 详细配置、样例、资源和恢复见 [rsi-verl-ppo.md](rsi-verl-ppo.md)。在workspace准备 skills.json 和 ppo.json，不再要求单步课程：
 
 ```json
-{"training":{"backend":"verl_ppo","mode":"full_game_ppo_lc0","games_per_batch":14,"concurrent_games":7,"opponent_level":2,"internal_validation":false,"steps":2,"ppo_epochs":1,"gamma":1.0,"gae_lambda":0.95},"teacher":{"mode":"lc0_value","nodes":10000,"backend":"cuda-auto"}}
+{"training":{"backend":"verl_ppo","mode":"full_game_ppo_lc0","games_per_batch":7,"concurrent_games":7,"opponent_level":2,"internal_validation":false,"steps":2,"ppo_epochs":1,"gamma":1.0,"gae_lambda":0.95},"teacher":{"mode":"lc0_value","nodes":10000,"backend":"cuda-auto"}}
 ```
 
 在proposal.jobs登记 `{"argv":["{python}","scripts/train_ppo.py"],"resources":{"gpu_count":8}}`。默认7卡verl FSDP2 actor/rollout/reference＋1卡LC0。同一策略从标准开局采样完整局，中间环境r=0、终局胜/负/和为+1/−1/0；LC0给固定学生视角的V，按棋步计算gamma1/lambda0.95的GAE，不训练critic、不做SFT。学生走子加Fairy回复构成一个转移，终局bootstrap0。

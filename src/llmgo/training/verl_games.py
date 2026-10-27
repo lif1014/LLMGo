@@ -28,6 +28,12 @@ def object_array(items):
     return result
 
 
+def episode_color(index, *, count, step, validation=False):
+    """Odd training batches alternate the extra color; fixed validation stays paired."""
+    offset = 0 if validation else (step-1)*count
+    return 'white' if (index+offset)%2==0 else 'black'
+
+
 def complete_games(trainer, context, *, count, step, validation=False):
     """No policy updates until ALL games from this version have finished."""
     import numpy as np
@@ -81,7 +87,7 @@ def complete_games(trainer, context, *, count, step, validation=False):
             while len(active) < settings['concurrent_games'] and len(episodes)<count:
                 i = len(episodes)
                 episode_id = f'{split}-{step:08d}-{i:04d}'
-                episode = ChessEpisode(episode_id,policy,'white' if i%2==0 else 'black',
+                episode = ChessEpisode(episode_id,policy,episode_color(i,count=count,step=step,validation=validation),
                     settings['opponent_level'],context['site']['engine'],out/'episodes'/episode_id,
                     seed=seed_base+i//2)
                 episodes.append(episode);episode.advance()

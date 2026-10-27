@@ -127,6 +127,48 @@ def test_collector_random_fallback_continues_standard_game_until_real_checkmate(
     assert len(tensors)==2 and e.board.is_checkmate()
 
 
+@pytest.mark.parametrize('step,colors',[
+    (1,['white','black','white','black','white','black','white']),
+    (2,['black','white','black','white','black','white','black']),
+])
+def test_seven_game_collector_completes_one_cohort_with_rotating_colors(monkeypatch,tmp_path,step,colors):
+    import chess
+    from llmgo.training.game import ChessEpisode
+    from llmgo.training.verl_games import complete_games
+    class Fairy:
+        def __init__(self,*a,**kw):pass
+        def _play_board(self,board):
+            moves=('f2f3','g2g4') if board.turn==chess.WHITE else ('e7e5','d8h4')
+            uci=moves[board.fullmove_number-1]
+            assert chess.Move.from_uci(uci) in board.legal_moves
+            return uci,{}
+        def close(self):pass
+    monkeypatch.setattr('llmgo.training.verl_games.ChessEpisode',
+        lambda *a,**kw:ChessEpisode(*a,**kw,engine_factory=Fairy))
+    answers={17:'</think> f2f3',18:'</think> g2g4',19:'</think> e7e5',20:'</think> d8h4'}
+    cohort_sizes=[]
+    class Generator:
+        def generate_sequences(self,inputs):
+            cohort_sizes.append(len(inputs));rows=[]
+            for extra in inputs.non_tensor_batch['extra_info']:
+                index=int(extra['episode_id'].rsplit('-',1)[1])
+                code=(17 if colors[index]=='white' else 19)+extra['turn_index']
+                row=sample(2);row.batch['responses'][0,:2]=torch.tensor([code,99])
+                row.non_tensor_batch['request_receipt']=object_array([{'finish_reason':'stop','seconds':.01}])
+                rows.append(row)
+            return DataProto.concat(rows)
+    trainer=SimpleNamespace(config=SimpleNamespace(research=training_config({})),
+        async_rollout_manager=Generator(),tokenizer=SimpleNamespace(decode=lambda ids,**kw:answers[ids[0]]))
+    episodes,tensors,_=complete_games(trainer,{'output':str(tmp_path),'identity':'test','cards':[],
+        'site':{'engine':'fake'}},count=7,step=step)
+    assert [e.color for e in episodes]==colors
+    assert len(episodes)==7 and len(tensors)==14 and cohort_sizes==[7,7]
+    assert all(e.done and e.reason=='checkmate' and e.board.is_checkmate() for e in episodes)
+    assert all(e.initial_fen==chess.STARTING_FEN and len(e.transitions)==2 for e in episodes)
+    assert [e.result for e in episodes]==[-1 if color=='white' else 1 for color in colors]
+    assert len({e.policy for e in episodes})==1
+
+
 def test_hydra_config_and_actual_verl_worker_contract(tmp_path):
     import verl
     from hydra import compose,initialize_config_dir
@@ -277,15 +319,16 @@ def test_agent_completed_output_survives_a_failed_sibling(monkeypatch,tmp_path):
 
 @pytest.mark.parametrize('validation_enabled',[False,True])
 @pytest.mark.parametrize('resume_step',[0,1])
+@pytest.mark.parametrize('games_per_batch',[2,7])
 def test_fit_updates_checkpoints_and_resumes_with_optional_internal_validation(
-        monkeypatch,tmp_path,validation_enabled,resume_step):
+        monkeypatch,tmp_path,validation_enabled,resume_step,games_per_batch):
     import json
     import ray
     from llmgo.rsi.contracts import atomic_json,read_json
     from llmgo.training import verl_games
     from llmgo.training.validation import validation_identity
     from llmgo.training.stability import select_export_checkpoint
-    settings=training_config({'steps':2,'games_per_batch':2,'internal_validation':validation_enabled})
+    settings=training_config({'steps':2,'games_per_batch':games_per_batch,'internal_validation':validation_enabled})
     settings['game_context']=str(tmp_path/'context.json')
     atomic_json(tmp_path/'context.json',{'output':str(tmp_path),'identity':'experiment','cards':[]})
     atomic_json(tmp_path/'lc0-context.json',{'namespace':'test','name':'lc0'})
@@ -299,6 +342,7 @@ def test_fit_updates_checkpoints_and_resumes_with_optional_internal_validation(
     monkeypatch.setattr(ray,'get',lambda x:x)
     calls=[];updates=[]
     def collect(trainer,context,*,count,step,validation=False):
+        assert count==(settings['validation_games'] if validation else games_per_batch)
         calls.append(('validation' if validation else 'train',step))
         episodes=[];tensors={}
         for i in range(count):

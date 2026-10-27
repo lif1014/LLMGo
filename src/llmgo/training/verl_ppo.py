@@ -24,7 +24,7 @@ def training_config(config, allocated_gpus=8):
         raise ValueError("verl PPO requires 1-8 allocated GPUs")
     actors = allocated_gpus-1 if allocated_gpus > 1 else 1
     defaults = {"backend":"verl_ppo", "mode":"full_game_ppo_lc0",
-        "games_per_batch":actors*2,"concurrent_games":actors,"opponent_level":2,
+        "games_per_batch":max(2,actors),"concurrent_games":actors,"opponent_level":2,
         "minibatch_size":actors*2,"whole_batch_update":True,"steps":2,"ppo_epochs":1,"learning_rate":1e-6,
         "gamma":1.,"gae_lambda":.95,"clip_ratio":.2,"kl_beta":.05,
         "max_prompt_tokens":6144,"max_response_tokens":16384,"move_token_budget":32768,
@@ -53,9 +53,10 @@ def training_config(config, allocated_gpus=8):
             raise ValueError(f"Invalid {key}")
     if cfg["minibatch_size"] % actors:
         raise ValueError("minibatch_size must divide across actor GPUs")
-    for key in ("games_per_batch","validation_games"):
-        if type(cfg[key]) is not int or cfg[key] < 2 or cfg[key]%2:
-            raise ValueError(f"{key} must be an even count >=2 for balanced colors")
+    if cfg["games_per_batch"] < 2:
+        raise ValueError("games_per_batch must be >=2; odd batches alternate the extra color")
+    if type(cfg["validation_games"]) is not int or cfg["validation_games"] < 2 or cfg["validation_games"]%2:
+        raise ValueError("validation_games must be an even count >=2 for balanced colors")
     for key in ("seed","validation_seed","sync_check_steps","preupdate_consistency_samples"):
         if type(cfg[key]) is not int or cfg[key] < 0:
             raise ValueError(f"Invalid {key}")

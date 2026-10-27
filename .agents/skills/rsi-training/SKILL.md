@@ -15,7 +15,7 @@ description: 使用verl执行完整棋局PPO，核对终局奖励、LC0学生视
 
 训练前/退化时读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)。默认internal_validation=false，不打更新前/后内部验证局，训练批次仍检查实际reference KL、协议、actor/rollout一致性及有限值。默认KL警戒0.05/停止0.1、同步平均绝对差停止0.1；这是可调初始设置，不是棋力保证。关闭时导出有同实验有限optimizer更新记录的最新完整checkpoint，回执必须标记disabled、passed=null；不得称内部验证通过，棋力另做正式评测。显式internal_validation=true可恢复固定完整局验证及已验证checkpoint选择。恢复保存开关、模型/优化器/RNG/episode批次身份，启用时另存原始验证基线；代码/目标改变另开实验，旧HF LoRA或单步优化器不能接入。
 
-默认最多8卡：7 actor/rollout/reference+1 LC0；concurrent_games默认actor卡数（7），games_per_batch默认两倍（14，白黑均衡）。旧ppo.json显式2局配置需改为14/7并设internal_validation=false，不因live默认更新就自动采用。2–8卡留一张教师卡，单卡明确CPU LC0。保持CUDA Graph、wake缓存释放和HF导出兼容修复。只用beijing/model-autosft/NORMAL、只写/user/lyh4170、devspace0GPU，不改他人环境或停止他人任务。
+默认最多8卡：7 actor/rollout/reference+1 LC0；concurrent_games默认actor卡数（7），games_per_batch默认与actor卡数相同（至少2局，8卡任务为7局），每批结束更新一次。奇数批次按训练step交替多一局白/黑，相邻两批合计均衡；固定验证仍为偶数局。旧ppo.json显式2局或14局配置需改为7/7并设internal_validation=false，不因live默认更新就自动采用。2–8卡留一张教师卡，单卡明确CPU LC0。保持CUDA Graph、wake缓存释放和HF导出兼容修复。只用beijing/model-autosft/NORMAL、只写/user/lyh4170、devspace0GPU，不改他人环境或停止他人任务。
 
 训练默认对手为Fairy-Stockfish L2（opponent_level=2），LC0只提供value。Meta-Agent可以根据研究证据自行修改ppo.json中的opponent_level（整数1–8），设计更易/更难的对手或课程；L2不是必须固定的目标。记录实际难度与新实验身份，不修改正式评测面板。按用户要求保持internal_validation=false，跳过训练前/后的内部验证，最后通过独立正式评测检验棋力；只有用户明确要求恢复时才重新启用内部验证。
 

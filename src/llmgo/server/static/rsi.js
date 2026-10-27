@@ -2,7 +2,7 @@
 const el=id=>document.getElementById(id), freshStream=()=>({cursor:null,before:null,follow:true,request:0,recent:[]});
 const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set(),cards:new Map(),streams:{research:freshStream(),executor:freshStream()},
   evaluations:[],totalHours:0,evaluationRefresh:0,maintenanceRefresh:0,job:"",autoJob:true,game:"",autoGame:true,viewer:null,raw:null,
-  jobs:[],manifests:new Map(),fileData:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
+  jobs:[],manifests:new Map(),fileData:null,fileError:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
 const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
   EVALUATING:"固定评测",NEEDS_INPUT:"等待缺失项处理"};
@@ -12,7 +12,7 @@ const apiRoot=new URL("api/rsi/campaigns",document.baseURI||"http://localhost/")
 const api=(suffix="")=>apiRoot+"/"+encodeURIComponent(state.campaign)+suffix;
 async function json(url){
   const c=new AbortController();state.requests.add(c);const timer=setTimeout(()=>c.abort(),15000);
-  try{const r=await fetch(url,{signal:c.signal,cache:"no-store"});if(!r.ok)throw Error(r.status+": "+(await r.text()).slice(0,500));return await r.json();}
+  try{const r=await fetch(url,{signal:c.signal,cache:"no-store"});if(!r.ok){const e=Error(r.status+": "+(await r.text()).slice(0,500));e.status=r.status;throw e;}return await r.json();}
   finally{clearTimeout(timer);state.requests.delete(c);}
 }
 function clearFeed(target){el(target).replaceChildren();for(const [key,card] of state.cards)if(card.target===target)state.cards.delete(key);}
@@ -138,6 +138,7 @@ const percent=value=>typeof value==="number"&&Number.isFinite(value)?(value*100)
 const gameJob=game=>game.folder?.split("/")[1];
 const roleName=role=>role==="baseline"?"初始基线":role==="candidate"?"研究候选":show(role);
 function jobInfo(id){return state.jobs.find(j=>j.id===id)||{};}
+function purgedJob(job){return job.purged===true||job.status==="PURGED"||job.kind==="archived"||job.role==="archived";}
 function visibleJobs(){return state.jobs.filter(j=>!state.archivedJobs.has(j.id)||el("show-archived-jobs").checked||j.id===state.activeJobId);}
 async function loadArchivedJobs(generation){
   if(state.archivesLoaded)return;
@@ -157,7 +158,7 @@ function opponentText(id){
   return o?difficulty(id)+" · Fairy-Stockfish Skill "+show(o.skill)+" · depth "+show(o.depth)+" · 时间上限 "+show(o.movetime_sec)+"秒":difficulty(id);
 }
 async function loadJobManifest(id){
-  if(!id||!/^[A-Za-z0-9_-]+$/.test(id))return;
+  if(!id||!/^[A-Za-z0-9_-]+$/.test(id)||purgedJob(jobInfo(id)))return;
   const cache=state.manifests,old=cache.get(id);
   if(old?.payload||old?.promise||old?.error&&Date.now()-old.time<30000)return old?.promise;
   const entry={time:Date.now()};cache.set(id,entry);
@@ -225,7 +226,9 @@ function renderEvaluationJobs(){
   renderJobContext();
 }
 function renderJobContext(){
+  if(!state.job){el("job-context").textContent="当前没有可读取的活动任务；研究暂停或尚未提交新任务。可选择保留的历史任务查看参数与结果。";return;}
   const job=jobInfo(state.job),entry=state.manifests.get(state.job),p=entry?.payload,s=jobStats(state.job),g=p?.protocol;
+  if(purgedJob(job)){el("job-context").textContent="任务 "+state.job+" 已清理，仅保留编号占位；原始参数和对局文件已移出当前研究。";return;}
   const expected=g?.games??(state.fileData?.job===state.job?state.fileData.data.formal_games:null);
   el("job-context").textContent="选中任务："+(state.job||"—")+" · 平台ID "+show(job.task_id)+" · "+roleName(job.role)+"\n"+
     opponentText(state.job)+"\n候选："+show(p?.candidate_id??job.candidate_id)+" · "+((p?.track??job.track)==="model"?"模型对照":"完整玩家（模型+Harness+skills）")+
@@ -233,13 +236,32 @@ function renderJobContext(){
     "\n有效完成："+(s.available?s.completed:"—")+" · 胜/和/负："+(s.available?[s.wins,s.draws,s.losses].join("/"):"—")+" · 胜率 "+percent(s.winRate)+" · 得分率 "+percent(s.score)+
     "\n"+(s.formal?"结果已正式收集。":"暂时统计，整批完成并收集后才有正式成绩。")+
     "已读取记录中的程序异常："+(s.available?s.errors:"—")+" · 进行中："+(s.available?s.running:"—")+" · 随机后备："+(s.available?s.random:"—")+" · 输出达长度上限："+(s.available?s.length:"—")+
-    (entry?.error?"\n对手参数读取失败："+entry.error:!p?"\n正在读取正式任务参数…":"\n参数来自本任务manifest；Skill和时间上限不是校准Elo，时间上限不是固定每步用时。");
+    (state.fileError?.job===state.job?"\n任务文件读取失败："+state.fileError.message:entry?.error?"\n对手参数读取失败："+entry.error:!p?"\n正在读取正式任务参数…":"\n参数来自本任务manifest；Skill和时间上限不是校准Elo，时间上限不是固定每步用时。");
 }
 function selectJob(id){state.job=id;state.autoJob=false;state.autoGame=true;el("game-scope").value="job";resetGame();refresh();}
 async function files(generation){
-  if(!state.job)return;const job=state.job,data=await json(api("/job-files?job_id="+encodeURIComponent(job)));
+  const job=state.job;
+  if(!job||purgedJob(jobInfo(job))){
+    state.fileData=null;state.fileError=null;el("job-files").replaceChildren();el("job-files").dataset.signature="";
+    el("file-status").textContent=job?"任务文件已清理":"尚未选择任务";
+    el("worker-state").textContent=job?"该任务仅保留编号占位。":"当前无活动计算任务；独立维护任务见下方面板。";
+    renderJobContext();return;
+  }
+  if(state.fileError?.job===job&&state.fileError.status===404&&Date.now()-state.fileError.time<30000){renderJobContext();return;}
+  let data;
+  try{data=await json(api("/job-files?job_id="+encodeURIComponent(job)));}
+  catch(e){
+    if(generation===state.generation&&job===state.job&&e.name!=="AbortError"){
+      state.fileData=null;state.fileError={job,message:e.message,status:e.status,time:Date.now()};
+      el("job-files").replaceChildren();el("job-files").dataset.signature="";
+      el("file-status").textContent="任务文件读取失败";el("worker-state").textContent="查看任务："+job+"\n"+e.message;
+      renderJobContext();
+    }
+    throw e;
+  }
   if(generation!==state.generation||job!==state.job)return;
-  state.fileData={job,data};await loadJobManifest(job);if(generation!==state.generation||job!==state.job)return;
+  state.fileError=null;state.fileData={job,data};await loadJobManifest(job);if(generation!==state.generation||job!==state.job)return;
+  renderJobContext();
   const p=data.progress;el("worker-state").textContent="查看任务："+job+" · "+opponentText(job)+"\n阶段："+(p?.stage||"尚无阶段记录")+"\n"+
     (p?.message||"旧版本/尚未启动的Worker可能没有progress.json，按需查看已有日志。")+"\n课程局面："+show(p?.curriculum_records)+
     (p?.backend?"\n训练："+p.backend+" · 批次："+show(p?.batch)+" · 采样："+show(p?.sampled)+" · 评分："+show(p?.labeled)+" · 更新："+show(p?.updates):"")+
@@ -407,6 +429,7 @@ async function student(generation){
 }
 async function refresh(){
   if(state.busy||state.paused||document.hidden||!state.campaign)return;state.busy=true;const generation=state.generation;
+  const errors=[],panel=async(name,read)=>{if(generation!==state.generation)return;try{return await read();}catch(e){if(e.name!=="AbortError")errors.push(name+"："+e.message);}};
   try{const s=await json(api("/overview"));if(generation!==state.generation)return;
     // Older Python Web services can serve this small JSON artifact without a
     // restart. Never read the full campaign or raw research journal on refresh.
@@ -427,14 +450,16 @@ async function refresh(){
       }
       if(generation!==state.generation)return;
     }
-    const x=await json(api("/executor"));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await loadArchivedJobs(generation);if(generation!==state.generation)return;renderStatus(s,x);state.totalHours=s.worker_gpu_hours||0;
-    const latest=s.active_job?.id||s.latest_job?.id;if(state.autoJob&&latest&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
-    options("job",visibleJobs().slice().reverse(),state.job,j=>j.id+" · "+difficulty(j.id)+" · "+roleName(j.role)+" · "+j.status+" · "+j.candidate_id,j=>j.id);
-    for(const source of ["research","executor"])if(state.streams[source].follow)await readActivity(source);
+    const x=await panel("执行器",()=>json(api("/executor")));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await loadArchivedJobs(generation);if(generation!==state.generation)return;renderStatus(s,x||{});state.totalHours=s.worker_gpu_hours||0;
+    const latest=[s.active_job,s.latest_job].find(j=>j?.id&&!purgedJob(j)&&!purgedJob(jobInfo(j.id))&&(!state.archivedJobs.has(j.id)||j.id===state.activeJobId))?.id||"";
+    if(state.autoJob&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
+    options("job",[{id:"",placeholder:true},...visibleJobs().slice().reverse()],state.job,j=>j.placeholder?"选择任务（当前无选中任务）":j.id+" · "+difficulty(j.id)+" · "+roleName(j.role)+" · "+j.status+" · "+j.candidate_id,j=>j.id);
+    renderJobContext();
+    for(const source of ["research","executor"])if(state.streams[source].follow)await panel(source==="research"?"研究事件":"执行器事件",()=>readActivity(source));
     if(generation!==state.generation)return;
-    if(Date.now()-state.evaluationRefresh>20000){const rows=await json(api("/evaluations"));if(generation!==state.generation)return;state.evaluations=rows;state.evaluationRefresh=Date.now();curve();results(rows);}
-    await files(generation);await student(generation);await maintenance(generation);
-    if(generation===state.generation){el("connection").textContent="最近读取 "+new Date().toLocaleTimeString()+" · 3秒增量刷新";el("connection").className="";}
+    if(Date.now()-state.evaluationRefresh>20000)await panel("评测结果",async()=>{const rows=await json(api("/evaluations"));if(generation!==state.generation)return;state.evaluations=rows;state.evaluationRefresh=Date.now();curve();results(rows);});
+    await panel("任务文件",()=>files(generation));await panel("对局",()=>student(generation));await panel("维护任务",()=>maintenance(generation));
+    if(generation===state.generation){el("connection").textContent="最近读取 "+new Date().toLocaleTimeString()+" · 3秒增量刷新"+(errors.length?" · 部分面板读取失败："+errors.join("；"):"");el("connection").className=errors.length?"error":"";}
   }catch(e){if(generation===state.generation&&e.name!=="AbortError"){el("connection").textContent=e.message;el("connection").className="error";}}
   finally{state.busy=false;}
 }
@@ -514,7 +539,7 @@ async function rawPage(){
 function selectCampaign(){
   for(const request of state.requests)request.abort();state.generation++;state.campaign=el("campaign").value;
   state.maintenanceRefresh=0;
-  resetGame();state.games=[];state.jobs=[];state.manifests=new Map();state.fileData=null;state.gamesScope=null;state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.autoGame=true;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
+  resetGame();state.games=[];state.jobs=[];state.manifests=new Map();state.fileData=null;state.fileError=null;state.gamesScope=null;state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.autoGame=true;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
   state.archivedJobs=new Set();state.archivesLoaded=false;state.activeJobId=null;el("show-archived-jobs").checked=false;
   el("evaluation-jobs").replaceChildren();el("evaluation-jobs").dataset.signature="";el("job-context").textContent="正在读取任务参数…";el("evaluation-scope").textContent="";
   for(const id of ["coach","memory","results","student-events","executor-events"])clearFeed(id);

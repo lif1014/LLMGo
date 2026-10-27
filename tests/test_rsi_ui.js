@@ -18,14 +18,15 @@ const nodes=new Map(),el=id=>{if(!nodes.has(id))nodes.set(id,new Element());retu
 const row=(i,channel='coach',category='text')=>({ordinal:i,event:{id:'e'+i,ts:'2026-10-21',kind:'meta_event',channel,category,title:'event '+i,text:'visible '+i},offset:i*100,length:100,path:'events.jsonl'});
 let teacher=Array.from({length:180},(_,i)=>row(i+1)),studentEvents=[],evaluations=[{candidate_id:'initial',level:1,statistics:{score:.75}}];
 let gameList=[{folder:'jobs/j1/output/harness_runs/g',id:'g',model_seat:'white'}],gamePages=null,overviewJob='j1';
-let delay=null,compatibilityStatus=null,maintenancePlan=null;
+let delay=null,compatibilityStatus=null,maintenancePlan=null,overviewOverride=null,activityFailure=false;
+const missingJobs=new Set();
 const manifests={};
 const requests=[];
 const document={hidden:false,getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)};
 function body(url){
   const u=new URL(url,'http://local');
   if(url==='/api/rsi/campaigns')return [];
-  if(u.pathname.endsWith('/overview'))return {jobs:{},recent_jobs:[{id:overviewJob,role:'candidate',status:'Running'}],active_job:{id:overviewJob},incumbent:{id:'initial'},phase:'PLANNING',current_level:1,round:1};
+  if(u.pathname.endsWith('/overview'))return overviewOverride||{jobs:{},recent_jobs:[{id:overviewJob,role:'candidate',status:'Running'}],active_job:{id:overviewJob},incumbent:{id:'initial'},phase:'PLANNING',current_level:1,round:1};
   if(u.pathname.endsWith('/executor'))return {mode:'external',report:{status:'waiting',task_id:4170,checks:3,interval_seconds:60}};
   if(u.pathname.endsWith('/activity')){
     const source=u.searchParams.get('source');
@@ -59,7 +60,13 @@ let intervalId=0;const intervals=new Map();
 const context=vm.createContext({document,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,
   setInterval:(fn,ms)=>{const id=++intervalId;intervals.set(id,{fn,ms});return id;},clearInterval:id=>intervals.delete(id),console,
   Option:class extends Element{constructor(text,value){super('option');this.textContent=text;this.value=value;}},
-  fetch:async url=>{requests.push(url);if(delay&&delay.match(url)){const item=delay;delay=null;return item.promise;}return response(body(url));}
+  fetch:async url=>{
+    requests.push(url);if(delay&&delay.match(url)){const item=delay;delay=null;return item.promise;}
+    const u=new URL(url,'http://local');
+    if(u.pathname.endsWith('/job-files')&&missingJobs.has(u.searchParams.get('job_id')))return {ok:false,status:404,text:async()=> 'manifest not found'};
+    if(activityFailure&&u.pathname.endsWith('/activity')&&u.searchParams.get('source')==='research')throw Error('temporary activity failure');
+    return response(body(url));
+  }
 });
 const run=source=>vm.runInContext(source,context);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/llmgo/server/static/rsi.js'),'utf8'),context);
@@ -223,5 +230,32 @@ function defer(match){let resolve;const promise=new Promise(r=>{resolve=r;});del
   assert.match(el('maintenance-state').textContent,/完整对局：1\/2/);
   assert.match(el('maintenance-state').textContent,/半回合 44/);
   assert.match(el('maintenance-state').textContent,/得分率 75.0%/);
+  // An older running backend can expose a removed ID as the "latest" job.
+  // Clean idle campaigns must render immediately, without requesting its files.
+  const purged={id:'j000028',status:'PURGED',role:'archived',kind:'archived'};
+  overviewOverride={recent_jobs:[purged],active_job:purged,phase:'PLANNING',round:13};
+  compatibilityStatus={schema_version:1,campaign_id:'test',phase:'PLANNING',round:13,active_job:null};
+  gameList=[];run('state.autoJob=true;state.archivedJobs=new Set(["j000028"]);state.archivesLoaded=true;state.maintenanceRefresh=0');
+  missingJobs.add('j000028');before=requests.length;await run('refresh()');
+  assert.equal(run('state.job'),'');assert.match(el('job-context').textContent,/当前没有可读取的活动任务/);
+  assert.doesNotMatch(el('job-context').textContent,/正在读取/);
+  assert(!requests.slice(before).some(url=>url.includes('j000028')),'purged latest jobs never trigger missing manifest/file requests');
+  assert(requests.slice(before).some(url=>url.includes('maintenance%2Factive.json')),'idle campaign still refreshes independent maintenance jobs');
+  // Explicitly selecting a purged placeholder explains the cleanup, without IO.
+  run('state.job="j000028"');before=requests.length;await run('files(state.generation)');await run('loadJobManifest(state.job)');
+  assert.equal(requests.length,before);assert.match(el('job-context').textContent,/已清理，仅保留编号占位/);
+  // A missing historical manifest, or an event endpoint failure, must not block
+  // evaluation/maintenance panels. 404s are bounded to one retry per 30 seconds.
+  overviewOverride.recent_jobs.unshift({id:'j000014',status:'Failed',role:'candidate'});
+  missingJobs.add('j000014');run('state.job="j000014";state.autoJob=false;state.maintenanceRefresh=0;state.streams.research=freshStream()');
+  activityFailure=true;before=requests.length;await run('refresh()');
+  assert.match(el('job-context').textContent,/任务文件读取失败：404/);
+  assert.match(el('connection').textContent,/temporary activity failure/);
+  assert.match(el('connection').textContent,/任务文件/);
+  assert(requests.slice(before).some(url=>url.includes('/games?')),'student panel still refreshes');
+  assert(requests.slice(before).some(url=>url.includes('maintenance%2Factive.json')),'missing job files do not block maintenance');
+  assert.match(el('maintenance-state').textContent,/123/);
+  before=requests.length;await run('refresh()');
+  assert(!requests.slice(before).some(url=>url.includes('/job-files?')),'missing historical files use retry backoff');
   console.log('RSI dashboard DOM checks passed: bounded feeds, replay, live isolation, history, difficulty, win rates and asynchronous races');
 })().catch(error=>{console.error(error);process.exitCode=1;});

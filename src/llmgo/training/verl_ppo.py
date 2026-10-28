@@ -33,7 +33,7 @@ def training_config(config, allocated_gpus=8):
         "rollout_enforce_eager":False,"cudagraph_capture_sizes":None,
         "lr_warmup_steps_ratio":0.,"loss_agg_mode":"seq-mean-token-mean",
         "quality_gate_min_valid":.5,"preupdate_consistency_samples":16,
-        "reference_kl_warning":.05,"reference_kl_stop":.1,
+        "reference_kl_warning":.05,"reference_kl_stop":0.,
         "sync_max_mean_abs_logprob_delta":.1,"sync_check_steps":0,
         "internal_validation":False,"validation_games":2,"validation_every":1,"validation_min_valid":.5,
         "validation_max_drop":.1,"validation_temperature":1.,"validation_top_p":1.,

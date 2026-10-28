@@ -24,7 +24,7 @@ def checkpoint(root, step, actors=2):
 
 
 def test_actual_reference_kl_stop_blocks_before_update(tmp_path):
-    cfg=training_config({})
+    cfg=training_config({'reference_kl_stop':.1})
     quality={'step':3,'valid':56,'valid_rate':1.}
     sync={'mean_abs_logprob_delta':.01}
     enforce_update_safety(quality,{'reference_kl_move_mean':.02},sync,cfg,tmp_path)
@@ -35,6 +35,31 @@ def test_actual_reference_kl_stop_blocks_before_update(tmp_path):
     for value in (None,float('nan')):
         with pytest.raises(TrainingSafetyStop):
             enforce_update_safety(quality,{'reference_kl_move_mean':value},sync,cfg,tmp_path)
+
+
+@pytest.mark.parametrize('stage', ['before_update', 'after_update'])
+@pytest.mark.parametrize('reference_kl', [.1, .11, 1.])
+def test_default_reference_kl_does_not_stop_at_a_finite_threshold(tmp_path, stage, reference_kl):
+    cfg = training_config({})
+    assert cfg['reference_kl_stop'] == 0
+    assert cfg['reference_kl_warning'] == .05 and cfg['kl_beta'] == .05
+    enforce_update_safety({'step':3, 'stage':stage, 'valid':56, 'valid_rate':1.},
+        {'reference_kl_move_mean':reference_kl}, {'mean_abs_logprob_delta':.01}, cfg, tmp_path)
+    assert not (tmp_path/'stability-stop.json').exists()
+    overrides = hydra_overrides('/weights', '/data', tmp_path/'training', cfg, 8, '/teacher')
+    assert 'actor_rollout_ref.actor.use_kl_loss=true' in overrides
+    assert 'actor_rollout_ref.actor.kl_loss_coef=0.05' in overrides
+
+
+def test_meta_can_choose_a_different_reference_kl_stop_threshold(tmp_path):
+    cfg = training_config(json.loads('{"reference_kl_stop":0.2}'))
+    quality = {'step':2, 'valid':56, 'valid_rate':1.}
+    sync = {'mean_abs_logprob_delta':.01}
+    enforce_update_safety(quality, {'reference_kl_move_mean':.15}, sync, cfg, tmp_path)
+    with pytest.raises(TrainingSafetyStop, match='reference_kl_gate'):
+        enforce_update_safety(quality, {'reference_kl_move_mean':.21}, sync, cfg, tmp_path)
+    row = json.loads((tmp_path/'stability-stop.json').read_text())
+    assert row['evidence']['limit'] == .2
 
 
 def test_missing_sync_evidence_is_not_silently_accepted(tmp_path):

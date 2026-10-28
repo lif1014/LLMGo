@@ -13,7 +13,7 @@ description: 使用verl执行完整棋局PPO，核对终局奖励、LC0学生视
 
 预算内重试成功可继续，全部请求保留；耗尽重试/预算仍无合法答案时，从全部合法步按种子随机选一步，作为学生该手继续；原始请求正常参与终局reward/LC0/GAE/actor loss，不屏蔽整手、不伪造随机UCI的token/logprob。保留model_uci、action_source、fallback_reason及random_rate；失败请求不改记成功。服务/引擎/网络错误为aborted，不能造奖励。不能筛掉负局再训练。完整局采样期间不切权重，不能用旧策略前半局拼新策略后半局。按请求、回合与整局区分合法率。
 
-训练前/退化时读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)。默认internal_validation=false，不打更新前/后内部验证局，训练批次仍检查实际reference KL、协议、actor/rollout一致性及有限值。默认KL警戒0.05/停止0.1、同步平均绝对差停止0.1；这是可调初始设置，不是棋力保证。关闭时导出有同实验有限optimizer更新记录的最新完整checkpoint，回执必须标记disabled、passed=null；不得称内部验证通过，棋力另做正式评测。显式internal_validation=true可恢复固定完整局验证及已验证checkpoint选择。恢复保存开关、模型/优化器/RNG/episode批次身份，启用时另存原始验证基线；代码/目标改变另开实验，旧HF LoRA或单步优化器不能接入。
+训练前/退化时读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)。默认internal_validation=false，不打更新前/后内部验证局，训练批次仍检查实际reference KL、协议、actor/rollout一致性及有限值。默认KL警戒0.05，reference_kl_stop=0关闭KL数值门槛停止；kl_beta=0.05的KL正则、KL统计与同步平均绝对差停止0.1保留。用户授权Meta-Agent自行决定是否恢复KL停止：在下一轮ppo.json中显式设reference_kl_stop为正数（例如0.1）即可，不需要再请求用户批准；继承的旧recipe若仍写0.1，会覆盖新默认，应明确选择并记录理由。关闭时导出有同实验有限optimizer更新记录的最新完整checkpoint，回执必须标记disabled、passed=null；不得称内部验证通过，棋力另做正式评测。显式internal_validation=true可恢复固定完整局验证及已验证checkpoint选择。恢复保存开关、模型/优化器/RNG/episode批次身份，启用时另存原始验证基线；代码/目标改变另开实验，旧HF LoRA或单步优化器不能接入。
 
 默认最多8卡：7 actor/rollout/reference+1 LC0；concurrent_games默认actor卡数（7），games_per_batch默认与actor卡数相同（至少2局，8卡任务为7局），每批结束更新一次。奇数批次按训练step交替多一局白/黑，相邻两批合计均衡；固定验证仍为偶数局。旧ppo.json显式2局或14局配置需改为7/7并设internal_validation=false，不因live默认更新就自动采用。2–8卡留一张教师卡，单卡明确CPU LC0。保持CUDA Graph、wake缓存释放和HF导出兼容修复。只用beijing/model-autosft/NORMAL、只写/user/lyh4170、devspace0GPU，不改他人环境或停止他人任务。
 

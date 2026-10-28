@@ -24,7 +24,7 @@
     "trigger": "candidate_allows_mate",
     "when": "The automatic candidate observations identify an opponent mate-in-one after at least one candidate.",
     "rule": "Read candidate observations for opponent mate-in-one and captures of the moved piece. Resolve immediate mating threats before pursuing a slow plan.",
-    "counterexample": "No mate-in-one found only excludes that short horizon; it does not prove safety. A genuine forcing mate for your side can finish the game before the opponent gets another move.",
+    "counterexample": "No mate-in-one found only excludes that short horizon; it does not rule out forks, delayed material losses or longer mating attacks. A genuine forcing mate for your side can finish the game before the opponent gets another move.",
     "sources": [
       "https://lichess.org/study/LteGa5JT/cFv9dmED"
     ],
@@ -67,7 +67,7 @@
     ],
     "trigger": "captures_available",
     "when": "A candidate captures an enemy piece.",
-    "rule": "Compare the captured piece with what the opponent can take next. Read the landing-square captures and immediate mate threats in candidate observations; nominal defenders may be pinned.",
+    "rule": "Compare the captured piece with what the opponent can take next. Read the landing-square captures and immediate mate threats in candidate observations; nominal defenders may be pinned. These checks do not certify safety or rank moves; also consider forcing checks and forks against other pieces.",
     "counterexample": "Capturing a pawn with the queen can lose the queen. Conversely a sacrifice may be sound if a forcing mating line is actually verified.",
     "sources": [
       "https://lichess.org/study/swGPAS0z/JHGjKfwb"

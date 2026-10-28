@@ -1,0 +1,133 @@
+--- a/src/llmgo/harness/prompt.py
++++ b/src/llmgo/harness/prompt.py
+@@ -36,12 +36,12 @@
+     if played:
+         parts.append('Recent moves\n' + '\n'.join(played))
+     safety = [line for line in observations if line.startswith(('danger:', 'still hanging:'))]
+-    decision = [line for line in observations if line.startswith(('safe moves:', 'avoid:'))]
++    decision = [line for line in observations if line.startswith(('no warning detected:', 'detected warning:'))]
+     checks = [line for line in observations if line not in safety and line not in decision]
+     if safety:
+-        parts.append('Material safety (rule-based one-reply check, no engine; local estimate only)\n' + '\n'.join(safety))
++        parts.append('Detected tactical warnings (rule-based one-reply check, no engine; local estimate only)\n' + '\n'.join(safety))
+     if checks:
+-        parts.append('One-reply checks: unlisted moves are NOT proven safe. Negative immediate delta may be recovered by your next recapture; it is not a forced loss.\n' + '\n'.join(checks))
++        parts.append('Limited tactical observations: no reported warning does not establish safety. Negative immediate delta may be recovered by your next recapture; it is not a forced loss.\n' + '\n'.join(checks))
+     if skills:
+         parts.append('Relevant skills (general advice, not a hint to a unique correct answer)\n' + '\n'.join(skill_lines(list(skills))))
+     groups = {}
+@@ -51,10 +51,13 @@
+     lines = [key + ': ' + ' '.join(labels) for key, labels in groups.items()]
+     parts.append(f'Legal moves ({len(candidates)} total)\n' + '\n'.join(lines))
+     if decision:
+-        parts.append('Decision aid (rules-based one-reply and mate-in-two check, no engine; local estimate only)\n'
++        parts.append('Limited tactical observations (bounded rule checks, no engine; no move ranking)\n'
+                      + '\n'.join(decision) +
+-                     '\nA safe move is one with no detected mate threat and no one-reply material loss. '
+-                     'Choose a safe move unless you can state the concrete forcing line that justifies an avoid move.')
++                     '\nNo warning detected means only that the bounded checks reported none; checks can miss '
++                     'forks, delayed losses and longer mating attacks, and some checks stop at a work limit. '
++                     'Do not prefer a move merely because no warning was reported. '
++                     'A reported warning is also a local observation, not a forbidden move. '
++                     'Compare the opponent replies and all legal alternatives before deciding.')
+     if correction:
+         parts.append('Correction\n' + correction)
+     parts.append('Final answer: output exactly one UCI from Legal moves. No explanation or JSON.')
+--- a/src/llmgo/harness/tools.py
++++ b/src/llmgo/harness/tools.py
+@@ -354,10 +354,10 @@
+
+
+ def decision_block(decision: list[dict], per_group: int = 10, max_groups: int = 6) -> list[str]:
+-    """Compact safe/avoid summary placed last in the prompt, before the answer.
++    """Compact bounded-check observations placed before the answer, without endorsements.
+
+     Moves are grouped by the rule that flagged them so the model can see both
+-    the size of the danger set and the shape of the safe alternative.
++    the detected warnings and the moves without a reported warning.
+     """
+     if not decision:
+         return []
+@@ -371,19 +371,19 @@
+     lines = []
+     if safe:
+         if len(safe) == len(decision):
+-            lines.append(f"safe moves: every one of the {len(safe)} legal moves passes the one-reply check")
++            lines.append(f"no warning detected: the bounded checks reported none for all {len(safe)} legal moves")
+         else:
+             listed = ' '.join(safe[:per_group * 4])
+             extra = '' if len(safe) <= per_group * 4 else f" (+{len(safe) - per_group * 4} more)"
+-            lines.append(f"safe moves: no mate threat and no one-reply material loss: {listed}{extra}")
++            lines.append(f"no warning detected: {listed}{extra}")
+     else:
+-        lines.append("safe moves: none; every legal move has at least one listed one-reply danger, so compare the costs instead")
++        lines.append("no warning detected: none; every legal move has a reported warning; compare the replies and alternatives")
+     ranked = sorted(groups.items(), key=lambda pair: (order.get(pair[0][0], 9), -len(pair[1]), pair[0][1]))
+     for (kind, detail), moves in ranked[:max_groups]:
+         listed = ' '.join(moves[:per_group])
+         extra = '' if len(moves) <= per_group else f" (+{len(moves) - per_group} more)"
+-        lines.append(f"avoid: {detail}: {listed}{extra}")
++        lines.append(f"detected warning: {detail}: {listed}{extra}")
+     if len(ranked) > max_groups:
+         rest = sum(len(moves) for _, moves in ranked[max_groups:])
+-        lines.append(f"avoid: {len(ranked) - max_groups} further danger group(s) covering {rest} move(s)")
++        lines.append(f"detected warning: {len(ranked) - max_groups} further group(s) covering {rest} move(s)")
+     return lines
+--- a/src/llmgo/harness/skills/cards.json
++++ b/src/llmgo/harness/skills/cards.json
+@@ -296,15 +296,15 @@
+   },
+   {
+     "id": "material-safety",
+-    "title": "Check the one-reply material cost before answering",
++    "title": "Interpret bounded tactical observations",
+     "priority": 99,
+     "stages": [
+       "move"
+     ],
+     "trigger": "material_en_prise",
+-    "when": "Every complete-move question: the Decision aid block is always present and always names the safe set and the avoid groups.",
+-    "rule": "Read the Decision aid block last. It lists the safe moves (no detected mate threat and no one-reply material loss) and the avoid groups with the rule that flagged them. Choose a safe move unless you can state the concrete forcing line that justifies an avoid move; if you pick an avoid move, say which listed danger you accept and why it is not real. When the safe list is empty, compare the listed costs and prefer the cheapest danger.",
+-    "counterexample": "The check is one reply deep plus a check-then-mate pattern, so it ignores pins, deeper tactics and long plans: a safe move can still lose slowly, and an avoid move can be the only defense against a bigger threat. Do not treat the avoid list as forbidden, and never pick a move only because it is listed first.",
++    "when": "Every complete-move question: the observation block reports detected warnings and moves with no warning detected.",
++    "rule": "Read the limited tactical observations as reports from bounded checks, not recommendations. No warning detected does not establish safety or make a move preferable. A warning identifies a local issue to examine, not a forbidden move or a forced loss. Compare the opponent replies, including checks, captures and forks, and keep all legal moves available.",
++    "counterexample": "A knight check can fork a king and rook; a quiet pawn move can fork a bishop and knight. Such threats can survive a shallow check without an immediate material loss. A flagged sacrifice can still be justified by a verified forcing line. Work limits can also leave some checks incomplete.",
+     "sources": [
+       "https://lichess.org/study/LteGa5JT/cFv9dmED",
+       "https://python-chess.readthedocs.io/en/latest/core.html#chess.Board.is_capture"
+@@ -317,4 +317,4 @@
+       }
+     ]
+   }
+-]
+\ No newline at end of file
++]
+--- a/skills.json
++++ b/skills.json
+@@ -296,15 +296,15 @@
+   },
+   {
+     "id": "material-safety",
+-    "title": "Check the one-reply material cost before answering",
++    "title": "Interpret bounded tactical observations",
+     "priority": 99,
+     "stages": [
+       "move"
+     ],
+     "trigger": "material_en_prise",
+-    "when": "Every complete-move question: the Decision aid block is always present and always names the safe set and the avoid groups.",
+-    "rule": "Read the Decision aid block last. It lists the safe moves (no detected mate threat and no one-reply material loss) and the avoid groups with the rule that flagged them. Choose a safe move unless you can state the concrete forcing line that justifies an avoid move; if you pick an avoid move, say which listed danger you accept and why it is not real. When the safe list is empty, compare the listed costs and prefer the cheapest danger.",
+-    "counterexample": "The check is one reply deep plus a check-then-mate pattern, so it ignores pins, deeper tactics and long plans: a safe move can still lose slowly, and an avoid move can be the only defense against a bigger threat. Do not treat the avoid list as forbidden, and never pick a move only because it is listed first.",
++    "when": "Every complete-move question: the observation block reports detected warnings and moves with no warning detected.",
++    "rule": "Read the limited tactical observations as reports from bounded checks, not recommendations. No warning detected does not establish safety or make a move preferable. A warning identifies a local issue to examine, not a forbidden move or a forced loss. Compare the opponent replies, including checks, captures and forks, and keep all legal moves available.",
++    "counterexample": "A knight check can fork a king and rook; a quiet pawn move can fork a bishop and knight. Such threats can survive a shallow check without an immediate material loss. A flagged sacrifice can still be justified by a verified forcing line. Work limits can also leave some checks incomplete.",
+     "sources": [
+       "https://lichess.org/study/LteGa5JT/cFv9dmED",
+       "https://python-chess.readthedocs.io/en/latest/core.html#chess.Board.is_capture"
+@@ -317,4 +317,4 @@
+       }
+     ]
+   }
+-]
+\ No newline at end of file
++]

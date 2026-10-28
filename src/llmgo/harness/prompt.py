@@ -29,13 +29,17 @@ def move_prompt(board: chess.Board, history: list[dict], candidates: list[dict],
     side = side_name(board.turn)
     parts = [f'You play {side} in a normal chess game. Choose the best practical legal move; a forced win may not exist. '
              'Briefly compare a few promising moves, check the opponent reply, then decide. '
+             'Automatic tactical checks are limited observations, not move recommendations. '
+             'A move with no reported warning can still allow a fork, a delayed material loss or a mating attack. '
              'UCI = source square + target square (+ q/r/b/n for promotion).',
              'Position\n' + render_board(board)]
     played = played_lines(history, history_plies)
     if played:
         parts.append('Recent moves\n' + '\n'.join(played))
     if observations:
-        parts.append('One-reply checks: unlisted moves are NOT proven safe. Negative immediate delta may be recovered by your next recapture; it is not a forced loss.\n' + '\n'.join(observations))
+        parts.append('Limited tactical observations: no reported warning does not establish safety. '
+                     'Negative immediate delta may be recovered by your next recapture; it is not a forced loss.\n'
+                     + '\n'.join(observations))
     if skills:
         parts.append('Relevant skills (general advice, not a hint to a unique correct answer)\n' + '\n'.join(skill_lines(list(skills))))
     groups = {}

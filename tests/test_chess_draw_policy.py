@@ -70,17 +70,45 @@ def test_real_training_game_continues_before_and_after_third_repetition(tmp_path
         episode.close()
 
 
-def test_fivefold_still_ends_play_and_training(tmp_path):
-    board = repeated_board(16)
-    assert chess_outcome(board).termination == chess.Termination.FIVEFOLD_REPETITION
-    assert Position(board)._result() == ('draw', 'repetition')
-    assert terminal_value(board, chess.WHITE) == .5
+@pytest.mark.parametrize('plies', [16, 20, 36, 76])
+def test_fivefold_and_further_repetitions_continue_in_play_and_training(tmp_path, plies):
+    board = repeated_board(plies)
+    assert board.is_fivefold_repetition()
+    assert board.outcome().termination == chess.Termination.FIVEFOLD_REPETITION
+    assert chess_outcome(board) is None
+    assert Position(board)._result() == (None, None)
+    assert terminal_value(board, chess.WHITE) is None
     before = board.copy()
     last = before.pop()
-    assert preview_move(before, last)['terminal'] == 'fivefold_repetition'
-    with pytest.raises(ValueError, match='nonterminal'):
-        board_from_record({'initial_fen': chess.STARTING_FEN,
-                           'moves': [move.uci() for move in board.move_stack]})
+    assert preview_move(before, last)['terminal'] is None
+    after, result, reason = Position(before).apply(Move(last.uci()))
+    assert after.fen() == board.fen() and result is None and reason is None
+    assert board_from_record({'initial_fen': chess.STARTING_FEN,
+                             'moves': [move.uci() for move in board.move_stack]}).fen() == board.fen()
+
+    class UnusedEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+    episode = ChessEpisode('repeated', 'new-policy', 'white', 3, 'unused',
+                           tmp_path / 'episode', engine_factory=UnusedEngine)
+    try:
+        episode.board = board
+        assert not episode.boundary() and not episode.done
+    finally:
+        episode.close()
+
+
+@pytest.mark.parametrize('plies', [99, 100])
+def test_fifty_move_claim_is_retained_when_fivefold_also_applies(plies):
+    board = repeated_board(plies)
+    assert board.is_fivefold_repetition() and board.can_claim_fifty_moves()
+    assert chess_outcome(board).termination == chess.Termination.FIFTY_MOVES
+    assert Position(board)._result() == ('draw', 'fifty_moves')
+    assert terminal_value(board, chess.WHITE) == .5
 
 
 @pytest.mark.parametrize(('fen', 'termination'), [

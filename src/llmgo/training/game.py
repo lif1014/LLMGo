@@ -7,6 +7,7 @@ from collections import Counter
 from pathlib import Path
 import chess
 
+from llmgo.env.rules import chess_outcome
 from llmgo.rsi.contracts import atomic_json, utc
 from llmgo.rsi.ladder import opponent
 from llmgo.runtime.uci_player import UciPlayer
@@ -53,7 +54,7 @@ class ChessEpisode:
         self.write_summary()
 
     def boundary(self):
-        outcome = self.board.outcome(claim_draw=True)
+        outcome = chess_outcome(self.board)
         if outcome is not None:
             self.finish(0 if outcome.winner is None else 1 if outcome.winner == self.actor else -1,
                         outcome.termination.name.lower())

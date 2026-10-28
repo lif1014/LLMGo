@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import chess
 
+from llmgo.env.rules import chess_outcome
 from llmgo.runtime.prompt import Observation
 
 WHITE = "white"
@@ -48,7 +49,6 @@ LETTER = {
 DRAW_REASON = {
     chess.Termination.STALEMATE: "stalemate",
     chess.Termination.INSUFFICIENT_MATERIAL: "insufficient_material",
-    chess.Termination.THREEFOLD_REPETITION: "repetition",
     chess.Termination.FIVEFOLD_REPETITION: "repetition",
     chess.Termination.FIFTY_MOVES: "fifty_moves",
     chess.Termination.SEVENTYFIVE_MOVES: "seventyfive_moves",
@@ -61,7 +61,7 @@ Rules:
 - The king moves one square. The queen moves any number of squares in a straight line. Rooks move orthogonally, bishops diagonally, and knights in an L shape. Knights may jump.
 - Pawns move one square forward, or two from their starting rank, and capture one square diagonally forward. A pawn that reaches the last rank must promote. An en-passant capture is written as the square the pawn lands on.
 - Castle kingside with e1g1 or e8g8, and queenside with e1c1 or e8c8, when that move is legal.
-- A move that leaves your own king in check is illegal. Checkmate wins. Stalemate, insufficient material, threefold repetition, and the fifty-move rule are draws.
+- A move that leaves your own king in check is illegal. Checkmate wins. Stalemate, insufficient material, fivefold repetition, and the fifty-move rule are draws. Threefold repetition does not end the game.
 
 Uppercase letters are White pieces and lowercase letters are Black pieces: K king, Q queen, R rook, B bishop, N knight, P pawn.
 Write a move in UCI. Promotion adds the piece letter, for example e7e8q.
@@ -149,7 +149,7 @@ class Position:
         return (nxt, *nxt._result())
 
     def _result(self) -> tuple[str | None, str | None]:
-        outcome = self.board.outcome(claim_draw=True)
+        outcome = chess_outcome(self.board)
         if outcome is None:
             return None, None
         if outcome.winner is None:

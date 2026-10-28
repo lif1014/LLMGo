@@ -6,6 +6,7 @@ import random
 from pathlib import Path
 import chess
 
+from llmgo.env.rules import chess_outcome
 from llmgo.harness.config import HarnessConfig
 from llmgo.harness.prompt import move_prompt
 from llmgo.harness.skills import select_skills
@@ -22,7 +23,7 @@ def board_from_record(record):
         if move not in board.legal_moves:
             raise ValueError(f"Illegal curriculum history move: {uci}")
         board.push(move)
-    if board.outcome(claim_draw=True):
+    if chess_outcome(board):
         raise ValueError("Training prompt must be nonterminal")
     return board
 
@@ -79,10 +80,10 @@ def seed_curriculum(count=16, seed=4170):
     for i in range(count):
         board = chess.Board()
         for _ in range(rng.randrange(0, 40)):
-            if board.outcome(claim_draw=True):
+            if chess_outcome(board):
                 break
             board.push(rng.choice(sorted(board.legal_moves, key=lambda move: move.uci())))
-        if board.outcome(claim_draw=True) or board.legal_moves.count() < 2:
+        if chess_outcome(board) or board.legal_moves.count() < 2:
             continue
         records.append({"initial_fen": chess.STARTING_FEN, "moves": [m.uci() for m in board.move_stack],
                         "source": f"seeded-random-playout:{seed}:{i}", "split": "train", "history_complete": True})
@@ -104,7 +105,7 @@ def from_game_events(path):
             board.push_uci(event["last_move"]["uci"])
         if board.fen() != chess.Board(event["fen"]).fen():
             raise ValueError(f"History/FEN mismatch at {path}:{number}")
-        if not board.outcome(claim_draw=True) and board.legal_moves.count() > 1:
+        if not chess_outcome(board) and board.legal_moves.count() > 1:
             yield {"initial_fen": initial, "moves": [m.uci() for m in board.move_stack],
                    "source": f"{Path(path).resolve()}:{number}", "split": "train",
                    "history_complete": initial == chess.STARTING_FEN}

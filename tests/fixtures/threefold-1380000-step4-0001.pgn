@@ -1,0 +1,6 @@
+[Event "1380000 PPO step 4 game 0001 draw regression"]
+[White "Qwen student"]
+[Black "Fairy L3"]
+[Result "*"]
+
+1. e4 c6 2. d4 a6 3. Nc3 d5 4. Nf3 Bg4 5. Bd2 dxe4 6. Nxe4 Nd7 7. Nc5 Nxc5 8. Bc4 Ne6 9. d5 cxd5 10. Bb3 Nc5 11. Bb4 e6 12. Bxc5 Bxc5 13. Qd2 Bh5 14. Nd4 Be7 15. Ne2 Nh6 16. Nc3 b5 17. Rc1 O-O 18. Nb1 b4 19. Qd3 g6 20. Nd2 a5 21. Qd4 a4 22. c3 Ng4 23. Bc2 bxc3 24. Qxc3 Bh4 25. Qf3 Qg5 26. Bd3 Ne5 27. a3 Bxf3 28. gxf3 Qe3+ 29. Be2 Nd3+ 30. Kd1 Nxb2+ 31. Kc2 Qh6 32. Rcf1 Rab8 33. Rhg1 e5 34. h3 Rfd8 35. Nb1 Rdc8+ 36. Nc3 Nc4 37. Bxc4 Rxc4 38. Rg2 Rbc8 39. Kb1 Rxc3 40. Rfg1 Rb3+ 41. Ka1 Rxa3+ 42. Kb2 Rac3 43. Rh2 Rb3+ 44. Ka1 Ra3+ 45. Kb2 Rb3+ 46. Ka1 Ra3+ 47. Kb2 *

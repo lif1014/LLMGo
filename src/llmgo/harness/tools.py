@@ -2,6 +2,8 @@
 from __future__ import annotations
 import chess
 
+from llmgo.env.rules import chess_outcome
+
 VALUES = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330, chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
 NAMES = {kind: chess.piece_name(kind) for kind in VALUES}
 TOOL_LIBRARY = [
@@ -98,7 +100,7 @@ def preview_move(board: chess.Board, move: chess.Move) -> dict:
     after = board.copy()
     after.push(move)
     gain = material_balance(after, color) - baseline
-    outcome = after.outcome(claim_draw=True)
+    outcome = chess_outcome(after)
     recaptures, mates = [], []
     if outcome is None:
         for reply in list(after.legal_moves):

@@ -6,6 +6,7 @@ import time
 import chess
 import chess.engine
 
+from llmgo.env.rules import chess_outcome
 from llmgo.rsi.contracts import BT4_SHA256, file_hash
 
 
@@ -25,7 +26,7 @@ def teacher_config(config=None):
 
 def terminal_value(board, actor):
     """Terminal expectation in [0,1]; nonterminal is None."""
-    outcome = board.outcome(claim_draw=True)
+    outcome = chess_outcome(board)
     return None if outcome is None else .5 if outcome.winner is None else float(outcome.winner == actor)
 
 

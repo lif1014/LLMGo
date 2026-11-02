@@ -102,14 +102,14 @@ function matrix(rows){
   const groups=new Map();
   for(const e of rows){const key=e.candidate_id+":"+(e.track||"player");if(!groups.has(key))groups.set(key,{id:e.candidate_id,track:e.track||"player",levels:{}});groups.get(key).levels[e.level]=e;}
   const table=document.createElement("table"),head=document.createElement("tr");
-  for(const title of ["候选 / 评测",...Array.from({length:8},(_,i)=>"L"+(i+1)),"完整均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
+  for(const title of ["候选 / 验证","L2","L2.5","L3","L2/L3 均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
   for(const group of [...groups.values()].slice(-20)){
     const row=document.createElement("tr"),name=document.createElement("td");name.textContent=group.id+" / "+(group.track==="model"?"模型对照":"完整玩家");row.append(name);
-    let total=0,count=0;
-    for(let level=1;level<=8;level++){const cell=document.createElement("td"),r=group.levels[level],v=r?.statistics?.score;
+    for(const level of [2,2.5,3]){const cell=document.createElement("td"),r=group.levels[level],v=r?.statistics?.score;
       cell.textContent=typeof v==="number"?(v*100).toFixed(1)+"%":"—";
-      if(typeof v==="number"){total+=v;count++;cell.title="胜/和/负 "+[r.statistics.wins,r.statistics.draws,r.statistics.losses].map(show).join("/")+" · "+(r.statistics.games??20)+"局";}row.append(cell);}
-    const score=document.createElement("td");score.textContent=count===8?(total/8*100).toFixed(1)+"%":"部分测试 "+count+"/8";row.append(score);table.append(row);
+      if(typeof v==="number")cell.title="胜/和/负 "+[r.statistics.wins,r.statistics.draws,r.statistics.losses].map(show).join("/")+" · "+(r.statistics.games??20)+"局";row.append(cell);}
+    const score=document.createElement("td"),l2=group.levels[2]?.statistics?.score,l3=group.levels[3]?.statistics?.score;
+    score.textContent=typeof l2==="number"&&typeof l3==="number"?((l2+l3)/2*100).toFixed(1)+"%":"待 L2/L3 齐备";row.append(score);table.append(row);
   }target.append(table);
 }
 function renderStatus(s,x){

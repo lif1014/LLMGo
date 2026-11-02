@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Protected multi-level chess evaluation. Run inside a GPU job, not devspace."""
+"""Protected L2/L2.5/L3 validation. Run inside a GPU job."""
 from __future__ import annotations
 import argparse
 import json
@@ -18,14 +18,14 @@ def main(argv=None):
     p.add_argument("--model-path", required=True)
     p.add_argument("--candidate-root", type=Path, help="Editable research checkout; ignored for model track")
     p.add_argument("--track", choices=("player", "model", "both"), default="player")
-    p.add_argument("--levels", default="1,2,3,4,5,6,7,8", help="Subset is a probe, never a full score")
+    p.add_argument("--levels", default="2,3", help="L2 and L3 anchor score; L2.5 is diagnostic")
     p.add_argument("--batch-index", type=int, default=0)
     p.add_argument("--gpus", type=int, default=8, choices=range(1,9), help="Parallel Qwen replicas; allocate this many GPUs in the job")
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args(argv)
     if args.batch_index < 0:
         p.error("batch-index must be nonnegative")
-    plan = evaluation_plan({"levels":[int(x) for x in args.levels.split(",")],
+    plan = evaluation_plan({"levels":[float(x) if '.' in x else int(x) for x in args.levels.split(",")],
                             "tracks":["player", "model"] if args.track=="both" else [args.track]})
     site = load_site(args.site)
     from llmgo.rsi.contracts import inside
@@ -47,8 +47,8 @@ def main(argv=None):
                 "output":str(folder), "model_path":str(Path(args.model_path).resolve()),
                 "expected_model_sha256":identity["sha256"], "skills_path":str(cards) if cards.is_file() else None, "skills_sha256":file_hash(cards) if cards.is_file() else None,
                 "protocol":protocol(spec, site["engine"]), "engine_identity":engine_identity(site["engine"],spec),
-                "seed_schedule":[100000*level+100*args.batch_index+i for i in range(10)],
-                "comparison_id":f"panel-v2:L{level}:b{args.batch_index}"}
+                "seed_schedule":[10000*int(level*10)+100*args.batch_index+i for i in range(10)],
+                "comparison_id":f"validation20:L{level}:b{args.batch_index}"}
             folder.mkdir()
             atomic_json(folder/"evaluation-input.json",payload)
             metrics_path = evaluate(payload)

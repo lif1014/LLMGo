@@ -40,6 +40,6 @@
 
 Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時提交 L2/L3。只有 L2 和 L3 兩檔齊備時才更新可比較的驗證分數。選定成果後，在獨立的 1 GPU job 執行 `scripts/run_final_test.py`，固定 10 局、白黑各 5 局，對手為 DeepSeek Flash non-thinking；所有原始走棋與回覆存於 `var/runs/<實驗ID>/final-test/`。`run_deepseek_loose.py` 是 DeepSeek 對 Fairy 的參考流程，不是 Qwen 對 DeepSeek 的最終測試。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`，只對 DeepSeek API 使用內部白名單代理。
 
-## 同步
+## 研究起點
 
-遠端 `/user/lyh4170/LLMGo!` 是本次遷移的代碼準據。本機 `/home/lif/LLMGo!` 原有未提交改動已存入 Git stash，遷移後的原始碼同步到 GitHub、本機與遠端。已啟動的 job 使用提交時的凍結快照；live 倉庫更新不會熱改已有實驗。
+目前 Meta-Agent 的起點是新 campaign `chess-grpo-v1` 的 `BASELINE`：學生模型為 Qwen3.5-4B，固定 Chess-R1 非思考 prompt；先做 L2、L3 各 10 局基線，之後才能提出 Phase 1 RL 研究與 L2～L3 驗證。至今沒有啟動正式訓練。已啟動的 job 使用提交時的凍結快照；live 倉庫更新不會熱改已有實驗。

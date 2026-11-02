@@ -2,8 +2,6 @@
 
 ## 來源與資料
 
-本次對照的遠端 release 是 `/user/lyh4170/rsi_experiments/chess-r1-grpo-20261029/releases/a267c6e88a27e94c`。`scripts/train_chess_r1.py` 在同一 GPU job 啟動 CPU JAX 270M oracle，使用 `llmgo.training.chess_r1_verl.ChessR1TaskRunner` 呼叫 verl 0.8 的 `run_ppo`，其 advantage estimator 是 `grpo`。`run_ppo` 是 verl 的訓練器入口名稱。
-
 學生原始權重在 `/user/liyaohu4170/models/Qwen3.5-4B`（來源只讀），本專案核驗副本在 `assets/models/Qwen3.5-4B`。270M 權重原址是 `/user/lyh4170/models/chess-r1/searchless-270M-relayed/extracted/270M`，副本在 `assets/models/searchless-270M/270M`。上游程式在 `assets/vendor/Chess-R1-830c0597`。資料原址是 Chess-R1 實驗的 `data/boxed-nonthinking-v2`，副本在 `assets/datasets/chess-r1/boxed-nonthinking-v2`。
 
 預設 prompt 要求唯一合法 SAN 步，以 `\\boxed{Nf3}` 作答，關閉 thinking。response 上限 16,384 tokens；temperature 1、top-p 0.95、top-k 20、presence penalty 1.5、repetition penalty 1。每題 8 個回答，GRPO 同題分組；過長的組整組拒收並補新批次。reward = 270M 的 Q(s,a) + 0.1 格式 + 0.1 英文；Lichess 標準答案僅作驗證指標。

@@ -18,7 +18,7 @@
 
 ## 評測與 Meta-Agent
 
-開發驗證固定 Fairy L2（skill -5、depth 5、0.10 秒）、L2.5（skill -3、depth 5、0.125 秒）、L3（skill -1、depth 5、0.15 秒），默認 Chess-R1 非思考 prompt。L2/L3 基線每檔 10 局，候選每檔 20 局；L2.5 可作中間難度診斷，完整 L2/L3 才計算可比較的錨點分數。`ChessEpisode` 每手寫 `events.jsonl`，含初始局面、模型消息和原文、學生步、對手步、forced move、fallback 和終局。Meta-Agent 可在候選根目錄建立 `harness.py`，提供 `build_messages(fen, legal_san, skills, default_messages)`，並寫 `skills.json`。候選 prompt builder 在隔離子行程執行；正式棋步仍由 Qwen 輸出。每輪研究應讀輸棋的全部步驟。
+開發驗證固定 Fairy L2（skill -5、depth 5、0.10 秒）、L2.5（skill -3、depth 5、0.125 秒）、L3（skill -1、depth 5、0.15 秒）。L2/L3 基線每檔 10 局，候選每檔 20 局；L2.5 可作中間難度診斷，完整 L2/L3 才計算可比較的錨點分數。`ChessEpisode` 每手寫 `events.jsonl`，含初始局面、模型消息和原文、學生步、對手步、forced move、fallback 和終局。Phase 1 只允許 RL 研究，固定 Chess-R1 非思考 prompt；`skills.json` 為空，不能新增 `harness.py`。每輪研究應讀輸棋的全部步驟。具體規則與 Phase 2 設計見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。
 
 最終測試保留給選定的成果，使用 `scripts/run_final_test.py` 讓 Qwen 與 DeepSeek Flash non-thinking 對戰 10 局，白黑各五局。DeepSeek 走法沿用 `run_deepseek_loose.py` 的無歧義 boxed SAN 解析和代理設定；Qwen 仍使用嚴格 Chess-R1 格式。失效回覆使用有記錄的隨機合法步，雙方原始回覆、每步局面和終局寫入 `var/runs/<實驗ID>/final-test`。不要以此測試結果調整 Meta-Agent 的研究提案。
 

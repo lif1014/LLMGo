@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from llmgo.rsi.contracts import atomic_json
 from llmgo.rsi.evaluator import candidate_messages
+from llmgo.rsi.controller import Controller
 from llmgo.server.app import app
 from llmgo.training.chess_r1 import messages, extract_answer
 from llmgo.training.chess_r1_oracle import score_answer
@@ -65,6 +66,54 @@ def test_candidate_harness_and_skills_are_optional(tmp_path):
     payload['skills_path']=str(skills)
     adapted=candidate_messages(payload,chess.STARTING_FEN,chess.Board(),default)
     assert adapted[0]['content']=='Find a tactic' and 'e4' in adapted[1]['content']
+
+
+def test_phase1_keeps_prompt_fixed_but_accepts_rl_edits(tmp_path):
+    repo = tmp_path/'repo'
+    prompt = repo/'src/llmgo/training/chess_r1.py'
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text('FIXED_PROMPT = True\n')
+    rl = repo/'src/llmgo/training/chess_r1_verl.py'
+    rl.write_text('ALGORITHM = "grpo"\n')
+    recipe = repo/'configs/grpo/default.json'
+    recipe.parent.mkdir(parents=True)
+    recipe.write_text(json.dumps({'enable_thinking':False,'answer_protocol':'chess-r1-boxed-san-v2'}))
+    site = {'user_root':str(tmp_path),'repo':str(repo),'campaign_root':str(tmp_path/'campaigns'),
+            'worktree_root':str(tmp_path/'workspaces'),'base_model':str(tmp_path/'model'),
+            'engine':'fixture','gpu_count':1}
+    controller = Controller.create(site, 'phase1')
+    controller.state['phase'] = 'PLANNING'
+    workspace = controller.workspace()
+    (workspace/'harness.py').write_text('def build_messages(*args): return []\n')
+    import pytest
+    with pytest.raises(ValueError, match='harness'):
+        controller.prepare(workspace/'proposal.json')
+    (workspace/'harness.py').unlink()
+    (workspace/'skills.json').write_text('[{"text":"change prompt"}]')
+    with pytest.raises(ValueError, match='empty skills'):
+        controller.prepare(workspace/'proposal.json')
+    (workspace/'skills.json').write_text('[]')
+    prompt_copy = workspace/'src/llmgo/training/chess_r1.py'
+    prompt_copy.write_text('FIXED_PROMPT = False\n')
+    with pytest.raises(ValueError, match='freezes the Chess-R1 prompt'):
+        controller.prepare(workspace/'proposal.json')
+    prompt_copy.write_text(prompt.read_text())
+    (workspace/'src/llmgo/training/chess_r1_verl.py').write_text('ALGORITHM = "new_rl"\n')
+    candidate = controller.prepare(workspace/'proposal.json')
+    assert candidate['id'] == 'r000001'
+
+
+def test_phase1_evaluator_rejects_harness_and_uses_default_messages(tmp_path):
+    source = tmp_path/'candidate'
+    source.mkdir()
+    default = messages(chess.STARTING_FEN, enable_thinking=False)
+    payload = {'candidate_source':{'root':str(source)},'skills_path':None,
+               'research_scope':'phase1_rl_only'}
+    assert candidate_messages(payload,chess.STARTING_FEN,chess.Board(),default) == default
+    (source/'harness.py').write_text('def build_messages(*args): return []\n')
+    import pytest
+    with pytest.raises(ValueError, match='Phase 1 evaluation'):
+        candidate_messages(payload,chess.STARTING_FEN,chess.Board(),default)
 
 
 def test_run_api_reads_remote_layout_and_every_game_step(tmp_path,monkeypatch):

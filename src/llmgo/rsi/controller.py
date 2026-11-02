@@ -14,6 +14,7 @@ from .meta_protocol import MetaFailure
 from .research_control import ResearchPaused, read_control, require_research
 
 RESEARCH_VERSION = "chess-grpo-validation-v1"
+PHASE1_SCOPE = "phase1_rl_only"
 
 
 class Controller:
@@ -52,6 +53,7 @@ class Controller:
         initial = {"id": "initial", "model_path": site["base_model"], "model_sha256": None,
                    "source": initial_source, "skills_path": str(cards), "skills_sha256": file_hash(cards)}
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
+                 "research_scope": PHASE1_SCOPE,
                  "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
                  "phase": "BASELINE", "baseline_games_per_level": 10, "baseline_levels": [2,3],
                  "round": 0, "active_job": None, "jobs": {},
@@ -121,6 +123,7 @@ class Controller:
         run_output = inside(self.site["user_root"],
                             Path(self.site["repo"])/"var/runs"/f"{self.state['campaign_id']}-{job_id}")
         payload = {"schema_version": SCHEMA, "campaign_id": self.state["campaign_id"], "job_id": job_id,
+                   "research_scope": self.state.get("research_scope", PHASE1_SCOPE),
                    "kind": kind, "role": role, "candidate_id": candidate["id"], "site": self.site,
                    "source": self.state["source"], "candidate_source": candidate["source"],
                    "output": str(run_output), "model_path": candidate["model_path"],
@@ -245,7 +248,7 @@ class Controller:
         folder = inside(self.site["user_root"], Path(self.site["worktree_root"])/self.state["campaign_id"]/f"round-{self.state['round']:06d}")
         parent = self.state["working"]
         source_snapshot(Path(parent["source"]["root"]), folder)
-        # Meta may add skills or its own harness in the editable workspace.
+        # Preserve the parent cards so phase 1 can verify that they stay empty.
         if parent.get("skills_path"):
             shutil.copy2(parent["skills_path"], folder/"skills.json")
         atomic_json(folder/"context.json", self.memory.context())
@@ -266,6 +269,8 @@ class Controller:
         workspace = Path(self.state["workspace"]) if self.state.get("workspace") else path.parent
         if path.parent != workspace:
             raise ValueError("Use the registered research workspace")
+        if self.state.get("research_scope", PHASE1_SCOPE) == PHASE1_SCOPE:
+            self._validate_phase1_workspace(workspace)
         proposal = read_json(path)
         digest(proposal)  # Reject non-JSON/nonfinite metadata before creating frozen artifacts.
         if not isinstance(proposal.get("hypothesis"), str) or not proposal["hypothesis"].strip():
@@ -333,6 +338,24 @@ class Controller:
                            event_id="hypothesis-"+candidate["id"])
         self.save()
         return candidate
+
+    def _validate_phase1_workspace(self, workspace):
+        """Keep the chess prompt and candidate prompt inputs fixed in phase 1."""
+        if (workspace/"harness.py").exists():
+            raise ValueError("Phase 1 forbids candidate harness.py")
+        cards = workspace/"skills.json"
+        if not cards.is_file() or read_json(cards) != []:
+            raise ValueError("Phase 1 requires an empty skills.json")
+        initial = self.state["initial"]["source"]["files"]
+        for relative in ("src/llmgo/training/chess_r1.py",):
+            original = initial.get(relative)
+            if original is not None and file_hash(workspace/relative) != original:
+                raise ValueError(f"Phase 1 freezes the Chess-R1 prompt and answer protocol: {relative}")
+        config = workspace/"configs/grpo/default.json"
+        if config.is_file():
+            recipe = read_json(config)
+            if recipe.get("enable_thinking") is not False or recipe.get("answer_protocol") != "chess-r1-boxed-san-v2":
+                raise ValueError("Phase 1 requires non-thinking boxed SAN training")
 
     def _evaluate_next(self, candidate, plan, role):
         schedule = [(t,l) for t in plan["tracks"] for l in plan["levels"]]

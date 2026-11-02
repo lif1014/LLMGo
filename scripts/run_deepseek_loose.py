@@ -12,7 +12,7 @@ KEY=Path(os.environ.get('DEEPSEEK_KEY_FILE','/user/lyh4170/.config/llmgo/deepsee
 RELEASE=ROOT
 PROXY_URL=os.environ.get('DEEPSEEK_PROXY_URL','http://whitelist-proxy.cybertron.svc.cluster.local:7891')
 sys.path.insert(0,str(REPO/'src'))
-from llmgo.training.game import ChessEpisode
+from llmgo.rsi.game import ChessEpisode
 from llmgo.rsi.ladder import opponent
 import importlib.util
 spec=importlib.util.spec_from_file_location('eval_deepseek_protocol',RELEASE/'src/llmgo/training/chess_r1.py')

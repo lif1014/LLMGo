@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from llmgo.training.chess_r1 import messages, extract_answer, ANSWER_PROTOCOL
-from llmgo.training.game import ChessEpisode
+from llmgo.rsi.game import ChessEpisode
 from llmgo.runtime.uci_player import UciPlayer
 from .contracts import atomic_json, digest, file_hash, model_identity, read_json, validate_protocol, utc, inside
 from .ladder import batch_stats
@@ -102,6 +102,10 @@ def request_completion(url, protocol, prompt):
 def candidate_messages(payload, fen, board, default):
     """Let a frozen candidate add its own prompt and skills outside the referee process."""
     source = Path(payload['candidate_source']['root'])
+    if payload.get('research_scope') == 'phase1_rl_only':
+        if (source/'harness.py').exists() or payload.get('skills_path') and read_json(payload['skills_path']) != []:
+            raise ValueError('Phase 1 evaluation requires the frozen Chess-R1 prompt and empty skills')
+        return default
     if not (source/'harness.py').is_file():
         return default
     skills = read_json(payload['skills_path']) if payload.get('skills_path') else []

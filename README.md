@@ -1,6 +1,6 @@
 # LLMGo! · Chess-R1 GRPO
 
-遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Meta-Agent 可研究 RL 和 skills，禁止 SFT。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。
+遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Phase 1 Meta-Agent 只研究 RL，固定 prompt、空 skills、無 harness，禁止 SFT；Phase 2 才開放 RL 和 harness 共同研究。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。詳見 [研究階段規則](docs/phase1-rl-scope.md) 和 [訓練目錄逐檔審核](docs/training-module-audit.md)。
 
 ## 目錄
 

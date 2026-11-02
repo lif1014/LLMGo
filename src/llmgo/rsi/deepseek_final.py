@@ -10,7 +10,7 @@ from pathlib import Path
 import chess
 
 from llmgo.training.chess_r1 import extract_answer, messages
-from llmgo.training.game import ChessEpisode
+from llmgo.rsi.game import ChessEpisode
 from .contracts import atomic_json, file_hash, inside, model_identity, read_json, utc
 from .deepseek_client import extract_loose_answer, request as deepseek_request
 from .evaluator import candidate_messages, request_completion

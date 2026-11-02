@@ -284,7 +284,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     site = load_site(args.site)
     name = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
-    output = Path(site["user_root"]) / "rsi_readiness/meta-connection" / name
+    output = Path(site["repo"]) / "var/readiness/meta-connection" / name
     try:
         result = check_connection(site, output, offline=args.offline, timeout=args.timeout, sandbox_check=args.sandbox_check, tools_check=args.tools_check)
     except Exception as error:

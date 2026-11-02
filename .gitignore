@@ -5,3 +5,8 @@ teacher_assets/
 runs/**/events.jsonl
 runs/**/events.json
 runs/**/.short_events.*.tmp
+assets/models/
+assets/datasets/
+assets/engines/
+var/
+UPLOAD-MANIFEST.json

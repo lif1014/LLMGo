@@ -50,8 +50,15 @@ class JobExecutor:
                 or payload["job_id"] != job["id"] or payload["site"] != self.site
                 or payload["campaign_id"] != self.root.name):
             raise ValueError("Executor manifest identity differs from registered job")
-        inside(self.root, payload["output"])
+        self._owned_output(payload)
         return payload
+
+    def _owned_output(self, payload):
+        output = inside(self.site['user_root'], payload['output'])
+        runs = Path(self.site['repo'])/'var/runs'
+        if not output.is_relative_to(runs) and not output.is_relative_to(self.root):
+            raise ValueError('Worker output is outside the project run directory')
+        return output
 
     def report(self, job):
         path = self.report_path(job)
@@ -132,12 +139,13 @@ class JobExecutor:
             return report
 
     def _collect_result(self, payload, report):
-        path = inside(self.root, Path(payload["output"]) / "result.json")
+        output = self._owned_output(payload)
+        path = inside(output, output / "result.json")
         if not path.is_file():
             report.update(status="waiting_for_artifact", summary="Platform succeeded; waiting for worker result on shared storage")
             return
         result = read_json(path)
-        artifact = inside(self.root, result["artifact"])
+        artifact = inside(output, result["artifact"])
         if result["manifest_sha256"] != report["manifest_sha256"] or file_hash(artifact) != result["artifact_sha256"]:
             self.memory.append("artifact_invalid", {"job_id": report["job_id"], "result_path": str(path)})
             report.update(status="artifact_invalid", summary="Worker result identity/hash mismatch; retain evidence and do not score it")

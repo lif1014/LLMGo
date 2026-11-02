@@ -12,8 +12,6 @@ from pathlib import Path
 
 SCHEMA = 1
 REPO = Path(__file__).resolve().parents[3]
-BT4_SHA256 = "e6ada9d6c4a769bfab3aa0848d82caeb809aa45f83e6c605fc58a31d21bdd618"
-MODEL_NAME = "BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz"
 
 
 def utc() -> str:
@@ -91,10 +89,12 @@ def load_site(path: str | Path) -> dict:
         raise ValueError("Only beijing / model-autosft / NORMAL is authorized")
     if site["user_root"] != "/user/lyh4170":
         raise ValueError("Remote writable root must be /user/lyh4170")
-    for key in ("repo", "codex_home", "campaign_root", "worktree_root", "checkpoint_root", "reward_weights", "engine", "lc0_bin", "codex_bin"):
+    for key in ("repo", "codex_home", "campaign_root", "worktree_root", "checkpoint_root", "engine", "codex_bin"):
         inside(site["user_root"], site[key])
     if type(site.get("gpu_count")) is not int or not 1 <= site["gpu_count"] <= 8:
         raise ValueError("Default worker gpu_count must be an integer from 1 to 8")
+    if type(site.get('eval_games_per_gpu',2)) is not int or not 1 <= site.get('eval_games_per_gpu',2) <= 8:
+        raise ValueError('eval_games_per_gpu must be an integer from 1 to 8')
     if site.get("executor_mode", "embedded") not in {"embedded", "external"}:
         raise ValueError("executor_mode must be embedded or external")
     if site.get("runtime_root"):
@@ -118,7 +118,7 @@ def load_site(path: str | Path) -> dict:
 def worker_environment(site: dict) -> dict:
     root = Path(site["user_root"])
     env = os.environ.copy()
-    runtime = inside(root, site.get("runtime_root", root/"llmgo-rsi-runtime-20261022"))
+    runtime = inside(root, site.get("runtime_root", Path(site["repo"])/"var/runtime"))
     # Use each variable for its documented purpose; never change HOME.
     paths = {
         "TMPDIR": runtime / "tmp", "XDG_CACHE_HOME": runtime / "cache",
@@ -137,12 +137,11 @@ def worker_environment(site: dict) -> dict:
 def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False) -> dict:
     games = 10 if baseline else 20
     result = {
-        "game": "chess", "framework": "harness", "enable_thinking": True,
-        "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 32768,
-        "model_name": "Qwen3.5-4B", "temperature": 0.9, "top_p": 0.95, "top_k": 20,
-        "presence_penalty": 0.0, "seed": seed, "engine": engine,
-        "harness": {"move_tokens": 32768, "attempts_per_choice": 2, "request_timeout_sec": 540.0,
-                    "turn_timeout_sec": 1800.0, "skills_limit": 2, "history_plies": 12},
+        "game": "chess", "framework": "chess-r1", "answer_protocol":"chess-r1-boxed-san-v2",
+        "enable_thinking": False,
+        "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 16384,
+        "model_name": "Qwen3.5-4B", "temperature": 1.0, "top_p": 0.95, "top_k": 20,
+        "presence_penalty": 1.5, "repetition_penalty": 1.0, "seed": seed, "engine": engine,
         "opponent": opponent, "skill": opponent["skill"], "depth": opponent.get("depth"),
         "movetime_sec": opponent.get("movetime_sec"), "nodes": opponent.get("nodes"),
     }
@@ -153,8 +152,9 @@ def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False) -> d
 
 def validate_protocol(p: dict, *, baseline=False) -> None:
     games = 10 if baseline else 20
-    required = {"game": "chess", "framework": "harness", "enable_thinking": True,
-                "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 32768}
+    required = {"game": "chess", "framework": "chess-r1",
+                "answer_protocol":"chess-r1-boxed-san-v2", "enable_thinking": False,
+                "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 16384}
     for key, value in required.items():
         if p.get(key) != value or type(p.get(key)) is not type(value):
             raise ValueError(f"Official RSI protocol requires {key}={value!r}")

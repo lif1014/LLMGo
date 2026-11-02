@@ -35,9 +35,7 @@ def main(argv=None):
     output.mkdir(parents=True)
     protected = source_snapshot(REPO, output/"protected-source")
     candidate = source_snapshot(args.candidate_root or REPO, output/"candidate-source")
-    cards = Path(candidate["root"])/"src/llmgo/harness/skills/cards.json"
-    if (Path(candidate["root"])/"skills.json").is_file():
-        cards = Path(candidate["root"])/"skills.json"
+    cards = Path(candidate["root"])/"skills.json"
     identity = model_identity(args.model_path)
     rows = []
     for track in plan["tracks"]:

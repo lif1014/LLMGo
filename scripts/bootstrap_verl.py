@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a dedicated verl PPO environment, preserving the image GPU stack."""
+"""Install the dedicated verl environment used by Chess-R1 GRPO."""
 import argparse
 import fcntl
 import hashlib

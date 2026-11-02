@@ -1,8 +1,0 @@
-{
-  "move_tokens": 32768,
-  "attempts_per_choice": 2,
-  "request_timeout_sec": 540.0,
-  "turn_timeout_sec": 1800.0,
-  "skills_limit": 2,
-  "history_plies": 12
-}

@@ -36,7 +36,7 @@ function usage(value){const u=value.total||{},last=value.last||{};
       " · 推理 "+show(u.reasoningOutputTokens)+" tokens；最近请求总计 "+show(last.totalTokens)+"。仅使用服务报告值。";
 }
 function consume(row,source){
-  const e=row.event,target=source==="executor"?"executor-events":e.channel==="coach"?"coach":"memory";
+  const e=row.event,target=source==="executor"?"executor-events":"coach";
   if(e.kind==="evaluation")state.evaluationRefresh=0;
   if(e.usage&&state.streams[source].follow)usage(e.usage);
   const merged=e.stream_key&&e.item_id||["heartbeat","usage"].includes(e.category);
@@ -62,7 +62,7 @@ async function readActivity(source,older=false){
   const data=await json(api("/activity?"+query));if(generation!==state.generation||s!==state.streams[source]||request!==s.request)return;
   const status=source==="research"?"coach-window":"executor-window";
   if(!data.available){el(status).textContent=data.note;return;}
-  if(older){s.follow=false;for(const target of source==="research"?["coach","memory"]:["executor-events"])clearFeed(target);}
+  if(older){s.follow=false;for(const target of source==="research"?["coach"]:["executor-events"])clearFeed(target);}
   for(const row of data.events)consume(row,source);
   if(older)s.before=data.older_cursor;
   else{if(data.events.length){s.recent=s.recent.concat(data.events.map(row=>row.ordinal)).slice(-80);s.before=s.recent[0];}s.cursor=data.cursor;}
@@ -70,7 +70,7 @@ async function readActivity(source,older=false){
   if(older||data.events.length)el(source==="research"?"coach-older":"executor-older").disabled=older?!data.has_older:!(s.before>1);
 }
 async function returnLive(source){
-  state.streams[source]=freshStream();for(const target of source==="research"?["coach","memory"]:["executor-events"])clearFeed(target);
+  state.streams[source]=freshStream();for(const target of source==="research"?["coach"]:["executor-events"])clearFeed(target);
   try{await readActivity(source);}catch(e){el("connection").textContent=e.message;}
 }
 function board(fen,move){
@@ -231,7 +231,7 @@ function renderJobContext(){
   if(purgedJob(job)){el("job-context").textContent="任务 "+state.job+" 已清理，仅保留编号占位；原始参数和对局文件已移出当前研究。";return;}
   const expected=g?.games??(state.fileData?.job===state.job?state.fileData.data.formal_games:null);
   el("job-context").textContent="选中任务："+(state.job||"—")+" · 平台ID "+show(job.task_id)+" · "+roleName(job.role)+"\n"+
-    opponentText(state.job)+"\n候选："+show(p?.candidate_id??job.candidate_id)+" · "+((p?.track??job.track)==="model"?"模型对照":"完整玩家（模型+Harness+skills）")+
+    opponentText(state.job)+"\n候选："+show(p?.candidate_id??job.candidate_id)+" · "+((p?.track??job.track)==="model"?"模型对照":"完整玩家（模型与研究配置）")+
     "\n计划："+show(expected)+"局"+(typeof expected==="number"?"，白黑各"+expected/2+"局":"")+" · 最多 "+show(g?.max_plies??200)+"个半回合（双方合计）"+
     "\n有效完成："+(s.available?s.completed:"—")+" · 胜/和/负："+(s.available?[s.wins,s.draws,s.losses].join("/"):"—")+" · 胜率 "+percent(s.winRate)+" · 得分率 "+percent(s.score)+
     "\n"+(s.formal?"结果已正式收集。":"暂时统计，整批完成并收集后才有正式成绩。")+
@@ -265,8 +265,10 @@ async function files(generation){
   const p=data.progress;el("worker-state").textContent="查看任务："+job+" · "+opponentText(job)+"\n阶段："+(p?.stage||"尚无阶段记录")+"\n"+
     (p?.message||"旧版本/尚未启动的Worker可能没有progress.json，按需查看已有日志。")+"\n课程局面："+show(p?.curriculum_records)+
     (p?.backend?"\n训练："+p.backend+" · 批次："+show(p?.batch)+" · 采样："+show(p?.sampled)+" · 评分："+show(p?.labeled)+" · 更新："+show(p?.updates):"")+
-    (p?.parallelism?"\n评测GPU副本："+p.parallelism+"\n"+(p.slots||[]).map(s=>"GPU "+s.gpu+" · "+s.stage+" · 棋局 "+show(s.game_index)+" · 尝试 "+s.attempt).join("\n"):"")+
-    (p?.total_steps?"\nverl PPO："+p.step+"/"+p.total_steps+" · Actor GPU："+p.actor_gpus:"")+
+    (p?.parallelism?"\n评测GPU副本："+(p.replica_count??p.parallelism)+" · 对局并发："+p.parallelism+
+      (p.games_per_gpu?" · 每副本最多"+p.games_per_gpu+"局":"")+"\n"+
+      (p.slots||[]).map(s=>"GPU "+s.gpu+(s.lane!=null?" / 并发位"+(s.lane+1):"")+" · "+s.stage+" · 棋局 "+show(s.game_index)+" · 尝试 "+s.attempt).join("\n"):"")+
+    (p?.total_steps?"\n训练更新："+p.step+"/"+p.total_steps+" · Actor GPU："+p.actor_gpus:"")+
     "\n评测已落盘："+data.game_results+"/"+data.formal_games+"局\n阶段时间："+date(p?.updated);
   el("file-status").textContent=data.files.length+"个已存在文件 · 只在点击时读正文";
   const signature=JSON.stringify(data.files.map(f=>[f.path,f.bytes]));if(el("job-files").dataset.signature===signature)return;
@@ -296,7 +298,7 @@ function excerpt(value){
 }
 function traceRow(r,row,source){
   const ref=row.event.raw_ref;
-  return {...row,path:r.folder+"/"+(ref?"events.jsonl":source),offset:ref?.offset??row.offset,length:ref?.length??row.length};
+  return {...row,apiBase:r.info.apiBase,path:r.folder+"/"+(ref?"events.jsonl":source),offset:ref?.offset??row.offset,length:ref?.length??row.length};
 }
 function keepTrace(turn,row){
   if(turn.events.some(old=>old.path===row.path&&old.offset===row.offset))return;
@@ -361,7 +363,8 @@ function playbackControls(){
 function renderGame(r){
   if(state.viewer!==r)return;
   const frame=r.frames[r.index],view=r.follow?(r.pending||r.latest):(frame?.view||blankTurn());
-  if(frame){board(frame.position.fen,frame.position.last_move?.uci);
+  if(frame){const signature=frame.position.fen+":"+(frame.position.last_move?.uci||"");
+    if(r.boardSignature!==signature){board(frame.position.fen,frame.position.last_move?.uci);r.boardSignature=signature;}
     el("game-state").textContent=(r.follow?"直播":"复盘")+" · "+frame.label+" · 轮到"+seatName(frame.position.side)+(frame.position.in_check?"，正在被将军":"");}
   el("student-seat").textContent="学生 · 执"+seatName(r.info.model_seat);
   el("student-prompt").textContent=view.prompt;el("thinking").textContent=view.reasoning;el("student-output").textContent=view.content;
@@ -369,7 +372,7 @@ function renderGame(r){
   if(r.traceSignature!==signature){r.traceSignature=signature;clearFeed("student-events");
     for(const row of view.events){const e=row.event;detail("student-events",e.type+" "+(e.status||"")+" "+(e.tool||e.reason||e.finish_reason||""),e,row);}}
   const s=r.summary;
-  el("game-summary").textContent="对局："+r.info.id+"\n任务："+gameJob(r.info)+" · "+opponentText(gameJob(r.info))+"\n学生执"+seatName(r.info.model_seat)+" · "+studentResult(r.info)+"\n"+(s?
+  el("game-summary").textContent="对局："+r.info.id+"\n任务："+(r.info.task_label||gameJob(r.info))+" · "+(r.info.opponent_text||opponentText(gameJob(r.info)))+"\n学生执"+seatName(r.info.model_seat)+" · "+studentResult(r.info)+"\n"+(s?
     "结果："+show(s.result)+" / "+show(s.result_reason)+"\n模型选步："+show(s.model_decisions)+" · 强制步："+show(s.forced_moves)+
     "\n随机后备："+show(s.random_moves)+" · 请求："+show(s.request_count)+"\n生成："+show(s.completion_tokens)+" tokens"+"\n后备原因："+JSON.stringify(s.fallback_reasons||{}):"尚无最终结果；显示已记录的局面与请求");
   playbackControls();
@@ -391,12 +394,13 @@ async function readGame(r){
   try{
     for(let i=0;i<8;i++){
       const cursor=r.cursor,view=r.source==="compact"?"compact":"full";
-      const data=await json(api("/game-events?folder="+encodeURIComponent(r.folder)+"&view="+view+"&cursor="+cursor+"&limit=200"));
+      const suffix="/game-events?folder="+encodeURIComponent(r.folder)+"&view="+view+"&cursor="+cursor+"&limit=200";
+      const data=await json(r.info.apiBase?r.info.apiBase+suffix:api(suffix));
       if(state.viewer!==r||r.generation!==state.generation)return;
       const source=data.source||"events.jsonl";
       for(const row of data.events)ingestGame(r,row,source);
       r.cursor=data.cursor;if(data.raw_cursor!=null)r.rawCursor=Math.max(r.rawCursor,data.raw_cursor);
-      more=Boolean(data.more)&&r.cursor>cursor;
+      more=Boolean(data.more)&&(r.cursor>cursor||data.indexing===true);
       if(r.follow)r.index=Math.max(0,r.frames.length-1);
       if(!more&&r.source==="compact"&&source==="short_events.jsonl"){
         // Compact logs can advance through candidate-forwarded token copies
@@ -404,7 +408,10 @@ async function readGame(r){
         // so opening the page mid-generation still recovers its visible text.
         r.source="events.jsonl";r.cursor=r.pending?.inflightOffset??r.rawCursor;more=true;
       }else if(source==="events.jsonl")r.source=source;
-      if(!more){r.loading=false;break;}
+      if(!more)r.loading=false;
+      // Show the first page immediately while the remaining history loads.
+      renderGame(r);
+      if(!more)break;
       if(state.paused||document.hidden)break;
     }
     el("game-loading").textContent=r.loading?"正在载入历史…":r.finished?"对局已结束":"每3秒读取新事件";renderGame(r);
@@ -427,9 +434,24 @@ async function student(generation){
   await loadJobManifest(gameJob(r.info));if(generation!==state.generation||state.viewer!==r)return;
   await readGame(r);
 }
+const panelReads=new Map();let refreshSequence=0;
 async function refresh(){
   if(state.busy||state.paused||document.hidden||!state.campaign)return;state.busy=true;const generation=state.generation;
-  const errors=[],panel=async(name,read)=>{if(generation!==state.generation)return;try{return await read();}catch(e){if(e.name!=="AbortError")errors.push(name+"："+e.message);}};
+  const sequence=++refreshSequence,errors=[],reads=[];
+  const panel=(name,read)=>{
+    if(generation!==state.generation)return Promise.resolve();
+    const key=generation+":"+name;
+    if(panelReads.has(key)){const pending=panelReads.get(key);reads.push(pending);return pending;}
+    const pending=Promise.resolve().then(()=>{if(generation===state.generation)return read();}).catch(e=>{if(e.name!=="AbortError")errors.push(name+"："+e.message);})
+      .finally(()=>{if(panelReads.get(key)===pending)panelReads.delete(key);});
+    panelReads.set(key,pending);reads.push(pending);return pending;
+  };
+  // Independent panels begin together and render as their own response arrives.
+  const executorRead=panel("执行器",()=>json(api("/executor")));
+  const archivesRead=panel("历史索引",()=>loadArchivedJobs(generation));
+  for(const source of ["research","executor"])if(state.streams[source].follow)panel(source==="research"?"研究事件":"执行器事件",()=>readActivity(source));
+  if(Date.now()-state.evaluationRefresh>20000)panel("评测结果",async()=>{const rows=await json(api("/evaluations"));if(generation!==state.generation)return;state.evaluations=rows;state.evaluationRefresh=Date.now();curve();results(rows);});
+
   try{const s=await json(api("/overview"));if(generation!==state.generation)return;
     // Older Python Web services can serve this small JSON artifact without a
     // restart. Never read the full campaign or raw research journal on refresh.
@@ -450,78 +472,23 @@ async function refresh(){
       }
       if(generation!==state.generation)return;
     }
-    const x=await panel("执行器",()=>json(api("/executor")));if(generation!==state.generation)return;state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await loadArchivedJobs(generation);if(generation!==state.generation)return;renderStatus(s,x||{});state.totalHours=s.worker_gpu_hours||0;
+    state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await archivesRead;if(generation!==state.generation)return;
+    renderStatus(s,{});state.totalHours=s.worker_gpu_hours||0;if(state.evaluations.length)curve();
+    el("connection").textContent="概览已更新 · 其余内容载入中";el("connection").className="";
+    executorRead.then(x=>{if(generation===state.generation&&sequence===refreshSequence)renderStatus(s,x||{});});
     const latest=[s.active_job,s.latest_job].find(j=>j?.id&&!purgedJob(j)&&!purgedJob(jobInfo(j.id))&&(!state.archivedJobs.has(j.id)||j.id===state.activeJobId))?.id||"";
-    if(state.autoJob&&state.job!==latest){state.job=latest;resetGame();state.autoGame=true;}
+    if(state.autoJob&&state.job!==latest){state.job=latest;if(!state.viewer?.info.apiBase)resetGame();state.autoGame=true;}
     options("job",[{id:"",placeholder:true},...visibleJobs().slice().reverse()],state.job,j=>j.placeholder?"选择任务（当前无选中任务）":j.id+" · "+difficulty(j.id)+" · "+roleName(j.role)+" · "+j.status+" · "+j.candidate_id,j=>j.id);
     renderJobContext();
-    for(const source of ["research","executor"])if(state.streams[source].follow)await panel(source==="research"?"研究事件":"执行器事件",()=>readActivity(source));
-    if(generation!==state.generation)return;
-    if(Date.now()-state.evaluationRefresh>20000)await panel("评测结果",async()=>{const rows=await json(api("/evaluations"));if(generation!==state.generation)return;state.evaluations=rows;state.evaluationRefresh=Date.now();curve();results(rows);});
-    await panel("任务文件",()=>files(generation));await panel("对局",()=>student(generation));await panel("维护任务",()=>maintenance(generation));
-    if(generation===state.generation){el("connection").textContent="最近读取 "+new Date().toLocaleTimeString()+" · 3秒增量刷新"+(errors.length?" · 部分面板读取失败："+errors.join("；"):"");el("connection").className=errors.length?"error":"";}
-  }catch(e){if(generation===state.generation&&e.name!=="AbortError"){el("connection").textContent=e.message;el("connection").className="error";}}
+    panel("任务文件",()=>files(generation));
+    panel("对局",async()=>{
+      if(generation===state.generation)return student(generation);
+    });
+  }catch(e){if(generation===state.generation&&e.name!=="AbortError")errors.push(e.message);}
   finally{state.busy=false;}
-}
-async function maintenance(generation){
-  if(Date.now()-state.maintenanceRefresh<20000)return;state.maintenanceRefresh=Date.now();
-  const read=async path=>{
-    const page=await json(api("/artifact?"+new URLSearchParams({path,offset:"0",length:"32768"})));
-    if(!page.eof)throw Error("维护摘要缺失或超过32KiB");return JSON.parse(page.text);
-  };
-  try{
-    const plan=await read("maintenance/active.json");
-    if(plan.schema_version!==1||!Array.isArray(plan.jobs)||plan.jobs.length>8)throw Error("维护任务清单格式无效");
-    const rows=await Promise.all(plan.jobs.map(async job=>{
-      if(!job.output?.startsWith("maintenance/")||job.output.split("/").includes(".."))throw Error("维护任务路径无效");
-      let progress,health,gameProgress,evaluation=[];
-      try{progress=await read(job.output+"/progress.json");}catch(e){return {job,pending:true};}
-      try{health=await read(job.output+"/training/health.json");}catch(e){/* Evaluation/queued tasks have no PPO health. */}
-      if(progress?.progress_path?.endsWith("game-progress.json")) {try{gameProgress=await read(job.output+"/training/game-progress.json");}catch(e){/* Bounded summary may still be pending. */}}
-      if(job.id.startsWith("eval-"))evaluation=(await Promise.all((job.levels||[2,3]).filter(n=>Number.isInteger(n)&&n>=1&&n<=8).slice(0,8).map(async level=>{
-        try{return {level,...await read(job.output+"/evaluation/L"+level+"/progress.json")};}catch(e){return null;}
-      }))).filter(Boolean);
-      return {job,progress,health,gameProgress,evaluation};
-    }));
-    if(generation!==state.generation)return;renderMaintenance(plan,rows);
-  }catch(e){if(generation===state.generation)el("maintenance-state").textContent="当前未读取到有效维护清单："+e.message;}
-}
-function renderMaintenance(plan,rows){
-  const lines=["验证："+show(plan.run_id)+" · 主研究暂停状态见上方面板"];
-  if(plan.summary)lines.push(plan.summary);
-  el("maintenance-files").replaceChildren();
-  if(plan.comparison_path?.startsWith("maintenance/")&&!plan.comparison_path.split("/").includes("..")){
-    const button=document.createElement("button");button.textContent="完整前后对照报告";button.onclick=()=>openRaw({path:plan.comparison_path,offset:0,length:65536,dynamic:true});el("maintenance-files").append(button);
-  }
-  for(const {job,progress:p,health:h,gameProgress:g,evaluation=[],pending} of rows){
-    const v=h?.validation,q=h?.quality,d=h?.diagnostics;
-    lines.push("\n"+job.id+" · "+show(job.label)+" · 平台ID "+show(job.task_id)+"\n阶段："+
-      (pending?"排队/尚无Worker记录":show(p?.stage))+" / "+show(h?.stage)+" · 更新："+date(h?.updated??p?.updated));
-    if(typeof p?.completed_games==="number")lines.push("完整对局："+p.completed_games+"/"+p.total_games+" · "+show(p.split));
-    if(g?.games)for(const game of g.games.slice(0,32)){
-      lines.push(game.episode_id+" · "+game.student_color+" · 半回合 "+game.plies+" · 学生决策 "+game.decisions+" · 随机后备 "+(game.random_moves||0)+" · "+(game.completed?"终局 "+game.result+" / "+game.reason:"进行中"));
-      if(/^(train|validation)-[0-9]{8}-[0-9]{4}$/.test(game.episode_id))for(const name of ["summary.json","events.jsonl","trajectory.json"]){
-        const button=document.createElement("button"),path=job.output+"/training/episodes/"+game.episode_id+"/"+name;
-        button.textContent=game.episode_id+" · "+name;button.onclick=()=>openRaw({path,offset:0,length:65536,dynamic:true});el("maintenance-files").append(button);
-      }
-    }
-    if(g?.omitted_games)lines.push("其余 "+g.omitted_games+" 局摘要保存在episode目录；此处仅显示最近32局。");
-    if(p?.scenario)lines.push("采样探针场景："+p.scenario+" · 局面数 "+show(p.samples)+" · PPO更新 "+show(p.updates));
-    if(typeof p?.formal_valid_rate==="number")lines.push("探针固定题集合法率："+percent(p.formal_valid_rate));
-    for(const result of evaluation)lines.push("L"+result.level+"实战："+result.completed_games+"/"+result.total_games+"局 · "+show(result.stage)+" · 异常 "+(result.failures?.length||0));
-    if(q)lines.push("本批请求合法率："+percent(q.valid_rate)+"（"+q.valid+"/"+q.samples+"）");
-    if(d)lines.push("reference KL（每手）："+show(d.reference_kl_move_mean)+" · 警戒："+show(d.reference_kl_warning));
-    if(v)lines.push(typeof v.score==="number"?"固定完整局验证 step "+v.step+"：合法率 "+percent(v.valid_rate)+" · 得分率 "+percent(v.score)+" · 胜/和/负 "+show(v.wins)+"/"+show(v.draws)+"/"+show(v.losses)+" · "+(v.passed?"通过":"未通过"):"固定验证 step "+v.step+"："+percent(v.valid_rate)+" · 历史单步TD均值 "+show(v.legal_td_mean)+" · "+(v.passed?"通过":"未通过"));
-    if(typeof v?.random_moves==="number")lines.push("验证随机后备："+v.random_moves+"手 · 占比 "+percent(v.random_rate));
-    if(typeof h?.metrics?.["game/random_moves"]==="number")lines.push("训练随机后备："+h.metrics["game/random_moves"]+"手 · 占比 "+percent(h.metrics["game/random_rate"]));
-    if(h?.selected_checkpoint_step)lines.push("选用checkpoint：step "+h.selected_checkpoint_step+" · 提前停止："+show(h.stopped_early));
-    if(h?.reason)lines.push("停止原因："+h.reason);
-    for(const name of (job.id.startsWith("eval-")?["progress.json","research.log","evaluation/comparison.json"]:job.id.startsWith("pilot")?["progress.json","research.log","probe-summary.json","probe-result.json"]:["progress.json","research.log","training/health.json","training/stability-stop.json","training/checkpoint-selection.json","training/validation-latest.json","training/game-progress.json","training/identity.json"])){
-      const button=document.createElement("button"),path=job.output+"/"+name;
-      button.textContent=job.id+" · "+name;button.onclick=()=>openRaw({path,offset:0,length:65536,dynamic:true});el("maintenance-files").append(button);
-    }
-  }
-  el("maintenance-state").textContent=lines.join("\n");
+  // A slow history/files request must not hold the next overview refresh.
+  await Promise.allSettled(reads);
+  if(generation===state.generation&&sequence===refreshSequence){el("connection").textContent="最近读取 "+new Date().toLocaleTimeString()+" · 3秒增量刷新"+(errors.length?" · 部分面板读取失败："+errors.join("；"):"");el("connection").className=errors.length?"error":"";}
 }
 async function openRaw(row,tail=false){
   state.raw={...row,relative:tail?Math.max(0,row.length-65536):0,generation:state.generation,request:0};el("raw").showModal();await rawPage();
@@ -529,7 +496,8 @@ async function openRaw(row,tail=false){
 async function rawPage(){
   const raw=state.raw;if(!raw)return;const request=++raw.request;
   try{const length=Math.max(1,Math.min(65536,raw.length-raw.relative)),offset=raw.offset+raw.relative;
-    const data=await json(api("/artifact?path="+encodeURIComponent(raw.path||"events.jsonl")+"&offset="+offset+"&length="+length));
+    const suffix="/artifact?path="+encodeURIComponent(raw.path||"events.jsonl")+"&offset="+offset+"&length="+length;
+    const data=await json(raw.apiBase?raw.apiBase+suffix:api(suffix));
     if(state.raw!==raw||raw.generation!==state.generation||request!==raw.request)return;
     if(raw.dynamic&&typeof data.next_offset==="number")raw.length=data.eof?data.next_offset-raw.offset:data.next_offset-raw.offset+65536;
     el("raw-content").textContent=data.text;el("raw-position").textContent=(raw.path||"events.jsonl")+" · 字节 "+raw.relative+"–"+Math.min(raw.length,raw.relative+length)+" / "+raw.length+"（原文区间，可含交错事件）";
@@ -537,12 +505,13 @@ async function rawPage(){
   }catch(e){if(state.raw===raw&&raw.generation===state.generation)el("raw-content").textContent=e.message;}
 }
 function selectCampaign(){
+  if(typeof resetIndependent==="function")resetIndependent();
   for(const request of state.requests)request.abort();state.generation++;state.campaign=el("campaign").value;
   state.maintenanceRefresh=0;
   resetGame();state.games=[];state.jobs=[];state.manifests=new Map();state.fileData=null;state.fileError=null;state.gamesScope=null;state.streams={research:freshStream(),executor:freshStream()};state.job="";state.autoJob=true;state.autoGame=true;state.evaluations=[];state.evaluationRefresh=0;state.raw=null;
   state.archivedJobs=new Set();state.archivesLoaded=false;state.activeJobId=null;el("show-archived-jobs").checked=false;
   el("evaluation-jobs").replaceChildren();el("evaluation-jobs").dataset.signature="";el("job-context").textContent="正在读取任务参数…";el("evaluation-scope").textContent="";
-  for(const id of ["coach","memory","results","student-events","executor-events"])clearFeed(id);
+  for(const id of ["coach","results","student-events","executor-events"])clearFeed(id);
   el("results").dataset.signature="";el("job-files").dataset.signature="";el("job-files").replaceChildren();
   for(const id of ["thinking","coach-live","board","meta-usage"])el(id).replaceChildren();el("raw").close();refresh();
 }
@@ -558,7 +527,7 @@ el("show-archived-jobs").onchange=()=>{
   renderEvaluationJobs();refresh();
 };
 el("game-scope").onchange=()=>{state.autoJob=false;state.autoGame=false;resetGame();refresh();};
-el("game").onchange=async()=>{const game=state.games?.find(g=>g.folder===el("game").value);if(!game)return;state.autoGame=false;state.autoJob=false;const r=openGame(game);await loadJobManifest(gameJob(game));if(state.viewer===r)readGame(r);};
+el("game").onchange=async()=>{const game=state.games?.find(g=>g.folder===el("game").value);if(!game)return;state.autoGame=false;state.autoJob=false;const r=openGame(game);if(!game.apiBase)await loadJobManifest(gameJob(game));if(state.viewer===r)readGame(r);};
 el("follow-game").onclick=()=>{state.autoJob=true;state.autoGame=true;resetGame();refresh();};
 el("replay-prev").onclick=()=>showFrame((state.viewer?.index||0)-1);
 el("replay-next").onclick=()=>showFrame((state.viewer?.index||0)+1);

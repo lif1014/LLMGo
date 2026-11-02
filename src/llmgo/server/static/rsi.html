@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=archived-jobs-1";
+      stylesheet.href = "static/rsi.css?v=grpo-1";
       document.head.append(stylesheet);
     })();
   </script>
@@ -26,11 +26,6 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
-  <section aria-label="PPO维护验证">
-    <h2>PPO 稳定性验证</h2>
-    <p class="muted">独立维护任务与主研究Loop分开。每20秒读取小型状态文件；原始输出按需打开，页面不查询集群。</p>
-    <pre id="maintenance-state">尚未读取维护任务</pre><div id="maintenance-files" class="files"></div>
-  </section>
   <section class="evaluation-panel" aria-label="评测难度与胜负统计">
     <h2>评测难度与胜负统计</h2>
     <label><input id="show-archived-jobs" type="checkbox"> 显示已归档任务</label><span id="archived-job-count" class="muted"></span>
@@ -79,7 +74,6 @@
         <button id="coach-older">较早事件</button><button id="coach-live-button">返回实时</button></div>
       <p id="coach-window" class="muted"></p><details open><summary>最近可见思考/回答（有界窗口）</summary><pre id="coach-live"></pre></details>
       <div id="coach" class="feed"></div></section>
-    <section><h2>Memory · 假设与结论</h2><div id="memory" class="feed"></div></section>
     <section><h2>跨难度实测表现</h2><p>固定 L1–L8，初始基线只测L1–L4，每档10局、共40局；后续评测每档20局。完整玩家和模型对照分开显示。最低档沿用原设置，无通关或自动升档。部分测试不计完整总分；基线样本更少，成绩不是校准Elo。</p>
       <div id="matrix" class="matrix" aria-label="候选与难度成成绩矩阵"></div><p>最近200条单档评测；纵轴为得分率，颜色区分难度。原始历史完整保留。</p>
       <svg id="curve" viewBox="0 0 640 260" role="img" aria-label="候选表现曲线"></svg>
@@ -87,8 +81,19 @@
   </main>
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
   <script>
-    const dashboard = document.createElement("script");
-    dashboard.src = "static/rsi.js?v=purged-task-recovery-4";
-    document.body.append(dashboard);
+    function loadDashboardScript(src, statusId, ready, attempt = 0) {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = ready || (() => {});
+      script.onerror = () => {
+        script.remove();
+        const status = document.getElementById(statusId);
+        if (status) status.textContent = attempt < 3 ? "脚本暂不可读，正在重试…" : "脚本加载失败，请刷新页面重试。";
+        if (attempt < 3) setTimeout(() => loadDashboardScript(src, statusId, ready, attempt + 1), 1000 * (attempt + 1));
+      };
+      document.body.append(script);
+    }
+    loadDashboardScript("static/rsi.js?v=grpo-1", "connection");
   </script>
+<script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 </body></html>

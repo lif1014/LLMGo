@@ -1,0 +1,4 @@
+- name: chess_r1_single_turn_agent
+  _target_: llmgo.training.chess_r1_agent.ChessR1SingleTurnAgentLoop
+  presence_penalty: 1.5
+  repetition_penalty: 1.0

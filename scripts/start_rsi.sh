@@ -2,7 +2,7 @@
 # Start/resume the controller in the user's existing CPU devspace.
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-campaign=chess-autonomous-v2
+campaign=chess-grpo-v1
 web=false
 upgrade=false
 resume=false
@@ -63,7 +63,7 @@ from llmgo.remote.cctl_env import cctl_environment
 s=json.loads(Path(sys.argv[1]).read_text())
 root=Path(s['user_root']).resolve()
 if not root.is_dir():raise SystemExit('用户远端目录不存在；请在devspace执行。')
-paths=[root,Path(s['campaign_root']),Path(s['codex_home']),Path(s.get('runtime_root',root/'llmgo-rsi-runtime-20261022'))]
+paths=[root,Path(s['campaign_root']),Path(s['codex_home']),Path(s.get('runtime_root',Path(s['repo'])/'var/runtime'))]
 for p in paths:
     if not p.resolve().is_relative_to(root) or '\n' in str(p):raise SystemExit('站点路径超出用户目录')
 mode=s.get('executor_mode','embedded')

@@ -2,23 +2,23 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
+import json
 import platform
 import shutil
+import subprocess
+import os
 import traceback
 import time
 import sys
+import urllib.request
 from pathlib import Path
 
-from llmgo.harness.config import HarnessConfig
-from llmgo.harness.player import VllmAsker
-from llmgo.harness.skills import validate_cards
-from llmgo.runner.harness_loop import HarnessRunner, HarnessSeat, EngineSeat
+from llmgo.training.chess_r1 import messages, extract_answer, ANSWER_PROTOCOL
+from llmgo.training.game import ChessEpisode
 from llmgo.runtime.uci_player import UciPlayer
-from llmgo.store.jsonl import TrajectoryStore
 from .contracts import atomic_json, digest, file_hash, model_identity, read_json, validate_protocol, utc, inside
 from .ladder import batch_stats
-from .candidate import CandidateSeat
+from .evaluation_pool import EvaluationReplica
 from .artifacts import verify_source
 
 
@@ -62,7 +62,7 @@ def evaluation_key(payload):
         "candidate_source":payload.get("candidate_source", {}).get("sha256"),
         "reference_source":payload.get("reference_source", {}).get("sha256"),
         "source":payload.get("source", {}).get("sha256"),
-        "evaluator_version":"parallel-v2"})
+        "evaluator_version":"grpo-boxed-san-v1"})
 
 
 def checked_game(path, payload, index):
@@ -77,16 +77,51 @@ def checked_game(path, payload, index):
             or row.get("model_seat") != ("black" if index%2 else "white")):
         raise ValueError(f"Game resume identity/integrity mismatch: {path}")
     # Diagnostics are evidence, not optional caches.
-    for key in ("raw_events", "short_events"):
+    for key in ("raw_events",):
         artifact = inside(payload["site"]["user_root"], row[key])
         if not artifact.is_file() or file_hash(artifact) != row["event_hashes"][key]:
             raise ValueError(f"Completed game evidence changed: {artifact}")
     return row
 
 
+def request_completion(url, protocol, prompt):
+    body = {"model":protocol["model_name"], "messages":prompt,
+            "temperature":protocol["temperature"], "top_p":protocol["top_p"],
+            "top_k":protocol["top_k"], "presence_penalty":protocol["presence_penalty"],
+            "repetition_penalty":protocol["repetition_penalty"],
+            "max_tokens":protocol["max_tokens"],
+            "chat_template_kwargs":{"enable_thinking":protocol["enable_thinking"]},
+            "stream":False}
+    request = urllib.request.Request(url+"/chat/completions",data=json.dumps(body).encode(),
+                                     headers={"Content-Type":"application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request,timeout=600) as response:
+        return json.load(response)
+
+
+def candidate_messages(payload, fen, board, default):
+    """Let a frozen candidate add its own prompt and skills outside the referee process."""
+    source = Path(payload['candidate_source']['root'])
+    if not (source/'harness.py').is_file():
+        return default
+    skills = read_json(payload['skills_path']) if payload.get('skills_path') else []
+    request = {'fen':fen, 'legal_san':[board.san(move) for move in board.legal_moves],
+               'skills':skills, 'default_messages':default}
+    env = {key:value for key,value in os.environ.items() if key not in
+           {'OPENAI_API_KEY','DEEPSEEK_API_KEY','WANDB_API_KEY','CODEX_API_KEY'}}
+    env['CUDA_VISIBLE_DEVICES'] = ''
+    proc = subprocess.run([sys.executable,'-I',str(Path(__file__).with_name('prompt_bridge.py')),str(source)],
+                          input=json.dumps(request),text=True,capture_output=True,cwd=source,env=env,timeout=15)
+    if proc.returncode:
+        raise RuntimeError('Candidate harness failed: '+proc.stderr[-2000:])
+    return json.loads(proc.stdout)
+
+
 async def play_batch(payload, url, cards, output, *, indices=None):
+    del cards
     p = payload["protocol"]
-    cfg = HarnessConfig.from_dict(p["harness"])
+    if p["answer_protocol"] != ANSWER_PROTOCOL:
+        raise ValueError("Expected the frozen Chess-R1 boxed SAN protocol")
     games = []
     for pair_id, seed in enumerate(payload["seed_schedule"]):
         for side in ("white", "black"):
@@ -98,53 +133,54 @@ async def play_batch(payload, url, cards, output, *, indices=None):
             if result_path.exists():
                 games.append(checked_game(result_path, payload, index))
                 continue
-            game_root = output / "harness_runs" / game_id
+            game_root = output / "games" / game_id
             if game_root.exists():
                 # Keep every incomplete trace; each retry starts a fresh, deterministic game.
                 archive = output/"incomplete_games"
                 archive.mkdir(exist_ok=True)
                 number = sum(1 for _ in archive.glob(game_id+".*"))
                 game_root.rename(archive/f"{game_id}.{number:04d}")
-            store = TrajectoryStore(game_root)
-            store.write_config({"id": game_id, "game": "chess", "model_seat": side,
-                                "protocol": p, "candidate_id": payload["candidate_id"],
-                                "skills_sha256": payload["skills_sha256"], "seed": seed,
-                                "comparison_id": payload["comparison_id"]})
-            asker = VllmAsker(url, p["model_name"], tokenizer_path=payload["model_path"],
-                             temperature=p["temperature"], top_p=p["top_p"], top_k=p["top_k"],
-                             presence_penalty=p["presence_penalty"], seed=seed, timeout_sec=cfg.request_timeout_sec)
-            if payload.get("track", "player") == "model":
-                student = HarnessSeat(side, asker, config=cfg, seed=seed, skill_cards=cards)
-            else:
-                student = CandidateSeat(side, asker, payload["candidate_source"]["root"],
-                                        game_root/"candidate.log", seed=seed,
-                                        python=sys.executable)
-            other = "black" if side == "white" else "white"
-            engine = engine_player(other, p["engine"], p["opponent"])
-            seats = {side: student, other: EngineSeat(engine)}
-            runner = HarnessRunner(seats["white"], seats["black"], store, max_plies=200)
-            nodes = []
-
-            async def emit(event):
-                if event["type"] == "engine_search" and event["search"].get("nodes") is not None:
-                    nodes.append(event["search"]["nodes"])
-
+            episode = ChessEpisode(game_id,payload["candidate_id"],side,p["opponent"]["level"],
+                                   p["engine"],game_root,seed=seed)
             start = time.monotonic()
             try:
-                summary = await runner.run(emit)
+                await asyncio.to_thread(episode.advance)
+                while not episode.done:
+                    fen = episode.board.fen()
+                    prompt = candidate_messages(payload,fen,episode.board,
+                                                messages(fen,enable_thinking=p["enable_thinking"]))
+                    request_id = f"{game_id}-{len(episode.board.move_stack)}-{time.time_ns()}"
+                    episode.event("model_request_started",request_id=request_id,messages=prompt)
+                    answer = await asyncio.to_thread(request_completion,url,p,prompt)
+                    choice = answer["choices"][0]
+                    content = choice["message"].get("content") or ""
+                    reasoning = choice["message"].get("reasoning_content") or ""
+                    finish = choice.get("finish_reason")
+                    parsed = extract_answer(content,fen,reasoning=reasoning,finish_reason=finish)
+                    usage = answer.get("usage") or {}
+                    receipt = {"request_id":request_id,"response":content,"raw_output":content,
+                               "reasoning":reasoning,"finish_reason":finish,
+                               "response_tokens":int(usage.get("completion_tokens") or 0),
+                               "failure_reason":parsed.error,"format_valid":parsed.format_valid,
+                               "legal":parsed.legal,"uci":parsed.uci if parsed.legal else None}
+                    episode.event("model_response",**receipt)
+                    await asyncio.to_thread(episode.act,receipt["uci"],[receipt],fallback_reason=parsed.error)
+                summary = read_json(game_root/"summary.json")
+                if not summary["completed"] or summary["aborted"]:
+                    raise RuntimeError("Incomplete game")
+            except Exception as error:
+                if not episode.done:
+                    await asyncio.to_thread(episode.abort,str(error))
+                raise
             finally:
-                engine.close()
-                if isinstance(student, CandidateSeat):
-                    await student.close()
-            if infrastructure_failure(summary):
-                raise RuntimeError(f"Game {game_id} aborted: {summary.get('result_reason')}; see its saved trace")
+                await asyncio.to_thread(episode.engine.close)
+            result = "draw" if summary["result"] == 0 else f"{side}_win" if summary["result"] == 1 else f"{'black' if side == 'white' else 'white'}_win"
             row = {"game_id": game_id, "pair_id": pair_id, "seed": seed, "model_seat": side,
-                   "result": summary["result"], "result_reason": summary.get("result_reason"),
-                   "seconds": time.monotonic()-start, "diagnostics": summary, "engine_nodes": nodes,
-                   "raw_events": str(game_root / "events.jsonl"),
-                   "short_events": str(game_root / "short_events.jsonl")}
+                   "result": result, "result_reason": summary.get("reason"),
+                   "seconds": time.monotonic()-start, "diagnostics": summary,
+                   "raw_events": str(game_root / "events.jsonl")}
             row.update(index=index, evaluation_key=evaluation_key(payload), event_hashes={
-                key:file_hash(row[key]) for key in ("raw_events", "short_events")})
+                key:file_hash(row[key]) for key in ("raw_events",)})
             row["integrity"] = digest(row)
             atomic_json(result_path, row)
             games.append(row)
@@ -161,11 +197,9 @@ def evaluate(payload):
         raise ValueError("Seed schedule must contain one unique integer seed per white/black pair")
     verify_source(payload["source"])
     verify_source(payload["candidate_source"])
-    # Model control uses the original reference skill library, never candidate cards.
     cards = None
     if payload.get("track") == "model":
         verify_source(payload["reference_source"])
-        cards = validate_cards(read_json(Path(payload["reference_source"]["root"])/"src/llmgo/harness/skills/cards.json"))
     identity = model_identity(payload["model_path"])
     if payload.get("expected_model_sha256") and identity["sha256"] != payload["expected_model_sha256"]:
         raise ValueError("Candidate model changed since its registered checkpoint")
@@ -209,7 +243,7 @@ def evaluate(payload):
 
 
 async def parallel_batch(payload, cards, output, helpers, gpus):
-    """One owned vLLM replica per GPU, resumable games, bounded per-game retries."""
+    """Independent games share owned vLLM replicas with bounded per-GPU concurrency."""
     output.mkdir(parents=True, exist_ok=True)
     expected = payload["protocol"]["games"]
     if payload.get("resume_from"):
@@ -247,62 +281,64 @@ async def parallel_batch(payload, cards, output, helpers, gpus):
     for index in range(expected):
         if index not in completed:
             queue.put_nowait(index)
+    lanes = payload.get('evaluation_games_per_gpu',payload['site'].get('eval_games_per_gpu',2))
+    if type(lanes) is not int or not 1 <= lanes <= 8:
+        raise ValueError('eval_games_per_gpu must be an integer from 1 to 8')
     ports = helpers._pick_ports(8000, len(gpus))
-    slots = [{"slot":i, "gpu":gpu, "stage":"pending", "game_index":None, "attempt":0}
-             for i,gpu in enumerate(gpus)]
+    slots = [{'slot':lane*len(gpus)+i,'replica':i,'lane':lane,'gpu':gpu,
+              'stage':'pending','game_index':None,'attempt':0}
+             for lane in range(lanes) for i,gpu in enumerate(gpus)]
     failures = []
     def progress():
-        atomic_json(output/"progress.json", {"stage":"evaluating", "updated":utc(),
-            "message":f"并行评测：{len(completed)}/{expected}局，{len(gpus)}个GPU副本",
-            "completed_games":len(completed), "total_games":expected,
-            "parallelism":len(gpus), "slots":slots, "failures":failures[-8:]})
+        atomic_json(output/'progress.json',{'stage':'evaluating','updated':utc(),
+            'message':f'并行评测：{len(completed)}/{expected}局，{len(gpus)}个GPU副本，每副本{lanes}局',
+            'completed_games':len(completed),'total_games':expected,
+            'parallelism':min(expected,len(slots)),'replica_count':len(gpus),
+            'games_per_gpu':lanes,'scheduling':'independent_games','slots':slots,'failures':failures[-8:]})
     progress()
+
+    def factory(replica):
+        return lambda index,attempt:helpers.VllmServer(Path(payload['model_path']),payload['protocol'],
+            output/f'gpu-{replica}'/f'vllm-{index:02d}-{attempt}.log',ports[replica],gpus[replica],
+            python=payload['site'].get('inference_python'))
+    replicas = [EvaluationReplica(factory(i),helpers._wait_servers) for i in range(len(gpus))]
+
     async def worker(slot):
         state = slots[slot]
-        service = None
-        try:
-            while True:
+        replica = replicas[state['replica']]
+        while True:
+            try:
+                index = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                state.update(stage='completed',game_index=None)
+                progress()
+                return
+            state.update(game_index=index)
+            for attempt in range(1,4):
+                state.update(attempt=attempt,stage='starting' if replica.service is None else 'playing')
+                progress()
                 try:
-                    index = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    state.update(stage="completed", game_index=None)
+                    async with replica.lease(index,attempt) as service:
+                        state['stage'] = 'playing';progress()
+                        rows = await play_batch(payload,service.base_url,cards,output,indices={index})
+                    completed[index] = rows[0]
                     progress()
-                    return
-                state.update(game_index=index)
-                for attempt in range(1, 4):
-                    state.update(attempt=attempt, stage="starting" if service is None else "playing")
-                    progress()
-                    try:
-                        if service is None:
-                            service = helpers.VllmServer(Path(payload["model_path"]), payload["protocol"],
-                                output/f"gpu-{slot}"/f"vllm-{index:02d}-{attempt}.log", ports[slot], gpus[slot],
-                                python=payload["site"].get("inference_python"))
-                            service.start()
-                            error = await asyncio.to_thread(helpers._wait_servers, [service], 1800)
-                            if error:
-                                raise RuntimeError(error)
-                        state["stage"] = "playing"
-                        progress()
-                        rows = await play_batch(payload, service.base_url, cards, output, indices={index})
-                        completed[index] = rows[0]
-                        progress()
-                        break
-                    except Exception as exc:
-                        detail = {"slot":slot,"game_index":index,"attempt":attempt,
-                                  "error":str(exc),"traceback":traceback.format_exc(),"utc":utc()}
-                        atomic_json(output/"attempts"/f"game-{index:02d}-{attempt}.json", detail)
-                        failures.append({k:v for k,v in detail.items() if k != "traceback"})
-                        state["stage"] = "retrying" if attempt < 3 else "failed"
-                        progress()
-                        if service is not None:
-                            await asyncio.to_thread(service.stop)
-                            service = None
-                        if attempt == 3:
-                            raise
-        finally:
-            if service is not None:
-                await asyncio.to_thread(service.stop)
-    results = await asyncio.gather(*(worker(i) for i in range(len(gpus))), return_exceptions=True)
+                    break
+                except Exception as exc:
+                    detail = {'slot':slot,'replica':state['replica'],'game_index':index,'attempt':attempt,
+                        'error':str(exc),'traceback':traceback.format_exc(),'utc':utc()}
+                    atomic_json(output/'attempts'/f'game-{index:02d}-{attempt}.json',detail)
+                    failures.append({k:v for k,v in detail.items() if k!='traceback'})
+                    state['stage'] = 'retrying' if attempt<3 else 'failed';progress()
+                    if attempt==3:raise
+    tasks = [asyncio.create_task(worker(i)) for i in range(len(slots))]
+    try:
+        results = await asyncio.gather(*tasks,return_exceptions=True)
+    finally:
+        for task in tasks:
+            if not task.done():task.cancel()
+        await asyncio.gather(*tasks,return_exceptions=True)
+        await asyncio.gather(*(replica.close() for replica in replicas))
     errors = [r for r in results if isinstance(r, BaseException)]
     if errors:
         raise RuntimeError(f"Parallel evaluation incomplete; {len(completed)}/{expected} games retained. {errors[0]}") from errors[0]

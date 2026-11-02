@@ -61,10 +61,7 @@ class Platform:
 @pytest.fixture
 def prepared(tmp_path, request):
     repo = tmp_path/"repo"
-    cards = repo/"src/llmgo/harness/skills/cards.json"
-    cards.parent.mkdir(parents=True)
-    shutil.copyfile(REPO/"src/llmgo/harness/skills/cards.json", cards)
-    (repo/"scripts").mkdir()
+    (repo/"scripts").mkdir(parents=True)
     (repo/"scripts/rsi_worker.py").write_text("# isolated fixture\n")
     site = {"user_root": str(tmp_path), "repo": str(repo), "campaign_root": str(tmp_path/"campaigns"),
             "worktree_root": str(tmp_path/"workspaces"), "base_model": str(tmp_path/"model"),

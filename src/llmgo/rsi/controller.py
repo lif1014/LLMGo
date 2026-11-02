@@ -45,10 +45,10 @@ class Controller:
         repo = Path(repo or site["repo"])
         root.mkdir(parents=True)
         source = source_snapshot(repo, root/"source")
-        # A reference harness is frozen once for the model-only control track.
+        # Freeze the same Chess-R1 baseline for model-only comparisons.
         initial_source = source_snapshot(repo, root/"candidates/initial/source")
         cards = root/"candidates/initial/skills.json"
-        shutil.copy2(repo/"src/llmgo/harness/skills/cards.json", cards)
+        atomic_json(cards, [])
         initial = {"id": "initial", "model_path": site["base_model"], "model_sha256": None,
                    "source": initial_source, "skills_path": str(cards), "skills_sha256": file_hash(cards)}
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
@@ -118,10 +118,12 @@ class Controller:
         require_research(self.root)
         job_id = f"j{len(self.state['jobs'])+1:06d}"
         folder = inside(self.site["user_root"], self.root/"jobs"/job_id)
+        run_output = inside(self.site["user_root"],
+                            Path(self.site["repo"])/"var/runs"/f"{self.state['campaign_id']}-{job_id}")
         payload = {"schema_version": SCHEMA, "campaign_id": self.state["campaign_id"], "job_id": job_id,
                    "kind": kind, "role": role, "candidate_id": candidate["id"], "site": self.site,
                    "source": self.state["source"], "candidate_source": candidate["source"],
-                   "output": str(folder/"output"), "model_path": candidate["model_path"],
+                   "output": str(run_output), "model_path": candidate["model_path"],
                    "expected_model_sha256": candidate.get("model_sha256"),
                    "skills_path": candidate["skills_path"], "skills_sha256": candidate["skills_sha256"]}
         if kind == "evaluate":
@@ -243,7 +245,7 @@ class Controller:
         folder = inside(self.site["user_root"], Path(self.site["worktree_root"])/self.state["campaign_id"]/f"round-{self.state['round']:06d}")
         parent = self.state["working"]
         source_snapshot(Path(parent["source"]["root"]), folder)
-        # Editable package + top-level skill override for the initial/reference harness.
+        # Meta may add skills or its own harness in the editable workspace.
         if parent.get("skills_path"):
             shutil.copy2(parent["skills_path"], folder/"skills.json")
         atomic_json(folder/"context.json", self.memory.context())
@@ -545,21 +547,17 @@ class Controller:
                 if result["status"] == "needs_meta":
                     workspace = Path(result["workspace"])
                     prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
-                        f"完整证据在 {self.root}。只能通过RL和改进skills提升Qwen3.5-4B，可单独或组合使用。"
-                        "禁止SFT（监督微调），包括预热、辅助SFT损失、行为克隆和监督蒸馏；使用SFT，最终得分为0分。"
-                        "在此范围内自主修改本研究副本的RL、reward、数据、Harness、prompt、skills、工具或配置，现有完整对局 PPO/LC0 只是可用起点；默认中间reward0、终局+1/-1/0、LC0 value、gamma1/lambda0.95多步GAE，允许修改训练代码。默认训练耗尽合法回答预算时随机选全部合法步之一，归属学生该手继续完整局、参与GAE/loss；保留真实输出概率及随机来源。先读docs/rsi-verl-ppo.md，旧单步recipe需迁移。"
-                        "教师只能用于RL奖励/价值、分析和提炼skills，不能作为SFT答案目标。最终会对战固定 L1-L8 Fairy-Stockfish，"
-                        "最低档仍是 skill -9/depth5/0.05秒；只刷简单档没有用。"
-                        "新campaign只先跑L1-L4基线，每档10局、白黑各5局，共40局；之后进入研究。"
-                        "研究每轮可只测一个难度，后续评测每档20局；不必每次全八档。"
-                        "每任务最多8 GPU，默认8卡评测并行；训练用verl PPO+LC0（默认7卡actor加1卡教师），禁止SFT。可改RL配方。 在workspace运行 python scripts/request_evaluation.py --level L2 --gpus 8 可保留既有训练任务并把proposal.json设为只测L2；"
-                        "再返回ready及proposal绝对路径，由Executor提交。--track model测模型对照，--full-panel登记L1-L8完整评测。"
-                        "评测套件/裁判/正式记录不可修改。提交协议及任意计算任务格式见 docs/rsi-operations.md。"
-                        "可以通过 research job 调用受保护 source/scripts/evaluate.py 做快速或完整测试。"
-                        "不要求本轮成功才能继续。请现在实际调用工具读取文件并开展研究，不要仅宣布准备开始就结束。"
-                        "保存实验结论，完成proposal.json和验证后，使用本次请求提供的finish_research.py命令明确交接；"
-                        "也兼容最终JSON：status=ready、summary和proposal_path绝对路径；"
-                        "只有确实需要用户补充信息或权限时返回needs_input，并明确说明实际障碍和需要回答的问题。"
+                        f"完整实验、评测和逐步棋局证据在 {self.root}。先逐手检查输棋：打开每盘 raw_events 所指的 events.jsonl，"
+                        "按 ply 还原双方走法、FEN、模型提示与原始回答、解析结果、随机后备和败因；不能只看胜负摘要。"
+                        "默认训练使用 Chess-R1 的 FEN、合法 SAN、boxed SAN prompt 与原生 verl GRPO，"
+                        "数据、Qwen3.5-4B 与 Searchless Chess 270M 的身份见 configs/grpo/ 和 docs/grpo.md。"
+                        "禁止任何 SFT、行为克隆或监督蒸馏。可以在自己的研究副本中改进 RL、reward、prompt、"
+                        "自建 Harness、工具和 skills；正式裁判、历史回执和冻结评测源码不可改。"
+                        "270M 教师只用于 RL reward、分析与 skills 提炼，不替学生正式走棋。"
+                        "先做有证据的假设与资源计划，再提出训练或 L1-L8 Fairy-Stockfish 评测。"
+                        "新 campaign 的 L1-L4 基线每档10局，后续评测每档20局；每任务最多8 GPU，优先使用 NORMAL。"
+                        "按 docs/grpo.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
+                        "完成 proposal.json 与必要验证后调用 finish_research.py 交接；确有障碍时返回 needs_input。"
                         f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")
                     try:
                         require_research(self.root)

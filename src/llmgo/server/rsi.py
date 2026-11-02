@@ -71,7 +71,27 @@ def activity_page(root, source, cursor=None, before=None, limit=80):
 
 
 def campaign_root():
-    return Path(os.environ.get("LLMGO_RSI_ROOT", "/user/lyh4170/rsi_campaigns")).resolve()
+    return Path(os.environ.get("LLMGO_RSI_ROOT", "/user/lyh4170/LLMGo!/var/campaigns")).resolve()
+
+
+def job_output(root, job_id):
+    job = inside(root, root/'jobs'/identifier(job_id))
+    manifest = limited_json(job/'manifest.json', 262144) or {}
+    output = manifest.get('payload', {}).get('output')
+    if output:
+        from .grpo_runs import run_root
+        if Path(output).resolve().is_relative_to(run_root()):
+            return inside(run_root(), output)
+        return inside(root, output)
+    return job/'output'
+
+
+def artifact_path(root, relative):
+    parts = Path(relative).parts
+    if len(parts) >= 4 and parts[0] == 'jobs' and parts[2] in {'output','games'}:
+        base = job_output(root, parts[1])
+        return inside(base, base.joinpath(*(parts[3:] if parts[2] == 'output' else parts[2:])))
+    return inside(root, root/relative)
 
 
 def campaign(name):
@@ -284,42 +304,25 @@ def job_files(name: str, job_id: str):
         raise HTTPException(404, str(exc)) from exc
     if not (job/"manifest.json").is_file():
         raise HTTPException(404, "Unknown job")
-    names = ("manifest.json", "submission.json", "executor/report.json", "executor/platform.log", "output/progress.json",
-             "output/environment.json", "output/failure.json", "output/result.json", "output/vllm.log", "output/metrics.json",
-             "output/research.log", "output/submission.json", "output/research-result.json", "output/checkpoint-ref.json", "output/training/latest.json", "output/training/training.jsonl",
-             "output/training/training-result.json",
-             "output/training/installed.freeze.txt")
-    # Bounded pointer, no polling or scanning all historical rollout files.
-    latest = limited_json(job/"output/training/latest.json", 65536) or {}
-    for key in ("raw_path", "targets_path", "rollout_path"):
-        if latest.get(key):
-            try:
-                path = inside(job/"output/training/rollouts", latest[key])
-                names += (path.relative_to(job).as_posix(),)
-            except ValueError:
-                pass
-    # Candidate import/runtime failures get a lazy file link too; inspect at most20.
-    for candidate_log in islice((job/"output/harness_runs").glob("*/candidate.log"),20):
-        names += (candidate_log.relative_to(job).as_posix(),)
-    # Bounded listing: raw rollout/teacher/shard logs are fetched only on click.
-    for pattern in ("output/gpu-*/*.log", "output/attempts/*.json", "output/training/lc0/*.json", "output/training/rollouts/*.jsonl"):
-        for artifact in islice((job).glob(pattern), 8):
-            names += (artifact.relative_to(job).as_posix(),)
-    names += ("output/training/model-preflight.json", "output/training/resolved-config.json", "output/training/identity.json", "output/training/teacher.json", "output/training/training-result.json", "output/training/batch-latest.json", "output/training/metrics.jsonl",
-              "output/training/game-progress.json", "output/training/game-context.json", "output/training/validation-latest.json", "output/training/health.json", "output/training/validation-split.json", "output/training/validation-baseline.json", "output/training/validation.jsonl",
-              "output/training/update-diagnostics-latest.json", "output/training/checkpoint-selection.json", "output/training/stability-stop.json")
-    files = []
-    for name in names:
-        path = inside(root, job/name)
-        if path.is_file():
-            stat = path.stat()
-            files.append({"path": path.relative_to(root).as_posix(), "bytes": stat.st_size, "modified": stat.st_mtime})
-    results = list(islice((job/"output/game_results").glob("*.json"), 21))
-    progress = limited_json(job/"output/progress.json", 16384)
-    manifest = limited_json(job/"manifest.json", 262144) or {}
-    payload = manifest.get("payload", {})
-    expected = payload.get("protocol", {}).get("games", 20) if isinstance(payload, dict) else 20
-    return {"files": files, "game_results": len(results), "formal_games": expected, "progress": progress}
+    output = job_output(root, job_id)
+    if output != job/'output':
+        names = ('progress.json','result.json','failure.json','research.log','submission.json',
+                 'research-result.json','grpo/recipe.json','grpo/progress.json',
+                 'grpo/result.json','grpo/failure.json','grpo/resolved-config.json',
+                 'grpo/logs/train.log','grpo/oracle.log','logs/export.log')
+        files = []
+        for relative in names:
+            path = output/relative
+            if path.is_file():
+                files.append({'path':f'jobs/{job_id}/output/{relative}',
+                              'bytes':path.stat().st_size,'modified':path.stat().st_mtime})
+        results = list(islice((output/'game_results').glob('*.json'), 21))
+        payload = read_json(job/'manifest.json').get('payload',{})
+        return {'files':files,'game_results':len(results),
+                'formal_games':payload.get('protocol',{}).get('games',20),
+                'progress':limited_json(output/'progress.json',16384)}
+    return {'files':[], 'game_results':0, 'formal_games':0,
+            'progress':limited_json(output/'progress.json',16384)}
 
 
 @router.get("/campaigns/{name}/evaluations")
@@ -360,44 +363,99 @@ def games(name: str, limit: int = Query(200, ge=1, le=1000), job_id: str | None 
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     result = []
-    pattern = "output/harness_runs/*/config.json" if job_id else "*/output/harness_runs/*/config.json"
-    for path in sorted(base.glob(pattern))[-limit:]:
-        inside(root, path)
-        config = read_json(path)
-        summary = path.with_name("summary.json")
-        result.append({"id": config["id"], "folder": path.parent.relative_to(root).as_posix(),
-                       "candidate_id": config.get("candidate_id"), "model_seat": config.get("model_seat"),
-                       "summary": read_json(summary) if summary.is_file() else None})
-    return result
+    jobs = [identifier(job_id)] if job_id else [p.name for p in sorted((root/'jobs').iterdir()) if p.is_dir()]
+    for ident in jobs:
+        output = job_output(root,ident)
+        for summary in sorted((output/'games').glob('*/summary.json')):
+            original = limited_json(summary,262144)
+            if not original:
+                continue
+            side = original.get('student_color')
+            if side not in ('white','black'):
+                continue
+            value = original.get('result')
+            winner = side if value == 1 else ('black' if side == 'white' else 'white')
+            mapped = {'result':'draw' if value == 0 else winner+'_win' if value is not None else None,
+                      'result_reason':original.get('reason'),
+                      'model_decisions':original.get('decisions'),
+                      'request_count':original.get('requests'),
+                      'completion_tokens':original.get('response_tokens'),
+                      'random_moves':original.get('random_moves'),
+                      'fallback_reasons':original.get('fallback_reasons',{})}
+            result.append({'id':summary.parent.name,'folder':f'jobs/{ident}/games/{summary.parent.name}',
+                           'candidate_id':original.get('policy_version'),
+                           'model_seat':side,'summary':mapped if original.get('completed') else None})
+    if result:
+        return result[-limit:]
+    return []
 
 
 @router.get("/campaigns/{name}/game-events")
 def game_events(name: str, folder: str, cursor: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=256),
                 view: Literal["full", "compact"] = "full"):
     root = campaign(name)
-    try:
-        path = inside(root, root/folder)
-        if not (path/"config.json").is_file() or "harness_runs" not in path.relative_to(root).parts:
-            raise ValueError("Unknown game")
-        source = "short_events.jsonl" if view == "compact" and (path/"short_events.jsonl").is_file() else "events.jsonl"
-        log = inside(root, path/source)
-        original = inside(root, path/"events.jsonl") if source == "short_events.jsonl" and (path/"events.jsonl").is_file() else None
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    result = page(log, cursor, limit, replay=True, original=original)
-    result.update(source=source, more=log.is_file() and result["cursor"] < log.stat().st_size)
-    # Jump from completed compact history to the raw tail for live token chunks.
-    refs = [row["event"].get("raw_ref", {}) for row in result["events"]]
-    result["raw_cursor"] = max((r["offset"]+r["length"] for r in refs
-                                if type(r.get("offset")) is int and type(r.get("length")) is int), default=None)
-    return result
+    parts = Path(folder).parts
+    if len(parts) == 4 and parts[0] == 'jobs' and parts[2] == 'games':
+        try:
+            output = job_output(root, parts[1])
+            directory = inside(output, output/'games'/identifier(parts[3]))
+            if not (directory/'events.jsonl').is_file():
+                raise ValueError('Unknown game')
+        except ValueError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        raw = page(directory/'events.jsonl',cursor,limit,replay=True)
+        summary = limited_json(directory/'summary.json',262144) or {}
+        side = summary.get('student_color')
+        mapped = []
+        for row in raw['events']:
+            event = row['event'];kind=event.get('type');items=[]
+            if kind == 'episode_started':
+                side = event.get('student_color')
+                items.append({'type':'position','fen':event['fen'],'side':'white','in_check':False})
+            elif kind == 'model_request_started':
+                items.extend(({'type':'turn_started','seat':side},
+                              {'type':'model_request','status':'started','seat':side,
+                               'request_id':event.get('request_id'),
+                               'prompt':json.dumps(event.get('messages',[]),ensure_ascii=False,indent=2)}))
+            elif kind == 'model_response':
+                items.append({'type':'model_request','status':'finished','seat':side,
+                              'text':event.get('response',''),'reasoning':event.get('reasoning',''),
+                              'finish_reason':event.get('finish_reason'),
+                              'failure_reason':event.get('failure_reason'),
+                              'response_tokens':event.get('response_tokens')})
+            elif kind in {'student_move','opponent_move','forced_move'}:
+                import chess
+                board = chess.Board(event['fen'])
+                items.append({'type':'position','fen':event['fen'],
+                              'side':'white' if board.turn else 'black',
+                              'in_check':board.is_check(),
+                              'last_move':{'uci':event['uci'],
+                                           'seat':'black' if board.turn else 'white'}})
+            elif kind == 'fallback':
+                items.append({**event,'seat':side})
+            elif kind == 'episode_finished':
+                value = summary.get('result')
+                winner = side if value == 1 else ('black' if side == 'white' else 'white')
+                items.append({'type':'game_finished','summary':{
+                    'result':'draw' if value == 0 else winner+'_win' if value is not None else None,
+                    'result_reason':summary.get('reason'),
+                    'model_decisions':summary.get('decisions'),
+                    'request_count':summary.get('requests'),
+                    'completion_tokens':summary.get('response_tokens'),
+                    'random_moves':summary.get('random_moves'),
+                    'fallback_reasons':summary.get('fallback_reasons',{})}})
+            for item in items:
+                mapped.append({**row,'event':item})
+        return {'events':mapped,'cursor':raw['cursor'],'more':raw['cursor']<(directory/'events.jsonl').stat().st_size,
+                'source':'events.jsonl','raw_cursor':raw['cursor']}
+    raise HTTPException(404, "Unknown game")
 
 
 @router.get("/campaigns/{name}/artifact")
 def artifact(name: str, path: str, offset: int = Query(0, ge=0), length: int = Query(131072, ge=1, le=524288)):
     root = campaign(name)
     try:
-        target = inside(root, root/path)
+        target = artifact_path(root, path)
         if target.suffix not in (".json", ".jsonl", ".log", ".md", ".yaml") or not target.is_file():
             raise ValueError("Not a readable text artifact")
     except ValueError as exc:

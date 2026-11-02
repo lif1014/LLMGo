@@ -14,6 +14,13 @@ from llmgo.runtime.player import StreamEvent
 from llmgo.runtime.prompt import Observation
 
 
+# python-chess starts a background event loop for each engine. Under the uvloop
+# policy installed by verl, concurrent subprocess creation in different loops
+# can raise "Racing with another loop to spawn a process." Only serialize the
+# startup handshake; each engine still searches independently after startup.
+_ENGINE_START_LOCK = threading.Lock()
+
+
 class UciPlayer:
     def __init__(
         self,
@@ -45,11 +52,12 @@ class UciPlayer:
     def _ensure(self) -> chess.engine.SimpleEngine:
         if self._engine is not None:
             return self._engine
-        engine = chess.engine.SimpleEngine.popen_uci(
-            self.engine_path,
-            cwd=str(Path(self.engine_path).resolve().parent),
-            timeout=120.0,
-        )
+        with _ENGINE_START_LOCK:
+            engine = chess.engine.SimpleEngine.popen_uci(
+                self.engine_path,
+                cwd=str(Path(self.engine_path).resolve().parent),
+                timeout=120.0,
+            )
         option = engine.options.get("Skill Level")
         if option is None or option.min is None or option.max is None:
             engine.close()

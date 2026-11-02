@@ -1,24 +1,10 @@
 ---
 name: rsi-training
-description: 使用verl执行完整棋局PPO，核对终局奖励、LC0学生视角、move-level GAE、真实行为概率及多卡恢复证据。
+description: 在 LLMGo! 的 Chess-R1 GRPO 研究中凍結配方、執行與核對 reward、更新、checkpoint 和模型導出。
 ---
 
-先读 docs/rsi-verl-ppo.md 和当前任务 identity/resolved-config。允许修改自己的训练Python源码、RL配方、Harness、prompt与skills；只能通过RL和skills提升Qwen，禁止SFT/预热/辅助SFT/行为克隆/监督蒸馏，使用SFT最终0分。教师不提供监督答案或正式最佳着法。受保护裁判及历史快照不可改。
+先讀 `docs/grpo-pipeline.md`、當前實驗的 `grpo/recipe.json`、`grpo/identity.json` 和源碼快照。默認入口 `scripts/run_grpo.py`，資料與模型在專案 `assets/`。禁止 SFT、行為克隆和監督蒸餾。270M 只作 RL reward 與分析，正式棋步由 Qwen 決定。
 
-默认入口 scripts/train_ppo.py、模式 full_game_ppo_lc0，候选需 ppo.json（training/teacher）和skills.json。真正使用verl0.8、FSDP2、vLLM与原生PPO优化器。原始模型+r000002 Harness/skills可作干净起点，但保留当前训练修复；不要恢复其旧training目录。选择起点按[rsi-startpoint](../rsi-startpoint/SKILL.md)动态比较证据。
+核對每題 8 個回答、過長組拒收、實際 optimizer 更新、GRPO advantage、reward 中的 Q/格式/英文部分，以及 `updates/`、`tables/`、`sampling/` 的收據。只有原生 checkpoint 的 actor、optimizer、RNG、dataloader shard 齊全，且最終 step 收據完整，才可導出 HF 模型。模型權重鍵須與初始 Qwen 匹配。新配方或 reward 須開新實驗，不沿用舊 optimizer 狀態。
 
-每批冻结同一策略，从标准开局下完白黑均衡完整局；一条转移包含学生走子及Fairy回复，直到再次轮到学生。中间r=0、终局胜/负/和为+1/-1/0，终局bootstrap=0；总计200半回合上限为协议和棋。LC0给V=P(win)-P(lose)，固定该局学生颜色。按每局倒序算delta=r+gamma*(1-done)*V_next-V，再A=delta+gamma*lambda*(1-done)*A_next，默认gamma1/lambda0.95。没有可学习critic、没有LC0价值差环境奖励、没有旧guarded/balanced中心化。LC0不等于学生Vπ；lambda1完整局退化为真实回报减状态baseline，可作为明确的新实验。
-
-完整局结束后再展开各手与重试请求。prompt、工具、Fairy及padding不承担策略损失，真实请求保留thinking和EOS；每手等权，重试按该手生成tokens分配权重。默认whole_batch_update=true、epochs1，即每批完整局做一次梯度累积更新；关闭时记录实际minibatch/optimizer步数，不把2批下棋说成只有2次更新。训练/内部验证采样均temperature1/top_p1/top_k-1，与真实behavior logprobs和actor/ref重算匹配；正式评测采样保持冻结协议。
-
-预算内重试成功可继续，全部请求保留；耗尽重试/预算仍无合法答案时，从全部合法步按种子随机选一步，作为学生该手继续；原始请求正常参与终局reward/LC0/GAE/actor loss，不屏蔽整手、不伪造随机UCI的token/logprob。保留model_uci、action_source、fallback_reason及random_rate；失败请求不改记成功。服务/引擎/网络错误为aborted，不能造奖励。不能筛掉负局再训练。完整局采样期间不切权重，不能用旧策略前半局拼新策略后半局。按请求、回合与整局区分合法率。
-
-训练前/退化时读[rsi-ppo-audit](../rsi-ppo-audit/SKILL.md)。默认internal_validation=false，不打更新前/后内部验证局，训练批次仍检查实际reference KL、协议、actor/rollout一致性及有限值。默认KL警戒0.05，reference_kl_stop=0关闭KL数值门槛停止；kl_beta=0.05的KL正则、KL统计与同步平均绝对差停止0.1保留。用户授权Meta-Agent自行决定是否恢复KL停止：在下一轮ppo.json中显式设reference_kl_stop为正数（例如0.1）即可，不需要再请求用户批准；继承的旧recipe若仍写0.1，会覆盖新默认，应明确选择并记录理由。关闭时导出有同实验有限optimizer更新记录的最新完整checkpoint，回执必须标记disabled、passed=null；不得称内部验证通过，棋力另做正式评测。显式internal_validation=true可恢复固定完整局验证及已验证checkpoint选择。恢复保存开关、模型/优化器/RNG/episode批次身份，启用时另存原始验证基线；代码/目标改变另开实验，旧HF LoRA或单步优化器不能接入。
-
-默认最多8卡：7 actor/rollout/reference+1 LC0；concurrent_games默认actor卡数（7），games_per_batch默认与actor卡数相同（至少2局，8卡任务为7局），每批结束更新一次。奇数批次按训练step交替多一局白/黑，相邻两批合计均衡；固定验证仍为偶数局。旧ppo.json显式2局或14局配置需改为7/7并设internal_validation=false，不因live默认更新就自动采用。2–8卡留一张教师卡，单卡明确CPU LC0。保持CUDA Graph、wake缓存释放和HF导出兼容修复。只用beijing/model-autosft/NORMAL、只写/user/lyh4170、devspace0GPU，不改他人环境或停止他人任务。
-
-训练默认对手为Fairy-Stockfish L2（opponent_level=2），LC0只提供value。Meta-Agent可以根据研究证据自行修改ppo.json中的opponent_level（整数1–8），设计更易/更难的对手或课程；L2不是必须固定的目标。记录实际难度与新实验身份，不修改正式评测面板。按用户要求保持internal_validation=false，跳过训练前/后的内部验证，最后通过独立正式评测检验棋力；只有用户明确要求恢复时才重新启用内部验证。
-
-提交通过proposal.jobs交Executor，GPU每300–600秒轮询。正式单档接口request_evaluation.py --level L2 --gpus 8仍为20局；用户授权的10局快速探针可用scripts/probe_strength.py，明确不是正式候选扶正。最终需多个难度实战，不以LC0均值或训练loss代替棋力。
-
-证据在training/episodes/*/{events.jsonl,trajectory.json,summary.json}、requests、lc0、batches、metrics/health、validation、checkpoint-selection和training-result。网页读小摘要，原文按需；只加载可信自有.pt。暂停不会因为维护验证完成而自动解除。
+提交給 Executor；只用 beijing/model-autosft/NORMAL，每項最多 8 GPU，devspace 0 GPU，只寫 /user/lyh4170。所有日誌和 JSON 寫在 `LLMGo!/var/runs/<實驗ID>`。棋力用固定 Fairy 多難度完整棋局評測，不以訓練 reward 代替。

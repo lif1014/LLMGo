@@ -172,37 +172,3 @@ def test_large_event_pages_have_budget_and_complete_record_cursors(tmp_path):
     with pytest.raises(Exception) as failure:
         page(path, 1, 80)
     assert failure.value.status_code == 400
-
-
-@pytest.mark.parametrize('game_count',[10,20])
-def test_overview_job_files_and_evaluations_are_compact_and_isolated(tmp_path, monkeypatch,game_count):
-    root = tmp_path/"demo"
-    memory, _ = indexed(root, [])
-    jobs = {"j1": {"id": "j1", "role": "candidate", "worker_wall_seconds": 3600, "allocated_gpu_count": 1}}
-    atomic_json(root/"campaign.json", {"campaign_id": "demo", "phase": "WAITING", "jobs": jobs, "attempts": [], "active_job": "j1"})
-    atomic_json(root/"meta-session.json", {"status": "running", "thread_id": "t", "answer": "private large answer"})
-    job = root/"jobs/j1"
-    atomic_json(job/"manifest.json", {"payload": {"protocol":{"games":game_count}}})
-    atomic_json(job/"output/progress.json", {"stage": "training", "curriculum_records": 64})
-    (job/"output/training").mkdir()
-    (job/"output/research.log").write_text("loss\n"*300000)
-    for job_id in ("j1", "j2"):
-        atomic_json(root/f"jobs/{job_id}/output/harness_runs/g/config.json", {"id": "g", "model_seat": "white"})
-    memory.append("evaluation", {"candidate_id": "candidate", "level": 1, "statistics": {"score": .75}, "ref": {"job_id": "j1"}})
-    client = client_for(root, monkeypatch)
-    url = "/api/rsi/campaigns/demo"
-    overview = client.get(url+"/overview").json()
-    assert overview["worker_gpu_hours"] == 1 and "answer" not in overview["meta"]
-    files = client.get(url+"/job-files?job_id=j1").json()
-    assert files['formal_games']==game_count
-    assert files["progress"]["stage"] == "training"
-    assert any(f["bytes"] > 1000000 for f in files["files"])
-    assert len(canonical(files)) < 2000
-    assert len(client.get(url+"/games?job_id=j1").json()) == 1
-    assert "j1" in client.get(url+"/games?job_id=j1").json()[0]["folder"]
-    assert client.get(url+"/job-files?job_id=../j2").status_code == 404
-    evidence = client.get(url+"/evaluations").json()[0]
-    assert evidence["worker_gpu_hours"] == 1 and evidence["statistics"]["score"] == .75
-    # File bodies are still available only through explicit byte-range reads.
-    body = client.get(url+"/artifact", params={"path": "jobs/j1/output/research.log", "offset": 5, "length": 6}).json()
-    assert body["text"] == "loss\nl" and body["next_offset"] == 11

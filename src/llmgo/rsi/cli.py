@@ -18,7 +18,7 @@ from llmgo.remote.cctl_env import cctl_environment, cctl_failure_detail
 from llmgo.remote.pools import own_pool_rows, authorized_pool, pool_summary
 
 
-def doctor(site, *, worker=False, platform=False, codex_auth=False, ppo=False):
+def doctor(site, *, worker=False, platform=False, codex_auth=False):
     checks = []
     def check(name, ok, detail):
         checks.append({"name": name, "ok": bool(ok), "detail": str(detail)})
@@ -29,9 +29,8 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False, ppo=False):
     if worker:
         for name in ("torch", "transformers", "peft", "vllm", "chess", "httpx", "tokenizers"):
             check(name, importlib.util.find_spec(name) is not None, "Worker Python dependency")
-        if ppo:
-            check("lc0", os.access(site["lc0_bin"], os.X_OK), site["lc0_bin"])
-            check("reward_network", Path(site["reward_weights"]).is_file(), site["reward_weights"])
+        check("grpo_dataset", (Path(site["repo"])/"assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet").is_file(), "Chess-R1 train split")
+        check("reward_checkpoint", (Path(site["repo"])/"assets/models/searchless-270M/270M/6400000").is_dir(), "Searchless Chess 270M")
         if importlib.util.find_spec("torch"):
             import torch
             check("gpu", torch.cuda.is_available(), f"{torch.cuda.device_count()} visible devices")
@@ -84,7 +83,6 @@ def parser():
     sub = p.add_subparsers(dest="command", required=True)
     d = sub.add_parser("doctor")
     d.add_argument("--worker", action="store_true")
-    d.add_argument("--ppo", action="store_true", help="Also check optional Lc0 PPO assets")
     d.add_argument("--platform", action="store_true")
     d.add_argument("--codex-auth", action="store_true", help="Check provider credential configuration or CLI login status, without inference")
     init = sub.add_parser("init")
@@ -106,11 +104,6 @@ def parser():
     note = sub.add_parser("note")
     note.add_argument("campaign")
     note.add_argument("--text", required=True)
-    curriculum = sub.add_parser("curriculum")
-    curriculum.add_argument("--events", action="append", default=[])
-    curriculum.add_argument("--output", required=True)
-    curriculum.add_argument("--count", type=int, default=16)
-    curriculum.add_argument("--seed", type=int, default=4170)
     exe = sub.add_parser("executor", help="Isolated job lifecycle; raw output stays outside Meta-Agent Memory")
     exe.add_argument("action", choices=("run", "step", "status"))
     exe.add_argument("campaign")
@@ -121,99 +114,86 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    if args.command == "curriculum":
-        from llmgo.training.rollout import from_game_events, seed_curriculum, write_curriculum
-        import random
-        if args.count < 1:
-            raise ValueError("count must be positive")
-        if args.events:
-            rows = [row for path in args.events for row in from_game_events(path)]
-            random.Random(args.seed).shuffle(rows)
-            rows = rows[:args.count]
-        else:
-            rows = seed_curriculum(args.count, args.seed)
-        result = {"records": write_curriculum(args.output, rows), "output": args.output}
+    site = load_site(args.site)
+    if args.command == "doctor":
+        result = doctor(site, worker=args.worker, platform=args.platform, codex_auth=args.codex_auth)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
+    from .contracts import identifier
+    root = inside(site["user_root"], Path(site["campaign_root"]) / identifier(args.campaign))
+    if args.command == "init":
+        controller = Controller.create(site, args.campaign)
+        result = {"campaign": str(root), "state": controller.state}
     else:
-        site = load_site(args.site)
-        if args.command == "doctor":
-            result = doctor(site, worker=args.worker, platform=args.platform, codex_auth=args.codex_auth, ppo=args.ppo)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0 if result["ok"] else 1
-        from .contracts import identifier
-        root = inside(site["user_root"], Path(site["campaign_root"]) / identifier(args.campaign))
-        if args.command == "init":
-            controller = Controller.create(site, args.campaign)
-            result = {"campaign": str(root), "state": controller.state}
-        else:
-            if not root.is_dir():
-                raise FileNotFoundError(f"Unknown campaign: {root}")
-            controller = Controller(root)
-            if site != controller.site and args.command != "upgrade":
-                raise ValueError("Campaign site is frozen; use its original site profile")
-            if args.command == "index-activity":
-                # Constructor replay indexes legacy records once, outside HTTP.
-                MemoryStore(root/"executor")
-                result = {"indexed": True, "campaign": str(root), "raw_journals_changed": False}
-            elif args.command == "executor":
-                if args.action == "run":
-                    if args.job:
-                        raise ValueError("Executor run follows active_job, not a manually selected old task")
-                    if site.get("executor_mode", "embedded") != "external":
-                        raise ValueError("Set executor_mode=external before campaign init to use a separate Executor service")
-                    result = controller.lifecycle.run(once=args.once)
-                else:
-                    job_id = args.job or controller.state["active_job"]
-                    if not job_id and args.action == "status":
-                        job_id = next(reversed(controller.state["jobs"]), None)
-                    if not job_id:
-                        result = {"status": "idle"}
-                    elif job_id not in controller.state["jobs"]:
-                        raise ValueError("Unknown job")
-                    elif args.action == "step":
-                        if job_id != controller.state["active_job"]:
-                            raise ValueError("Executor can advance only the current active job")
-                        result = controller.lifecycle.advance(controller.state["jobs"][job_id])
-                    else:
-                        result = controller.lifecycle.report(controller.state["jobs"][job_id])
-            elif args.command == "status":
-                result = controller.memory.context()
-            elif args.command == "memory":
-                result = (controller.memory.search(args.search, args.limit) if args.search
-                          else controller.memory.recent(args.limit, args.kind))
-            elif args.command == "note":
-                result = controller.memory.append("research_note", {"text": args.text})
-            elif args.command == "run":
-                if args.steps is not None and args.steps < 1:
-                    raise ValueError("steps must be positive")
-                result = controller.run(max_steps=args.steps)
+        if not root.is_dir():
+            raise FileNotFoundError(f"Unknown campaign: {root}")
+        controller = Controller(root)
+        if site != controller.site and args.command != "upgrade":
+            raise ValueError("Campaign site is frozen; use its original site profile")
+        if args.command == "index-activity":
+            # Constructor replay indexes legacy records once, outside HTTP.
+            MemoryStore(root/"executor")
+            result = {"indexed": True, "campaign": str(root), "raw_journals_changed": False}
+        elif args.command == "executor":
+            if args.action == "run":
+                if args.job:
+                    raise ValueError("Executor run follows active_job, not a manually selected old task")
+                if site.get("executor_mode", "embedded") != "external":
+                    raise ValueError("Set executor_mode=external before campaign init to use a separate Executor service")
+                result = controller.lifecycle.run(once=args.once)
             else:
-                with controller.memory.lock():
-                    if args.command == "upgrade":
-                        with controller.lifecycle.memory.lock("service"):
-                            result = controller.upgrade(site)
-                    elif args.command == "step":
-                        result = controller.step()
-                    elif args.command == "workspace":
-                        if controller.state["phase"] != "PLANNING":
-                            raise ValueError("A planning workspace requires a completed baseline")
-                        result = {"workspace": str(controller.workspace())}
-                    elif args.command == "prepare":
-                        result = controller.prepare(args.proposal)
-                    elif args.command in ("preview", "submit"):
-                        job_id = args.job or controller.state["active_job"]
-                        if not job_id or job_id not in controller.state["jobs"]:
-                            raise ValueError("No prepared job")
-                        job = controller.state["jobs"][job_id]
-                        if args.command == "submit" and job_id != controller.state["active_job"]:
-                            raise ValueError("Only the current active job may be submitted")
-                        result = (controller.executor.preview(job["manifest"]) if args.command == "preview"
-                                  else controller.lifecycle.advance(job))
-                    elif args.command == "resume-failed":
-                        controller.resume_failed()
-                        result = {"phase": controller.state["phase"], "job_id": controller.state["active_job"]}
-                    elif args.command == "resume":
-                        result = controller.resume()
-                    elif args.command == "recover-meta":
-                        result = controller.recover_meta()
+                job_id = args.job or controller.state["active_job"]
+                if not job_id and args.action == "status":
+                    job_id = next(reversed(controller.state["jobs"]), None)
+                if not job_id:
+                    result = {"status": "idle"}
+                elif job_id not in controller.state["jobs"]:
+                    raise ValueError("Unknown job")
+                elif args.action == "step":
+                    if job_id != controller.state["active_job"]:
+                        raise ValueError("Executor can advance only the current active job")
+                    result = controller.lifecycle.advance(controller.state["jobs"][job_id])
+                else:
+                    result = controller.lifecycle.report(controller.state["jobs"][job_id])
+        elif args.command == "status":
+            result = controller.memory.context()
+        elif args.command == "memory":
+            result = (controller.memory.search(args.search, args.limit) if args.search
+                      else controller.memory.recent(args.limit, args.kind))
+        elif args.command == "note":
+            result = controller.memory.append("research_note", {"text": args.text})
+        elif args.command == "run":
+            if args.steps is not None and args.steps < 1:
+                raise ValueError("steps must be positive")
+            result = controller.run(max_steps=args.steps)
+        else:
+            with controller.memory.lock():
+                if args.command == "upgrade":
+                    with controller.lifecycle.memory.lock("service"):
+                        result = controller.upgrade(site)
+                elif args.command == "step":
+                    result = controller.step()
+                elif args.command == "workspace":
+                    if controller.state["phase"] != "PLANNING":
+                        raise ValueError("A planning workspace requires a completed baseline")
+                    result = {"workspace": str(controller.workspace())}
+                elif args.command == "prepare":
+                    result = controller.prepare(args.proposal)
+                elif args.command in ("preview", "submit"):
+                    job_id = args.job or controller.state["active_job"]
+                    if not job_id or job_id not in controller.state["jobs"]:
+                        raise ValueError("No prepared job")
+                    job = controller.state["jobs"][job_id]
+                    if args.command == "submit" and job_id != controller.state["active_job"]:
+                        raise ValueError("Only the current active job may be submitted")
+                    result = (controller.executor.preview(job["manifest"]) if args.command == "preview"
+                              else controller.lifecycle.advance(job))
+                elif args.command == "resume-failed":
+                    controller.resume_failed()
+                    result = {"phase": controller.state["phase"], "job_id": controller.state["active_job"]}
+                elif args.command == "resume":
+                    result = controller.resume()
+                elif args.command == "recover-meta":
+                    result = controller.recover_meta()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if args.command == "doctor" and not result["ok"] else 0

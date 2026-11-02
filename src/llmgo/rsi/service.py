@@ -72,7 +72,7 @@ class VllmServer:
 
     def start(self) -> None:
         max_tokens = int(self.protocol["max_tokens"])
-        max_len = max(max_tokens + 8192, 40960)
+        max_len = max_tokens + 1024
         cmd = ([self.python, "-I", "-m", "vllm.entrypoints.cli.main"] if self.python else ["vllm"]) + [
             "serve",
             str(self.model_path),

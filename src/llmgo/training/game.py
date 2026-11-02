@@ -15,7 +15,7 @@ from llmgo.runtime.uci_player import UciPlayer
 
 class ChessEpisode:
     def __init__(self, episode_id, policy_version, student_color, level, engine_path, output,
-                 *, seed=4170, initial_fen=chess.STARTING_FEN, engine_factory=UciPlayer):
+                 *, seed=4170, initial_fen=chess.STARTING_FEN, engine_factory=UciPlayer, resume_state=None):
         if student_color not in ("white","black"):
             raise ValueError("Student color must be white or black")
         self.id, self.policy, self.color = episode_id, policy_version, student_color
@@ -25,15 +25,29 @@ class ChessEpisode:
         self.initial_fen, self.seed = initial_fen, seed
         self.rng = random.Random(seed)
         self.output, self.transitions = Path(output), []
-        self.output.mkdir(parents=True,exist_ok=False)
+        self.output.mkdir(parents=True,exist_ok=resume_state is not None)
         self.done, self.aborted, self.result, self.reason = False, False, None, None
+        self.decision_offset=0
+        self.prior_counts={'random_moves':0,'requests':0,'response_tokens':0}
+        self.prior_fallback_reasons={}
+        if resume_state is not None:
+            if (resume_state['episode_id']!=episode_id or resume_state['student_color']!=student_color
+                    or resume_state['seed']!=seed or resume_state['initial_fen']!=initial_fen):
+                raise ValueError('Episode resume identity mismatch')
+            for move in resume_state['moves']:self.board.push_uci(move)
+            if self.board.fen()!=resume_state['fen']:raise ValueError('Episode resume board mismatch')
+            def tuples(value):return tuple(tuples(x) for x in value) if isinstance(value,list) else value
+            self.rng.setstate(tuples(resume_state['rng']))
+            self.decision_offset=resume_state['decisions']
+            self.prior_counts=resume_state['counts'];self.prior_fallback_reasons=resume_state['fallback_reasons']
         self.opponent = opponent(level)
         p = self.opponent
         self.engine = engine_factory("black" if self.actor else "white",engine_path,
             skill=p["skill"],depth=p["depth"],movetime=p["movetime_sec"],nodes=p["nodes"],
             threads=p["threads"],hash_mb=p["hash_mb"])
-        self.event("episode_started",student_color=student_color,opponent=p,seed=seed,
+        self.event("episode_resumed" if resume_state is not None else "episode_started",student_color=student_color,opponent=p,seed=seed,
                    policy_version=policy_version,initial_fen=initial_fen,
+                   fen=self.board.fen(),moves=self.record()["moves"],decision_offset=self.decision_offset,
                    invalid_move_policy="random_legal",action_attribution="student_player")
 
     def event(self, kind, **data):
@@ -96,7 +110,7 @@ class ChessEpisode:
                 raise ValueError("Parser admitted an illegal student move")
         source = "random" if model_uci is None else "model"
         row = {"episode_id":self.id,"policy_version":self.policy,"student_color":self.color,
-            "turn_index":len(self.transitions),"record":self.record(),"before_fen":self.board.fen(),
+            "turn_index":self.decision_offset+len(self.transitions),"record":self.record(),"before_fen":self.board.fen(),
             "requests":requests,"uci":uci,"model_uci":model_uci,"action_source":source,
             "fallback_reason":reason,"action_attribution":"student_player",
             "reward":0.,"done":False,"aborted":False}
@@ -118,17 +132,35 @@ class ChessEpisode:
         self.write_summary()
 
     def write_summary(self):
-        random_moves = sum(t.get("action_source")=="random" for t in self.transitions)
+        random_moves = self.prior_counts['random_moves']+sum(t.get("action_source")=="random" for t in self.transitions)
+        decisions=self.decision_offset+len(self.transitions)
         atomic_json(self.output/"summary.json",{"episode_id":self.id,"policy_version":self.policy,
             "student_color":self.color,"opponent":self.opponent,"seed":self.seed,
             "completed":self.done,"aborted":self.aborted,"result":self.result,"reason":self.reason,
-            "plies":len(self.board.move_stack),"decisions":len(self.transitions),
-            "random_moves":random_moves,"random_rate":random_moves/len(self.transitions) if self.transitions else 0.,
-            "fallback_reasons":dict(Counter(t["fallback_reason"] for t in self.transitions if t.get("fallback_reason"))),
+            "plies":len(self.board.move_stack),"decisions":decisions,
+            "random_moves":random_moves,"random_rate":random_moves/decisions if decisions else 0.,
+            "fallback_reasons":dict(Counter(self.prior_fallback_reasons)+Counter(t["fallback_reason"] for t in self.transitions if t.get("fallback_reason"))),
             "invalid_move_policy":"random_legal",
-            "requests":sum(len(t["requests"]) for t in self.transitions),
-            "response_tokens":sum(r["response_tokens"] for t in self.transitions for r in t["requests"]),
+            "requests":self.prior_counts['requests']+sum(len(t["requests"]) for t in self.transitions),
+            "response_tokens":self.prior_counts['response_tokens']+sum(r["response_tokens"] for t in self.transitions for r in t["requests"]),
             "updated":utc()})
+
+    def snapshot(self):
+        if self.done or self.aborted:raise ValueError('Only live episodes can resume')
+        return {'episode_id':self.id,'policy_version':self.policy,'student_color':self.color,
+            'seed':self.seed,'initial_fen':self.initial_fen,'moves':self.record()['moves'],
+            'fen':self.board.fen(),'rng':self.rng.getstate(),
+            'decisions':self.decision_offset+len(self.transitions),
+            'counts':{'random_moves':self.prior_counts['random_moves']+sum(t.get('action_source')=='random' for t in self.transitions),
+                'requests':self.prior_counts['requests']+sum(len(t['requests']) for t in self.transitions),
+                'response_tokens':self.prior_counts['response_tokens']+sum(r['response_tokens'] for t in self.transitions for r in t['requests'])},
+            'fallback_reasons':dict(Counter(self.prior_fallback_reasons)+Counter(t['fallback_reason'] for t in self.transitions if t.get('fallback_reason')))}
+
+    def discard_consumed(self):
+        """Keep the environment/RNG; full evidence remains in events and segment files."""
+        state=self.snapshot()
+        self.decision_offset=state['decisions'];self.prior_counts=state['counts']
+        self.prior_fallback_reasons=state['fallback_reasons'];self.transitions=[]
 
     def close(self):
         self.engine.close()

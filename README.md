@@ -1,173 +1,44 @@
-# LLMGo!：自主国际象棋 RSI
+# LLMGo! · Chess-R1 GRPO
 
-强 Meta-Agent 在自己的远端 **0 GPU devspace** 研究，以 Qwen3.5-4B 为起点，**只能通过 RL 和改进 skills 提升能力；禁止 SFT，使用 SFT 最终得0分**。可自主修改 RL 算法、reward、数据、课程，以及支持这两种方法的 Harness、prompt、工具、skills 及触发逻辑；计算通过集群 job 执行。默认训练配方为 **verl PPO＋LC0**，支持多卡。每项任务最多8 GPU，默认评测8个单卡Qwen副本；默认训练7卡actor/rollout/reference＋1卡LC0。
+遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Meta-Agent 可研究 RL 和 skills，禁止 SFT。正式棋力評測是 Qwen 對 Fairy-Stockfish 的完整棋局，L1–L8 固定難度。
 
-上述方法与0分规则已写入 Meta-Agent 的 developer prompt、每轮任务 prompt 和研究 skills；当前没有自动识别任意训练代码是否包含 SFT 的检测器，也没有程序自动执行的 SFT 归零逻辑。禁止范围包括 SFT 预热、辅助监督损失、行为克隆及监督蒸馏。离线教师仍可用于 RL 奖励/价值估计、局面分析和提炼 skills，RL 策略梯度及价值函数拟合可用。
+## 目錄
 
-最终用独立评测比较不同难度的 Fairy-Stockfish。**没有胜率通关、80%自动升档或必须每轮提升才能继续研究的规则。**只刷最低档不能取得完整成绩。
+| 路徑 | 用途 |
+| --- | --- |
+| `assets/models/Qwen3.5-4B/` | 學生 HF 權重與 tokenizer |
+| `assets/models/searchless-270M/270M/` | Chess-R1 動作價值 reward model |
+| `assets/datasets/chess-r1/boxed-nonthinking-v2/` | GRPO 訓練與驗證 parquet |
+| `assets/datasets/chess-r1/boxed-v2/` | 思考版歷史資料，供對照 |
+| `assets/vendor/Chess-R1-830c0597/` | searchless Chess 上游原始碼 |
+| `assets/engines/` | Fairy-Stockfish 與 NNUE |
+| `configs/grpo/default.json` | GRPO 配方模板 |
+| `scripts/run_grpo.py` | Worker 研究任務入口與模型導出 |
+| `scripts/train_chess_r1.py` | verl GPU 訓練入口 |
+| `src/llmgo/training/chess_r1_verl.py` | verl GRPO 實作 |
+| `src/llmgo/training/chess_r1_reward.py` | 270M reward 呼叫與計分 |
+| `scripts/run_deepseek_loose.py` | DeepSeek Flash 棋局評測 |
+| `var/runs/<實驗ID>/` | 配方、訓練、評測、棋局事件與日誌 |
+| `var/campaigns/<campaign>/` | Controller、Meta-Agent、Executor 狀態 |
+| `var/workspaces/` | Meta-Agent 每輪可編輯副本 |
+| `var/runtime/` | 暫存與服務日誌 |
 
-## 运行方式
+大型權重、parquet、引擎、實驗輸出和憑證留在遠端，不進 Git；原始碼、配方、測試與文檔進 GitHub。逐檔 SHA-256 資產搬遷回執在遠端 `var/migrations/20261102/assets.json`。資料有 99,571 筆訓練、2,291 筆驗證、23,243 筆測試。詳細內容見 [GRPO pipeline](docs/grpo-pipeline.md)。
 
-程序在本机开发，你上传后在远端运行。唯一默认可写远端根目录 `/user/lyh4170`；原学生路径保持 `/user/liyaohu4170/models/Qwen3.5-4B`，只读。所有任务使用 **beijing / model-autosft / NORMAL**，GPU 只用于 job/pytorchjob，不停止他人任务。
+## 執行
 
-按 [首次部署](docs/rsi-first-run.md) 安装控制环境与基于指定镜像的 Worker overlay，然后：
+在遠端自己的 GPU job 中，Worker 研究任務可使用：
 
-```bash
-bash '/user/lyh4170/LLMGo!/scripts/start_rsi.sh' --web
+```json
+{"argv":["{python}","scripts/run_grpo.py","--output","{output}","--model","{model}"],"resources":{"gpu_count":8,"cpu":64,"memory_gib":512}}
 ```
 
-脚本使用现有专用控制Python，检查集群认证和Meta连接，首次初始化，随后在后台启动/恢复同名loop；`--web`同时启动网页。默认campaign为 `chess-autonomous-v2`，可用 `--campaign NAME` 选择自己的名称。启动后关闭终端不会结束后台loop。重复执行会检查真实进程锁，不重建campaign、不重复启动Controller；external Executor模式也会自动启动/复用独立Executor。已有端口上的服务保持原样。 若cctl的server配置缺少协议前缀，启动器会在本进程补齐 `https://`；旧的裸地址 `cybertron-hcloud.modelbest.co` 因其HTTPS证书过期而改用已验证的正式入口 `https://cybertron.modelbest.co`。已有完整http(s)地址保持原样，profile与token文件不变。集群查询失败会显示脱敏后的具体错误。
+配方凍結於 `var/runs/<實驗ID>/grpo/recipe.json`，原生 verl checkpoint、指標與 oracle 日誌在 `grpo/`，完整 HF 模型在 `grpo/model/`，供 Controller 收集的 `submission.json` 在實驗根。所有作業限 `beijing / model-autosft / NORMAL`，每項最多 8 GPU，devspace 0 GPU。
 
-查看状态：`bash scripts/start_rsi.sh --status`；跟随日志：`bash scripts/start_rsi.sh --logs`，Ctrl-C只退出日志查看。Controller日志在campaign目录的 `controller.log`；网页日志在站点runtime_root下 `launcher/web-7860.log`。需要选择其他控制解释器时设置 `RSI_PYTHON`，不改变系统或其他环境。
+遠端已有專用 verl、teacher 與推理環境。首次新 campaign 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web`；不沿用舊 campaign 的凍結快照。詳見 [RSI 操作](docs/rsi-operations.md)。網頁讀取 `var/runs/` 的指標和日誌，正式棋局的 `events.jsonl` 可逐手復盤，包含輸棋每一步、模型回覆和隨機後備。
 
-维护时可执行`bash scripts/start_rsi.sh --pause-research --web`：将操作员暂停持久化到research-control.json，阻止新Meta和新任务，已提交的Worker继续运行，新版Controller仍收集原任务。`--resume-research`只显式解除这项暂停，不清除真正的NEEDS_INPUT、不重建campaign；Controller已退出时再普通`--web`启动。live bridge的启动闸门也会在旧Controller调用新app-server之前检查暂停，防止模型请求；旧Controller需要在原devspace用一次`--restart-control --web`加载完整控制逻辑，其内嵌Executor轮询会短暂交接，GPU任务保持原ID运行。网页显示暂停原因；已有快照和结果不改写。操作细节见[维护暂停](docs/rsi-operations.md#操作员维护暂停)。
+DeepSeek 對照：在自有 CPU job 設 `CHESS_LEVEL=2` 或 `3` 執行 `scripts/run_deepseek_loose.py`。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`；程式僅對 DeepSeek API 使用內部白名單代理；JSON 與日誌寫在 `var/runs/<實驗ID>/evaluations/`。
 
-若停在 `NEEDS_INPUT`，先查看具体原因并修复，再执行 `bash scripts/start_rsi.sh --resume --web`。这会保留已完成基线、研究副本和原会话，用新的请求版本继续 Meta 工作，避免直接重放此前缓存的 `needs_input`。它不会升级冻结的评测源码，不与 `--upgrade` 同用。当前只修复 Meta 提前结束时，无需重跑40局基线或重新 init。
+## 同步
 
-若 Meta 已完成研究、写好提案，却因结束回复的格式而退出，且campaign仍为 `PLANNING`，执行 `bash scripts/start_rsi.sh --recover-meta --web`。它从持久日志确认对应thread/turn已完成，解析原最终回复（支持说明文字后的单个JSON代码块），备份状态与session，验证并冻结原提案，再启动评测；不重新调用研究模型，不靠猜测或仅凭磁盘上有proposal就提交。多个互相冲突的JSON、未完成turn、其他workspace或活动进程均拒绝恢复。若运维已完成提案恢复，状态已变成 `EXPERIMENT`/`EVALUATING`/`WAITING`，直接 `bash scripts/start_rsi.sh --web` 继续，不重复加恢复参数。
-
-启动检查包含 `--sandbox-check --tools-check`：不仅验证 API 返回 READY，还要求模型亲自调用 `exec_command`，产生成功命令事件并正确复制一个随机测试文件。普通 `--sandbox-check` 单独使用仍只证明客户端可以运行命令。研究请求不强制每次上游响应采用最终JSON schema。Meta完成修改和测试后，优先执行prompt给出的 `scripts/finish_research.py --request ... --summary '...'`：原子保存绑定本次请求、proposal与研究源码哈希的完成记录，Controller在模型结束发言后校验并准备实验。仍兼容原三字段最终JSON；proposal草稿存在不会触发提交。
-
-无效结束回复会自动续接，有工具进展的研究没有总turn/时间上限。连续两次没有工具动作也没有明确交接，换新会话从原workspace/Memory继续；每次调用最多换两次，再交给Controller延迟重试。断流、暂时服务失败和交接协议持续失败依次等待60、120、240、480、600秒，最多自动重试5次；重启保留计数与下次时间。认证/协议配置错误、未知程序异常或产物身份不符明确转为`NEEDS_INPUT`，保留证据并提示处理方法。网页展示恢复阶段、错误类别、次数和下次时间；GPU监控仍遵循5–10分钟间隔。
-
-候选源码完整复制后才原子发布；Controller若在发布后、保存状态前退出，会核对并复用完全相同的候选，不覆盖不同内容。完成记录在campaign的`meta-requests/REQUEST_ID/`，不混入研究源码；完成后又改代码必须重新确认。控制端修复不要求升级已冻结评测源码：现有第四轮仍为`PLANNING`且Meta已退出时，普通 `bash scripts/start_rsi.sh --web` 可继续原研究。
-
-Meta重复生成防护只检查同一助手消息中的长周期重复：至少2048字符、至少12次完全相同的短周期；工具stdout与正常长计算不在检测范围。触发后记录`meta_generation_loop`，通过app-server中断该turn，保留原会话与文件，换新thread从Memory和已有任务继续；每个研究请求最多恢复两次，再次失败转NEEDS_INPUT。网页事件中能区分发现循环、切换会话与恢复耗尽。它不限制整轮研究时长，也不停止集群任务。
-
-正在运行的Controller不会自动热加载Python修复。若它正在WAITING且Meta已结束，可在原devspace执行 `bash scripts/start_rsi.sh --restart-control --web`：检查进程归属、任务intent及实际锁，备份状态，在无提交/轮询和日志写入时仅停止Controller，然后普通启动并接手原GPU任务。活动Meta、提交身份不明、锁忙或主机不符时会拒绝；不与resume/recover-meta/upgrade混用，不用来打断正常研究。
-
-`init`只执行一次，恢复时沿用原campaign。已有campaign保持冻结设置，旧自动晋级campaign请另起名称，不原地混用旧状态。手动CLI操作见[首次部署](docs/rsi-first-run.md)。
-
-启动前可单独验证 Meta-Agent：在远端配置 `OPENAI_API_KEY`，或在当前 provider 的 `experimental_bearer_token` 填入 key 后，运行 `python3 scripts/check_meta_connection.py`。配置内 token 优先，测试与正式 Meta-Agent 使用相同解析逻辑；即使旧 env_key 行仍在，也无需再次 export。它使用站点配置中的 Codex、模型和独立 CODEX_HOME，通过 app-server 请求结构化 READY；只有真实模型请求成功才通过。`--offline` 仅检查本地程序与协议，不证明认证有效。每次测试的脱敏原始事件和结果保存在自己目录 `rsi_readiness/meta-connection/`。目前自己的 provider 使用 `https://yeysai.com/v1`、模型 `deepseek-v4.1-flash`，已真实通过 READY 请求。独立 Chat 转接层保留 Codex 工具和会话，将 Codex Responses 请求转为上游 `/v1/chat/completions`；无需让该站点支持 Responses。完整 endpoint 也会被规范化，避免重复拼接。安装与配置见[首次部署](docs/rsi-first-run.md)。 服务器已限制可写目录，因此 RSI 使用 `meta_sandbox_mode: "external"`，由外层容器/服务器提供隔离，避免容器中再次建立 bubblewrap 沙箱。正式会话、会话恢复和检查脚本使用相同策略；可运行 `python3 scripts/check_meta_connection.py --sandbox-check` 验证 shell 和模型连接。 已在指定镜像的0GPU job验证真实模型工具写入/读取文件，以及重启 Codex 后恢复同一会话继续执行工具；原始事件保留在自己目录 readiness/Memory 中。
-
-Chat→Responses转接层会补齐已观察到的推理事件缺口：reasoning开始项的`summary: []`、摘要片段前缺失的`reasoning_summary_part.added`，并保持事件序号递增。固定LiteLLM 1.105.2的每个响应实例也会延后空/role-only区块的项初始化，避免提前建立正文后缺少推理开始项；不改已安装依赖或共享环境。不改变推理文字、正文、工具ID/参数、usage或完成状态。原始转换事件仍完整记录，`iterator_compat`、`stream_repair`及`stream_normalization`另记修正元数据；`/health`显示`stream_protocol=reasoning-lifecycle-v1`。这用于修复`ReasoningSummaryDelta without active item`，不是隐藏stderr。同步源码不会热改已经载入的bridge；下次Meta backend自然启动子进程时加载，Controller/Executor及计算任务可继续运行，不为加载修正而停机。
-
-默认先完成 L1–L4 的初始玩家基线，每档10局、白黑各5局，共40局，然后调用 Meta-Agent。之后由它决定代码改动、任意计算任务、测试范围和下一步。失败实验会保留产物并交回研究；基线基础设施失败则等待修复。没有 Meta-Agent 总研究时间上限。
-
-Executor默认embedded，与Controller同进程，但轮询/原始日志已从Meta上下文分离；需要独立0GPU进程时，在init前设置 `executor_mode: "external"`，分别运行 `scripts/rsi.py executor run CAMPAIGN` 和 `scripts/rsi.py run CAMPAIGN`。两种模式的研究、基线和恢复规则相同。GPU任务每300秒查询集群，状态稳定时退避至450、600秒；纯CPU任务保留较短间隔（默认120秒）。
-
-
-## 单难度评测接口
-
-Meta-Agent 在研究 workspace 执行 `python scripts/request_evaluation.py --level L2`，（默认8卡，可加 `--gpus 1` 至 `--gpus 8`）即可保留既有RL任务并把 proposal.json 设为仅测L2。也接受数字 `--level 2`；`--track model` 测固定Harness模型对照，`--track both` 测两轨，`--full-panel` 登记L1–L8完整面板。后续每档每轨20局。
-
-该命令只准备提案并输出标准 ready JSON；Meta-Agent 将其作为最终答复，Controller/Executor 自动提交和监控GPU任务。它不会在devspace直接推理，也不会让Meta-Agent轮询。可单独评测skills/Harness，也可保留proposal.jobs先训练再评测。`--hypothesis "..."` 更新假设，`--batch-index 1` 选择新复测种子批次。
-
-完成L1–L4初始40局后立即进入研究；基线面板显示为4/8、无完整总分，best暂为空。单难度结果仍会保存并进入Memory，但只有完整L1–L8 player结果才更新完整实测最佳。
-
-## LC0 / BT4 完整上传包
-
-`LLMGo-rsi-full-20261022.tar.gz` 在源码外包含 `teacher_assets/`：Linux x86_64 LC0 v0.32.1、对应源代码/构建输入、BT4-it332权重和SHA回执。LC0是在指定Worker镜像中为H800（sm_90）构建的离线教师程序；BT4是它加载的神经网络权重，用于初始PPO的局面价值估计。正式对手仍是Fairy-Stockfish，正式玩家不使用LC0替Qwen选步。
-
-上传完整包并解压到 `/user/lyh4170` 后，在仓库运行：
-
-```bash
-python3 scripts/install_teacher.py --verify-only
-python3 scripts/install_teacher.py
-```
-
-第二条将资产安装到原site的 `lc0_bin` 与 `reward_weights` 路径，遇到不同的已有文件会拒绝覆盖；不改系统或其他venv。编译/version/动态库检查不能替代GPU推理验证，详细范围见包内构建回执。源码小包不含这些资产，学生Qwen权重不包含在任一上传包。`teacher_assets/`不进入Git，也不复制到每轮研究快照，避免365 MiB教师反复占用磁盘。
-
-## 固定评测
-
-正式入口是 **`scripts/evaluate.py`**。受保护范围包括它使用的裁判、棋规、引擎、协议和固定参考 Harness；候选在单独进程中载入可修改代码，不能通过 Python import 改动裁判。所有走法由裁判重新检查。
-
-| 轨道 | 提交 | 用途 |
-|---|---|---|
-| `player` | 候选模型＋候选 Harness＋skills | 主要实际玩家能力 |
-| `model` | 候选模型＋创建 campaign 时固定的参考 Harness/skills | 权重能力对照 |
-
-后续正式评测每档20局、白黑各10局；初始基线每档10局、白黑各5局。两者均为200半步、thinking=True。每手总生成上限32768 tokens，单请求540秒、整手1800秒；推理请求由评测端执行并记录。候选可自主改变内部阶段、工具及分配，但不能突破外部资源上限。正式下棋不用另一个引擎替代 Qwen 选步；离线教师与训练方案须遵守上面的 RL/skills 方法边界。
-
-| 难度 | Skill Level | depth | 时间上限/步 |
-|---|---:|---:|---:|
-| L1 | -9 | 5 | 0.05秒 |
-| L2 | -5 | 5 | 0.10秒 |
-| L3 | -1 | 5 | 0.15秒 |
-| L4 | 3 | 5 | 0.15秒 |
-| L5 | 7 | 5 | 0.15秒 |
-| L6 | 11 | 5 | 0.15秒 |
-| L7 | 15 | 5 | 0.15秒 |
-| L8 | 20 | 5 | 0.15秒 |
-
-总分是八档得分率 `(胜+0.5×和)/20` 的等权平均；**缺任何一档，总分为 null，不能更新实测最佳**。初始基线只测L1–L4，每档分母为10、共40局；这不是完整八档成绩；网页按实际局数显示。基线样本更少，与后续20局结果比较时须注意波动。两条轨道独立计分。20局有波动，实测最高不代表显著进步；最终推荐模型应另用新的 batch-index 完整复测。难度不是已校准 Elo，不报告虚构的 Elo。
-
-在 GPU job 中可调用评测查看实力，例如：
-
-```bash
-python3 /PATH/TO/PROTECTED/source/scripts/evaluate.py   --model-path /user/liyaohu4170/models/Qwen3.5-4B   --candidate-root /user/lyh4170/research-checkout   --track both --levels 1,2,3,4,5,6,7,8   --output /user/lyh4170/probes/unique-name
-```
-
-`--levels 1` 是快速单档探针；`--track both` 完整共320局。每次输出使用新目录。Meta-Agent 可通过任意 research job 调用受保护入口；正式 campaign 成绩只采纳 Controller 注册、Executor 核验的评测。
-
-同一 Unix 用户下的独立进程和哈希验证是防误修改边界，**不是对恶意代码的 OS 沙箱**。若要防止主动篡改，用独立评测账户/服务和只读挂载部署评测副本。不要只把 evaluate.py 标成唯读，却让其裁判或引擎可替换。
-
-## 研究提交与观察
-
-[操作与 proposal 格式](docs/rsi-operations.md)；[任务提交样例与本次文件变化](docs/rsi-submission-and-files.md)；[Executor](docs/rsi-executor.md)；[网页与日志](docs/rsi-observability.md)；[初始棋类 skills](skills_docs.md)。
-
-开启网页：
-
-```bash
-cd '/user/lyh4170/LLMGo!'
-export LLMGO_RSI_ROOT=/user/lyh4170/rsi_campaigns
-PYTHON=/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python bash scripts/run_web.sh
-```
-
-通过平台转发7860端口，访问 `/rsi` 或 `/`。页面显示研究假设、工作/最佳/推荐版本、跨难度矩阵、Meta-Agent可见输出与命令、Executor轮询、任务日志、棋盘和模型流式输出。网页只读磁盘；3秒增量、有界窗口、正文按需加载，隐藏页面暂停刷新，不发 cctl 查询。
-
-## Worker 镜像与安装
-
-默认且本次指定基底：
-
-```
-share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb
-```
-
-`worker_entry.py` 在这个镜像内使用专属 Worker overlay `/user/lyh4170/venvs/llmgo-rsi-20261022`；正式推理使用独立 inference overlay（Transformers 4.57.6）。默认 verl PPO 另用 `/user/lyh4170/venvs/llmgo-verl-ppo-tf54-20261024`，固定 verl 0.8.0、Transformers 5.4.0、mistral-common 1.10.0，保留原镜像 Torch/CUDA/vLLM。所有安装、缓存和临时文件在本研究自己的目录；安装器有归属标记、文件锁、基础栈约束和导入回执，不修改系统或其他任务环境。依赖从中科大镜像下载。
-
-正式评测使用已通过H800测速的vLLM设置：每卡独立副本、TP=1、BF16、`--max-num-seqs 8`，启用默认编译/CUDA Graph，不使用 `--enforce-eager`。仍默认8卡同时进行8局；max-num-seqs是单服务容量上限，不把对局数改成64局。任务1354496在546-token输入、固定生成512 tokens、开启thinking下，暖机后单请求约212 tokens/s（eager约29），单卡4请求合计约721 tokens/s；长对局速度仍以实际日志为准。首次请求可能需要额外暖机时间。回执：`/user/lyh4170/rsi_readiness/inference-speed-v3-20261024/gpu-result.json`。
-
-## 本地检查与重新打包
-
-```bash
-PYTHONPATH=src python3 -m pytest -q
-node tests/test_rsi_ui.js
-python3 scripts/package_source.py --output /home/lif/LLMGo-rsi-autonomous-20261022.tar.gz
-# 已有完整教师资产目录时，额外生成完整包
-python3 scripts/package_source.py --teacher-assets /PATH/TO/teacher_assets --output /PATH/TO/LLMGo-rsi-full-20261022.tar.gz
-```
-
-源码小包包含当前源码、tests、隐藏 `.agents`、文档、Fairy 和 NNUE；排除 `.git`、runs、凭证、Python环境及学生/LC0权重。带 `--teacher-assets` 的完整包额外包含经核验的LC0/BT4教师资产，学生权重仍不打包。旧对局不会删除或打进包。本次删除了其他棋种、旧十局/自动晋级入口、旧游戏创建网页及其专用测试；逐手查看集成在 RSI 网页，删除清单见 [removed-files.json](docs/removed-files.json)。
-
-本机无 Qwen4B GPU 实战验收。CPU/模拟服务/真实 Fairy 接口测试只验证程序链路，不证明模型棋力提高，也不证明远端镜像训练已成功。
-
-## verl PPO、多卡与已有 campaign 升级
-
-新训练入口 `scripts/train_ppo.py` 自动切换到自己的独立 verl 环境；安装脚本为 `scripts/bootstrap_verl.py`，依赖见 `requirements-rsi-verl.txt`。基于指定 ptdbench 镜像，固定 verl 0.8.0 / Transformers 5.4.0 / 原镜像 Torch 2.10、vLLM 0.17；不改变评测推理环境。详细配方、资源划分、恢复和证据见 [PPO 与并行操作](docs/rsi-verl-ppo.md)。
-
-PPO默认使用 `full_game_ppo_lc0`：Qwen 从标准开局与 Fairy 下完整局，训练对手默认 L2（opponent_level=2），Meta-Agent 可自行按研究需要调整 L1–L8 难度；LC0 仅作 value 教师。中间 reward=0、终局胜/负/和为 +1/−1/0；LC0 提供固定学生视角的 V，按棋步计算 γ=1、λ=0.95 的 GAE，再用 verl 更新。默认 8 卡时每批 7 局、最多 7 局并行；相邻奇数批次交替采用4白3黑与3白4黑，整批游戏做一次全局 minibatch 更新。internal_validation=false 默认不打训练前/后内部验证局；保留真实行为概率、reference KL、合法率、权重同步、有限值与导出加载检查，棋力通过独立正式评测判断。关闭时导出最新完整更新存档并明确标记未做内部验证；可显式开启 internal_validation=true 恢复固定验证及已验证存档选择。配置只需 ppo.json（training/teacher）与 skills.json，不再要求历史课程。训练重试耗尽时，随机合法后备作为学生该手继续完整局，原始输出仍参与GAE/loss；只在真实终局给分并单独记录后备率。旧单手 TD、自写 HF PPO、中心化协议优势已移除，旧 recipe 必须显式迁移；原有远端暂停不会自动解除。配置、日志、恢复和已移除文件见[完整对局 PPO](docs/rsi-verl-ppo.md)。 本次检查范围、GPU任务和异步前后对照产物见[验证记录](docs/full-game-ppo-validation-20261027.md)。
-
-Meta可修改训练源码，并按每轮最新可比证据自主选择研究起点，不固定继承最新版本或r7。新增[rsi-ppo-audit](.agents/skills/rsi-ppo-audit/SKILL.md)和[rsi-startpoint](.agents/skills/rsi-startpoint/SKILL.md)说明如何核对实际PPO状态、发现优化目标错误、动态选择并恢复历史组合，同时保留训练修补；r7的16胜L2记录是历史示例，详细授权、组合身份与远端通知方式见[Meta研究指引](docs/meta-ppo-guidance-20261026.md)。
-
-已有 campaign 的源码和站点配置被冻结，不会因覆盖仓库而自动升级。旧任务确认停止、Controller/Executor退出后，执行一次：
-
-```bash
-cd '/user/lyh4170/LLMGo!'
-bash scripts/start_rsi.sh --upgrade --web
-```
-
-脚本自动使用已安装的控制环境Python。upgrade保留旧任务、原始基线和参考Harness，新增版本快照，升级默认8卡并为失败基线登记新任务。失败旧版本没有可验证的逐局回执时，不复用其未核验结果。正式比赛数和协议不变：初始L1–L4每档10局，之后单档20局。
-
-从旧eager推理版本恢复也必须先执行一次上述 `--upgrade --web`，将新的服务启动参数纳入campaign源码快照；只覆盖仓库并运行普通 `--web` 不会更新冻结的评测源码。升级后日常恢复改用 `bash scripts/start_rsi.sh --web`。现有Web进程仍需单独重启才能加载Python网页接口更新，启动器不会自动重启已占用端口上的服务。
-
-候选进程通讯采用长度前缀JSON，并在模型生成期间持续读取子进程事件，支持完整长输出回传；单条消息上限64MiB，超过上限会明确中止并保留裁判原始记录。关闭过程包含管道排空和有界等待，避免异常后一直占用GPU。`harness_error`、引擎异常和中断均属于未完成评测，不记为正常败局、不发布正式成绩；单局失败由Worker尝试重跑，最多3次。恢复时跳过程序错误回执与旧评测身份，重跑相应棋局，不复用不兼容日志。真实非法走子仍按原协议判负。旧campaign同样需要一次 `--upgrade --web` 才能采用此修复。
-
-Python 3.12 的走棋超时兼容问题已修复：裁判先保存流中断时的部分原始输出、推理与Token诊断，再把携带诊断的取消子类转回标准取消异常，使超时正确成为`TimeoutError`；显式取消仍按取消处理。相关测试在推理开始后才触发短超时，另覆盖慢启动，避免把导入耗时误当诊断失败。远端Python 3.12.13已验证旧版重现失败、新版17项通过，见[故障说明与生效边界](docs/rsi-operations.md#走棋超时与部分诊断)。同步live仓库不会改变已冻结的评测源，不为此停止正在运行的Executor或任务；已有研究workspace时不能直接用`--upgrade`，迁移需另行安排。
-
-CUDA Graph诊断脚本现为`scripts/graph_ab.py`：按最终答案检查走法，分别记录服务端推理边界与字面`</think>`，每笔请求保存完整回答、Token及输入供重检。旧j000013的0/4来自可能误判的检查器且缺少原回答，实际合法率未知；不改写历史结果。调用方法、Meta如何在下轮采用及首批吞吐的限制见[诊断检查器说明](docs/rsi-operations.md#cuda-graph诊断的答案检查器)。
-
-
-8GPU训练验收已通过（任务1350755）：7卡PPO＋1卡LC0，2个训练步、每步2个PPO epoch，第二步重新采样，非零有限梯度、完整分片checkpoint与HF导出均完成。正式评测的多难度完整比赛尚未重跑；这次短验收不代表棋力提升。回执在 `/user/lyh4170/rsi_readiness/verl8-gpu-smoke-v5/`，详细证据见 `docs/environment-status.json`。
-
-本次研究基线为原始Qwen3.5-4B权重＋r000002 Harness/skills；已完成短训的checkpoint与评测模型见[起点与模型身份](docs/rsi-research-baseline.md)。
+遠端 `/user/lyh4170/LLMGo!` 是本次遷移的代碼準據。本機 `/home/lif/LLMGo!` 原有未提交改動需保留；在隔離工作樹完成、測試、提交和推送 GitHub 後，再以同一提交更新兩端。已啟動的 job 使用提交時的凍結快照；live 倉庫更新不會熱改已有實驗。

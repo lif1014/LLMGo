@@ -193,13 +193,16 @@ class CodexBackend:
             "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
             "每轮先读持久 Memory、失败记录与跨难度评测。只能通过强化学习（RL）和改进skills这两种方法提升Qwen3.5-4B，可以单独使用或组合。"
             "禁止使用SFT（监督微调），包括SFT预热、辅助SFT损失、行为克隆和对教师答案的监督蒸馏；使用SFT，最终得分为0分。"
-            "可自主修改RL算法、reward、数据、课程，以及为RL和skills服务的Harness、prompt、工具、skills内容/触发/选择、研究流程；默认训练入口scripts/train_ppo.py现为verl 0.8.0完整对局PPO+LC0：每批从标准开局下到终局，中间reward0、终局胜负和为+1/-1/0，LC0提供同一学生视角V，gamma1/lambda0.95按棋步GAE。只需ppo.json(training/teacher)和skills.json，不再使用单步课程。默认训练耗尽合法回答预算时随机选全部合法步之一，归属学生该手继续完整局、参与GAE/loss；保留真实输出概率及随机来源。可修改训练源码及配方，先读docs/rsi-verl-ppo.md，禁止恢复旧单步训练代码。"
+            "默认训练入口为 scripts/run_grpo.py，冻结配置为 configs/grpo/default.json；原始Qwen3.5-4B、题集、270M reward model 在本仓库 assets。"
+            "默认GRPO沿用Chess-R1的非思考prompt及\\boxed{SAN}答案、verl原生GRPO估计器；训练任务会将recipe、checkpoint、日志和导出模型写入LLMGo!/var/runs/<实验ID>/grpo。"
+            "可自行修改RL算法、reward、数据与课程；也可在候选源码根目录编写 harness.py 的 build_messages(fen,legal_san,skills,default_messages) 并编写 skills.json。默认不启用自定义harness。"
+            "任何候选harness只负责给Qwen构造消息，正式棋步由Qwen输出；请检查每局完整events.jsonl，特别是输棋每一步、模型原文、fallback及终局原因，并据此写假设。"
             "离线教师可用于RL奖励/价值估计、局面分析和提炼skills，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
             "最终会把成果对战固定L1-L8 Fairy-Stockfish，最低档skill -9/depth5/0.05秒；只刷简单档没有用。"
             "新campaign先做L1-L4基线，每档10局、白黑各5局，共40局，然后开始研究；初始基线不是完整八档成绩。"
-            "每项计算任务最多8 GPU，默认8卡。评测每卡一个Qwen副本并行棋局；可用request_evaluation.py --level L2 --gpus 4改并行数。verl PPO默认7卡actor/rollout/ref加1卡LC0，单卡时需CPU LC0后端。不要在devspace使用GPU。每次研究可只测一个难度，不必每次全八档；后续单档评测20局，比较时注意样本量差异。"
+            "每项计算任务最多8 GPU，默认8卡。评测每卡一个Qwen副本并行棋局；可用request_evaluation.py --level L2 --gpus 4改并行数。GRPO奖励使用同任务CPU运行的270M搜索模型。不要在devspace使用GPU。每次研究可只测一个难度，不必每次全八档；后续单档评测20局，比较时注意样本量差异。"
             "在workspace运行 python scripts/request_evaluation.py --level L2 即可更新proposal.json为只测L2，保留已有训练任务；"
-            "再返回ready和proposal绝对路径，由Executor提交及监控。--track model选择固定Harness模型对照，--full-panel请求L1-L8完整评测。"
+            "再返回ready和proposal绝对路径，由Executor提交及监控。--track model选择固定Prompt模型对照，--full-panel请求L1-L8完整评测。"
             "可以调用受保护evaluate.py；正式裁判、协议、引擎和结果记录不得更改。正式走棋由Qwen玩家完成，不用另一引擎替它选步。"
             "只写 /user/lyh4170，来源 /user/liyaohu4170 只读。不要修改用户其他任务的环境；新增依赖用本研究专用或实验独立venv与缓存，不原地升级系统/他人环境。"
             "GPU任务提交后每5–10分钟查询一次，纯CPU任务可较频繁查询，常规监控交给Executor。只用 beijing/model-autosft/NORMAL；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
@@ -211,7 +214,7 @@ class CodexBackend:
             "可自行阅读文件、运行CPU命令、修改研究副本或登记计算任务的事项，不是缺少用户输入。"
             "研究过程中正常使用工具；完成后优先执行本次请求的finish_research.py命令保存明确交接记录。"
             "也兼容最后输出JSON对象：status、summary、proposal_path；ready指向实际提案，needs_input时proposal_path=null。"
-            "参阅本目录docs/rsi-operations.md、.agents/skills中的Memory、提交和Executor说明。"
+            "参阅本目录docs/grpo-pipeline.md、docs/rsi-operations.md，以及 .agents/skills 中的提交和Executor说明。"
         ) + completion_prompt
 
         command = [self.site["codex_bin"], "app-server"]

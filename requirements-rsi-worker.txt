@@ -6,4 +6,4 @@ transformers==5.2.0
 peft>=0.18,<1
 accelerate>=1.12,<2
 safetensors>=0.6,<1
-# Evaluation/control overlay only. train_ppo.py uses a separate requirements-rsi-verl.txt environment.
+# Evaluation/control overlay only. run_grpo.py launches the separate requirements-rsi-verl.txt environment.

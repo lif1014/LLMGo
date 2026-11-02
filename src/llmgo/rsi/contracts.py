@@ -118,7 +118,7 @@ def load_site(path: str | Path) -> dict:
 def worker_environment(site: dict) -> dict:
     root = Path(site["user_root"])
     env = os.environ.copy()
-    runtime = inside(root, site.get("runtime_root", Path(site["repo"])/"var/runtime"))
+    runtime = inside(root, site.get("runtime_root", Path(site.get("repo", root))/"var/runtime"))
     # Use each variable for its documented purpose; never change HOME.
     paths = {
         "TMPDIR": runtime / "tmp", "XDG_CACHE_HOME": runtime / "cache",

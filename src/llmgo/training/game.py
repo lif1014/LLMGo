@@ -15,7 +15,8 @@ from llmgo.runtime.uci_player import UciPlayer
 
 class ChessEpisode:
     def __init__(self, episode_id, policy_version, student_color, level, engine_path, output,
-                 *, seed=4170, initial_fen=chess.STARTING_FEN, engine_factory=UciPlayer, resume_state=None):
+                 *, seed=4170, initial_fen=chess.STARTING_FEN, engine_factory=UciPlayer,
+                 opponent_spec=None, resume_state=None):
         if student_color not in ("white","black"):
             raise ValueError("Student color must be white or black")
         self.id, self.policy, self.color = episode_id, policy_version, student_color
@@ -40,7 +41,7 @@ class ChessEpisode:
             self.rng.setstate(tuples(resume_state['rng']))
             self.decision_offset=resume_state['decisions']
             self.prior_counts=resume_state['counts'];self.prior_fallback_reasons=resume_state['fallback_reasons']
-        self.opponent = opponent(level)
+        self.opponent = opponent(level) if opponent_spec is None else dict(opponent_spec)
         p = self.opponent
         self.engine = engine_factory("black" if self.actor else "white",engine_path,
             skill=p["skill"],depth=p["depth"],movetime=p["movetime_sec"],nodes=p["nodes"],

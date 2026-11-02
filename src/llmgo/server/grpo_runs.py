@@ -52,7 +52,8 @@ def runs():
         rows.append({'id':directory.name, 'updated':directory.stat().st_mtime,
                      'stage':read_json(progress).get('stage') if progress.is_file() else None,
                      'trained':(directory/'grpo/result.json').is_file(),
-                     'exported':(directory/'submission.json').is_file()})
+                     'exported':(directory/'submission.json').is_file(),
+                     'final_tested':(directory/'final-test/result.json').is_file()})
     return rows
 
 
@@ -63,9 +64,12 @@ def files(name: str):
                'research.log','logs/export.log','grpo/recipe.json','grpo/progress.json',
                'grpo/result.json','grpo/failure.json','grpo/identity.json',
                'grpo/resolved-config.json','grpo/oracle.log','grpo/logs/train.log']
+    allowed += ['final-test/protocol.json','final-test/progress.json','final-test/result.json','final-test/vllm.log']
     allowed += [p.relative_to(root).as_posix() for pattern in
                 ('grpo/updates/*.json','grpo/checkpoints/receipt-*.json','grpo/sampling/*.json',
-                 'grpo/tables/*.json','evaluations/*/summary.json','evaluations/*/progress.json')
+                 'grpo/tables/*.json','evaluations/*/summary.json','evaluations/*/progress.json',
+                 'final-test/game_results/*.json','final-test/games/*/summary.json',
+                 'final-test/games/*/events.jsonl')
                 for p in sorted(root.glob(pattern))[-30:]]
     result = []
     for relative in dict.fromkeys(allowed):

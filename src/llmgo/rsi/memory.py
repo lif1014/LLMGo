@@ -168,7 +168,7 @@ class MemoryStore:
             item = state.get(key) or {}
             summary[key] = {k:item.get(k) for k in ("id", "model_path", "model_sha256", "hypothesis")}
         summary["protected_source"] = {k:state["source"][k] for k in ("root", "sha256")}
-        summary["evaluation_objective"] = "L1-L8, 20 balanced games each; partial tests never update best"
+        summary["evaluation_objective"] = "L2/L3 validation, 20 balanced games each; L2.5 diagnostic; DeepSeek Flash non-thinking held out"
         summary["active_job"] = state["jobs"].get(state.get("active_job"))
         summary["recent_attempts"] = state["attempts"][-3:]
         summary["attempt_count"] = len(state["attempts"])

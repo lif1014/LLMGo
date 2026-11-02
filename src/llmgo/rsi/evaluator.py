@@ -203,8 +203,9 @@ def evaluate(payload):
     identity = model_identity(payload["model_path"])
     if payload.get("expected_model_sha256") and identity["sha256"] != payload["expected_model_sha256"]:
         raise ValueError("Candidate model changed since its registered checkpoint")
-    if p["opponent"]["level"] not in range(1,9):
-        raise ValueError("Unsupported official panel")
+    from .ladder import LEVELS
+    if p["opponent"]["level"] not in LEVELS:
+        raise ValueError("Unsupported development validation level")
     actual_engine = engine_identity(p["engine"], p["opponent"])
     if actual_engine != payload["engine_identity"]:
         raise ValueError("Opponent binary, NNUE or options changed")

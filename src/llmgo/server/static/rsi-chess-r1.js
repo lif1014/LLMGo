@@ -5,7 +5,7 @@
   section.id='chess-r1-panel';
   section.setAttribute('aria-label','Chess-R1 GRPO');
   const bar=document.createElement('div');bar.className='toolbar';section.append(bar);
-  const title=document.createElement('h2');title.textContent='Chess-R1 · verl GRPO';bar.append(title);
+  const title=document.createElement('h2');title.textContent='Chess-R1 · GRPO / 验证 / 最终测试';bar.append(title);
   const select=document.createElement('select');select.setAttribute('aria-label','选择实验');bar.append(select);
   const status=document.createElement('p');section.append(status);
   const metrics=document.createElement('div');metrics.className='matrix';section.append(metrics);
@@ -38,7 +38,7 @@
       if(files.some(row=>row.path===previous))fileSelect.value=previous;
       else if(files.some(row=>row.path==='grpo/progress.json'))fileSelect.value='grpo/progress.json';
       metrics.replaceChildren();
-      for(const path of ['grpo/progress.json','grpo/result.json','submission.json']){
+      for(const path of ['grpo/progress.json','grpo/result.json','submission.json','final-test/result.json']){
         if(!files.some(row=>row.path===path))continue;
         try{
           const page=await get('/runs/'+encodeURIComponent(selected)+'/artifact?'+new URLSearchParams({path,length:32768}));
@@ -55,7 +55,7 @@
   async function refresh(){
     try{
       const runs=await get('/runs');const previous=select.value;
-      select.replaceChildren(...runs.map(row=>new Option(row.id+' · '+(row.stage||'等待记录'),row.id)));
+      select.replaceChildren(...runs.map(row=>new Option(row.id+' · '+(row.final_tested?'DeepSeek 测试完成':row.stage||'等待记录'),row.id)));
       if(runs.some(row=>row.id===previous))select.value=previous;
       status.textContent=runs.length?'实验 '+runs.length+' 个 · '+new Date().toLocaleTimeString()+' 更新':'暂无实验；日志将写入 var/runs/<实验ID>/';
       if(select.value!==selected||select.value&&runs[0]?.id===select.value)await loadRun();

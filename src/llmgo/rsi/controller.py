@@ -13,7 +13,7 @@ from .memory import CampaignLocked, MemoryStore
 from .meta_protocol import MetaFailure
 from .research_control import ResearchPaused, read_control, require_research
 
-RESEARCH_VERSION = "autonomous-chess-v2"
+RESEARCH_VERSION = "chess-grpo-validation-v1"
 
 
 class Controller:
@@ -53,7 +53,7 @@ class Controller:
                    "source": initial_source, "skills_path": str(cards), "skills_sha256": file_hash(cards)}
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
                  "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
-                 "phase": "BASELINE", "baseline_games_per_level": 10, "baseline_levels": [1,2,3,4],
+                 "phase": "BASELINE", "baseline_games_per_level": 10, "baseline_levels": [2,3],
                  "round": 0, "active_job": None, "jobs": {},
                  "candidate": None, "workspace": None, "attempts": [], "meta_stalls": 0,
                  "initial": initial, "incumbent": initial.copy(), "working": initial.copy(),
@@ -62,7 +62,7 @@ class Controller:
         memory = MemoryStore(root)
         memory.save_state(state)
         memory.append("campaign_created", {"campaign_id": campaign_id, "source": source["sha256"],
-            "objective": "Open research; L1-L4 baseline 10 games/level, candidate evaluation 20 games/level; final panel L1-L8"})
+            "objective": "GRPO research; L2/L3 development validation, then one held-out DeepSeek Flash non-thinking final test"})
         return cls(root)
 
     def save(self):
@@ -113,7 +113,7 @@ class Controller:
             raise ValueError("Stored evaluation evidence changed")
         return read_json(ref["path"])
 
-    def _new_job(self, kind, role, candidate, *, level=1, track="player", command=None,
+    def _new_job(self, kind, role, candidate, *, level=2, track="player", command=None,
                  batch_index=0, comparison=None, resume_from=None):
         require_research(self.root)
         job_id = f"j{len(self.state['jobs'])+1:06d}"
@@ -139,8 +139,8 @@ class Controller:
             self.state["engine_pin"] = pin
             payload.update(protocol=batch_protocol, track=track, resources={"gpu_count":candidate.get("proposal", {}).get("evaluation_gpus", self.site["gpu_count"])},
                 engine_identity=actual_engine,
-                seed_schedule=[100000*level+100*batch_index+i for i in range(batch_protocol["games"]//2)],
-                comparison_id=f"{'baseline10-v2' if short_baseline else 'panel-v2'}:L{level}:b{batch_index}",
+                seed_schedule=[10000*int(level*10)+100*batch_index+i for i in range(batch_protocol["games"]//2)],
+                comparison_id=f"{'baseline10' if short_baseline else 'validation20'}:L{level}:b{batch_index}",
                 reference_source=self.state["initial"]["source"])
         elif kind == "research":
             payload["command"] = command
@@ -250,7 +250,7 @@ class Controller:
             shutil.copy2(parent["skills_path"], folder/"skills.json")
         atomic_json(folder/"context.json", self.memory.context())
         atomic_json(folder/"proposal.json", {"hypothesis": "Describe the next experiment", "evidence_refs": [],
-            "jobs": [], "evaluation": evaluation_plan({"levels":[1]}), "recommend": False})
+            "jobs": [], "evaluation": evaluation_plan({"levels":[2,3]}), "recommend": False})
         self.state["workspace"] = str(folder)
         self.save()
         return folder
@@ -400,7 +400,7 @@ class Controller:
                     self._finish()
             return {"status": "research_paused", "control": control}
         if phase == "BASELINE":
-            baseline_plan = evaluation_plan({"levels":self.state.get("baseline_levels", list(range(1,9)))})
+            baseline_plan = evaluation_plan({"levels":self.state.get("baseline_levels", [2,3])})
             if not self._evaluate_next(self.state["initial"], baseline_plan, "baseline"):
                 panel = panel_summary(self.state["pending_evaluations"])
                 self.state["baseline"] = self.state["pending_evaluations"][:]
@@ -447,7 +447,7 @@ class Controller:
             raise ValueError("Experiment was handed back to Meta-Agent; submit a new proposal with explicit resume paths")
         candidate = self.state["initial"] if old["role"] == "baseline" else self.state["candidate"]
         self.memory.append("explicit_retry", {"previous_job": old, "partial_artifacts_retained": payload["output"]})
-        self._new_job(payload["kind"], old["role"], candidate, level=old.get("level") or 1,
+        self._new_job(payload["kind"], old["role"], candidate, level=old.get("level") or 2,
                       track=old.get("track") or "player", command=payload.get("command"),
                       batch_index=old["batch_index"], resume_from=payload["output"])
 
@@ -554,8 +554,8 @@ class Controller:
                         "禁止任何 SFT、行为克隆或监督蒸馏。可以在自己的研究副本中改进 RL、reward、prompt、"
                         "自建 Harness、工具和 skills；正式裁判、历史回执和冻结评测源码不可改。"
                         "270M 教师只用于 RL reward、分析与 skills 提炼，不替学生正式走棋。"
-                        "先做有证据的假设与资源计划，再提出训练或 L1-L8 Fairy-Stockfish 评测。"
-                        "新 campaign 的 L1-L4 基线每档10局，后续评测每档20局；每任务最多8 GPU，优先使用 NORMAL。"
+                        "先做有证据的假设与资源计划，再提出训练或 L2/L2.5/L3 Fairy-Stockfish 开发验证。"
+                        "新 campaign 的 L2/L3 基线每档10局，后续验证每档20局；DeepSeek Flash non-thinking 留作独立最终测试。每任务最多8 GPU，优先使用 NORMAL。"
                         "按 docs/grpo.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
                         "完成 proposal.json 与必要验证后调用 finish_research.py 交接；确有障碍时返回 needs_input。"
                         f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")

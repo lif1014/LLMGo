@@ -1,18 +1,18 @@
-"""Fixed opponent panel. There is no promotion ladder or mastery threshold."""
+"""Development validation against fixed L2, L2.5 and L3 opponents."""
 from __future__ import annotations
 from statistics import mean
 import math
 
-LADDER_VERSION = "chess-panel-v2"
-LEVELS = tuple(range(1, 9))
-PRESETS = [(-9, .05), (-5, .10), (-1, .15), (3, .15),
-           (7, .15), (11, .15), (15, .15), (20, .15)]
+LADDER_VERSION = "chess-validation-v1"
+LEVELS = (2, 2.5, 3)
+ANCHOR_LEVELS = (2, 3)
+PRESETS = {2: (-5, .10), 2.5: (-3, .125), 3: (-1, .15)}
 
 
-def opponent(level=1, **unused):
-    if type(level) is not int or level not in LEVELS:
-        raise ValueError("Fixed evaluation supports L1-L8 only")
-    skill, seconds = PRESETS[level-1]
+def opponent(level=2, **unused):
+    if type(level) not in (int, float) or level not in LEVELS:
+        raise ValueError("Validation supports L2, L2.5 and L3 only")
+    skill, seconds = PRESETS[level]
     return {"level": level, "level_id": f"L{level}", "version": LADDER_VERSION,
             "strength_mode": "skill", "threads": 1, "hash_mb": 16, "variant": "chess",
             "skill": skill, "depth": 5, "movetime_sec": seconds, "nodes": None,
@@ -23,11 +23,11 @@ def evaluation_plan(data=None):
     data = {} if data is None else data
     if not isinstance(data, dict):
         raise ValueError("evaluation must be an object or false")
-    levels = data.get("levels", list(LEVELS))
+    levels = data.get("levels", list(ANCHOR_LEVELS))
     tracks = data.get("tracks", ["player"])
     if (not isinstance(levels, list) or not levels or len(set(levels)) != len(levels)
-            or any(type(x) is not int or x not in LEVELS for x in levels)):
-        raise ValueError("levels must be unique integers from L1-L8")
+            or any(type(x) not in (int, float) or x not in LEVELS for x in levels)):
+        raise ValueError("levels must be unique values from L2, L2.5 and L3")
     if (not isinstance(tracks, list) or not tracks or len(set(tracks)) != len(tracks)
             or any(x not in ("player", "model") for x in tracks)):
         raise ValueError("tracks must contain player and/or model")
@@ -79,9 +79,9 @@ def panel_summary(rows):
     for track in ("player", "model"):
         selected = [x for x in rows if x.get("track", "player") == track]
         latest = {x["level"]: x for x in selected}
-        complete = set(latest) == set(LEVELS)
+        complete = all(level in latest for level in ANCHOR_LEVELS)
         result[track] = {"complete": complete, "levels": {str(k): v["statistics"] for k,v in sorted(latest.items())},
-                         "score": mean(x["statistics"]["score"] for x in latest.values()) if complete else None,
+                         "score": mean(latest[level]["statistics"]["score"] for level in ANCHOR_LEVELS) if complete else None,
                          "games": sum(x["statistics"].get("games", 20) for x in latest.values()),
-                         "note": "Development results are adaptive, not calibrated Elo; initial baseline has fewer games."}
+                         "note": "Adaptive development validation; L2.5 is diagnostic, and the held-out final test is DeepSeek Flash non-thinking."}
     return result

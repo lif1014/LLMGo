@@ -1,6 +1,6 @@
 # LLMGo! · Chess-R1 GRPO
 
-遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Meta-Agent 可研究 RL 和 skills，禁止 SFT。正式棋力評測是 Qwen 對 Fairy-Stockfish 的完整棋局，L1–L8 固定難度。
+遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Meta-Agent 可研究 RL 和 skills，禁止 SFT。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。
 
 ## 目錄
 
@@ -18,6 +18,7 @@
 | `src/llmgo/training/chess_r1_verl.py` | verl GRPO 實作 |
 | `src/llmgo/training/chess_r1_reward.py` | 270M reward 呼叫與計分 |
 | `scripts/run_deepseek_loose.py` | DeepSeek Flash 棋局評測 |
+| `scripts/run_final_test.py` | 選定成果與 DeepSeek Flash 的保留最終測試 |
 | `var/runs/<實驗ID>/` | 配方、訓練、評測、棋局事件與日誌 |
 | `var/campaigns/<campaign>/` | Controller、Meta-Agent、Executor 狀態 |
 | `var/workspaces/` | Meta-Agent 每輪可編輯副本 |
@@ -35,10 +36,10 @@
 
 配方凍結於 `var/runs/<實驗ID>/grpo/recipe.json`，原生 verl checkpoint、指標與 oracle 日誌在 `grpo/`，完整 HF 模型在 `grpo/model/`，供 Controller 收集的 `submission.json` 在實驗根。所有作業限 `beijing / model-autosft / NORMAL`，每項最多 8 GPU，devspace 0 GPU。
 
-遠端已有專用 verl、teacher 與推理環境。首次新 campaign 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web`；不沿用舊 campaign 的凍結快照。詳見 [RSI 操作](docs/rsi-operations.md)。網頁讀取 `var/runs/` 的指標和日誌，正式棋局的 `events.jsonl` 可逐手復盤，包含輸棋每一步、模型回覆和隨機後備。
+遠端已有專用 verl、teacher 與推理環境。首次新 campaign 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web`；不沿用舊 campaign 的凍結快照。詳見 [RSI 操作](docs/rsi-operations.md)。網頁讀取 `var/runs/` 的指標和日誌，驗證棋局的 `events.jsonl` 可逐手復盤，包含輸棋每一步、模型回覆和隨機後備。
 
-DeepSeek 對照：在自有 CPU job 設 `CHESS_LEVEL=2` 或 `3` 執行 `scripts/run_deepseek_loose.py`。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`；程式僅對 DeepSeek API 使用內部白名單代理；JSON 與日誌寫在 `var/runs/<實驗ID>/evaluations/`。
+Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時提交 L2/L3。只有 L2 和 L3 兩檔齊備時才更新可比較的驗證分數。選定成果後，在獨立的 1 GPU job 執行 `scripts/run_final_test.py`，固定 10 局、白黑各 5 局，對手為 DeepSeek Flash non-thinking；所有原始走棋與回覆存於 `var/runs/<實驗ID>/final-test/`。`run_deepseek_loose.py` 是 DeepSeek 對 Fairy 的參考流程，不是 Qwen 對 DeepSeek 的最終測試。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`，只對 DeepSeek API 使用內部白名單代理。
 
 ## 同步
 
-遠端 `/user/lyh4170/LLMGo!` 是本次遷移的代碼準據。本機 `/home/lif/LLMGo!` 原有未提交改動需保留；在隔離工作樹完成、測試、提交和推送 GitHub 後，再以同一提交更新兩端。已啟動的 job 使用提交時的凍結快照；live 倉庫更新不會熱改已有實驗。
+遠端 `/user/lyh4170/LLMGo!` 是本次遷移的代碼準據。本機 `/home/lif/LLMGo!` 原有未提交改動已存入 Git stash，遷移後的原始碼同步到 GitHub、本機與遠端。已啟動的 job 使用提交時的凍結快照；live 倉庫更新不會熱改已有實驗。

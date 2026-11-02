@@ -9,14 +9,19 @@ EXCLUDED = {".git", "__pycache__", ".pytest_cache", ".venv", "venv", "runs", "en
 
 
 def snapshot_files(root):
-    for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root)
-        if any(x in EXCLUDED for x in relative.parts) or path.suffix==".pyc":
-            continue
-        if path.is_symlink():
-            raise ValueError(f"Source symlinks are not allowed: {path}")
-        if path.is_file() and relative.as_posix() not in {"source-manifest.json", "context.json"}:
-            yield relative, path
+    root = Path(root)
+    def walk(folder):
+        for path in sorted(folder.iterdir()):
+            relative = path.relative_to(root)
+            if path.name in EXCLUDED or path.suffix == ".pyc":
+                continue
+            if path.is_symlink():
+                raise ValueError(f"Source symlinks are not allowed: {path}")
+            if path.is_dir():
+                yield from walk(path)
+            elif path.is_file() and relative.as_posix() not in {"source-manifest.json", "context.json"}:
+                yield relative, path
+    yield from walk(root)
 
 
 def source_snapshot(repo, destination):
@@ -24,7 +29,9 @@ def source_snapshot(repo, destination):
     if destination.exists():
         raise FileExistsError(destination)
     if destination.is_relative_to(repo):
-        raise ValueError("Snapshot destination cannot be inside its source tree")
+        relative = destination.relative_to(repo)
+        if not relative.parts or relative.parts[0] not in EXCLUDED:
+            raise ValueError("Snapshot destination must be outside the source or in an excluded directory")
     files = {}
     for relative,path in snapshot_files(repo):
         target = destination/relative

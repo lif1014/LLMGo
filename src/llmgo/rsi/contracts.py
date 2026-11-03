@@ -112,6 +112,8 @@ def load_site(path: str | Path) -> dict:
         inside(site["user_root"], site["inference_python"])
     if site.get('cctl_token_file'):
         inside(site['user_root'],site['cctl_token_file'])
+    if site.get('cctl_identity_file'):
+        inside(site['user_root'],site['cctl_identity_file'])
     base_poll = finite(site.get("poll_seconds", 120), "poll_seconds", 1, 3600)
     finite(site.get("executor_max_poll_seconds", max(600, base_poll)), "executor_max_poll_seconds", base_poll, 3600)
     gpu_poll = finite(site.get("gpu_poll_seconds", 300), "gpu_poll_seconds", 300, 600)

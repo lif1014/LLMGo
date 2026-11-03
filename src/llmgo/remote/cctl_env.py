@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import re
+import tempfile
 from urllib.parse import urlsplit
 
 
-def cctl_environment(environment=None, *, config_root=None, token_file=None):
+def cctl_environment(environment=None, *, config_root=None, token_file=None, identity_file=None):
     env = dict(os.environ if environment is None else environment)
     if token_file and not env.get('CYBERTRON_TOKEN'):
         path=Path(token_file)
@@ -17,6 +19,33 @@ def cctl_environment(environment=None, *, config_root=None, token_file=None):
         if not token:
             raise ValueError('cctl token file is empty')
         env['CYBERTRON_TOKEN']=token
+        if identity_file:
+            # --own needs the CLI's cached authenticated user ID as well as a
+            # token. Keep this project's metadata in a named profile; never
+            # switch the default profile or copy a token into the HOME cache.
+            identity=json.loads(Path(identity_file).read_text())
+            if not re.fullmatch(r'ou_[A-Za-z0-9]+',identity.get('user_id','')) or not identity.get('server'):
+                raise ValueError('Missing authenticated cctl identity metadata')
+            profile='llmgo-rsi'
+            cache=Path(config_root) if config_root is not None else Path.home()/'.cybertronctl'
+            folder=cache/'profiles'/profile
+            if folder.is_symlink():
+                raise ValueError('Project cctl metadata profile must not be a symlink')
+            folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+            for name in ('user_id','server'):
+                target=folder/name
+                if target.exists():
+                    if target.read_text().strip()!=identity[name]:
+                        raise ValueError('Project cctl identity metadata differs; existing profile preserved')
+                    continue
+                fd,temp=tempfile.mkstemp(prefix='.'+name+'-',dir=folder)
+                try:
+                    with os.fdopen(fd,'w') as handle:handle.write(identity[name]+'\n')
+                    os.replace(temp,target)
+                finally:
+                    if os.path.exists(temp):os.unlink(temp)
+            env['CCTL_PROFILE']=profile
+            env.setdefault('CCTL_SERVER',identity['server'])
     env["CCTL_NO_UPDATE_CHECK"] = "1"
     server = env.get("CCTL_SERVER", "").strip()
     if not server:

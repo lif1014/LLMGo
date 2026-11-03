@@ -35,7 +35,7 @@ def child(a):
     tokenizer = AutoTokenizer.from_pretrained(a.model, local_files_only=True)
     rows = pq.read_table(a.dataset).slice(0,16).to_pylist()
     sequences = tokenizer.apply_chat_template([r['prompt'] for r in rows], tokenize=True,
-                                              add_generation_prompt=True, enable_thinking=True)
+                                              add_generation_prompt=True, enable_thinking=False)
     if hasattr(sequences, 'keys'):
         sequences = sequences['input_ids']
     model = LLM(model=a.model, tensor_parallel_size=1, gpu_memory_utilization=.4,

@@ -9,6 +9,7 @@
   "codex_bin": "/user/lyh4170/tools/bin/codex",
   "cctl_bin": "/user/lyh4170/tools/bin/cctl",
   "cctl_token_file": "/user/lyh4170/.config/llmgo/cybertron-token",
+  "cctl_identity_file": "/user/lyh4170/.config/llmgo/cctl-identity.json",
   "python": "python3",
   "cluster": "beijing",
   "resource_pool": "model-autosft",

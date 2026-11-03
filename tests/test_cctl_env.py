@@ -54,6 +54,20 @@ def test_private_remote_token_file_does_not_change_home_or_override_explicit_env
     with pytest.raises(ValueError,match='private permissions'):cctl_environment(original,token_file=path)
 
 
+def test_own_queries_use_authenticated_project_identity_without_switching_default(tmp_path):
+    token=tmp_path/'token';token.write_text('private-test-token');token.chmod(0o600)
+    identity=tmp_path/'identity.json';identity.write_text(json.dumps({'user_id':'ou_fixture','server':'https://cybertron.modelbest.co'}))
+    cache=tmp_path/'cache';cache.mkdir();(cache/'current-profile').write_text('unchanged')
+    env=cctl_environment({'HOME':'unchanged'},config_root=cache,token_file=token,identity_file=identity)
+    assert env['CCTL_PROFILE']=='llmgo-rsi' and env['HOME']=='unchanged'
+    assert (cache/'current-profile').read_text()=='unchanged'
+    assert (cache/'profiles/llmgo-rsi/user_id').read_text().strip()=='ou_fixture'
+    assert not (cache/'profiles/llmgo-rsi/token').exists()
+    identity.write_text(json.dumps({'user_id':'ou_other','server':'https://cybertron.modelbest.co'}))
+    with pytest.raises(ValueError,match='existing profile preserved'):
+        cctl_environment({},config_root=cache,token_file=token,identity_file=identity)
+
+
 @pytest.mark.parametrize('pools,success', [([{'name':'model-autosft'}],True),([],False),
     ({'data':[{'name':'model-autosft'}],'success':True},True),
     ({'pools':[{'name':'resource-pools/525','alias':'model-autosft'}]},True),

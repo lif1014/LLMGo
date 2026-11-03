@@ -2,6 +2,8 @@
 
 Executor 使用專案自有的 `/user/lyh4170/tools/bin/cctl`。無人值守的 token 位於 `/user/lyh4170/.config/llmgo/cybertron-token`（0600），只注入 cctl 子程序環境，不進 Git、提案、模型 prompt 或任務 entry。明確傳入的 CYBERTRON_TOKEN 優先；不改 HOME 或其他任務的登入配置。doctor --platform 會實測自己的資源池權限。
 
+`--own` 還需要登入核實過的 user_id，保存在同目錄的 cctl-identity.json。每個執行容器只在命名的 `llmgo-rsi` CLI profile 快取 user_id/server，保持 current-profile 不變，token 不寫入 HOME 快取。更新認證時須同步核實身份；不能因空資源池清單而省略權限檢查。
+
 遠端 0 GPU devspace 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web` 建新 campaign。`configs/rsi/site.beijing.json` 固定 `beijing / model-autosft，預設 HIGH（同時最多一個活動或提交不確定的 HIGH 任務）`，每項最多 8 GPU。Controller 把 Meta-Agent 每輪副本放在 `var/workspaces`；Worker 與 Executor 把任務結果放在 `var/runs/<campaign>-<job>`。每項 job 有源碼快照與配方身份。舊 campaign 的凍結源碼不會被 live 倉庫更新。
 
 Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt、空 `skills.json`，禁止候選 `harness.py` 和 SFT。默認訓練提案：

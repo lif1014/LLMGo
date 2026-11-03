@@ -74,7 +74,9 @@ def files(name: str):
                  'final-test/games/*/events.jsonl','logs/*.log',
                  'scaling/reviews/*/*.json','scaling/evaluations/*/*/metrics.json',
                  'scaling/evaluations/*/*/games/*/events.jsonl',
-                 'scaling/evaluations/*/*/games/*/summary.json')
+                 'scaling/evaluations/*/*/games/*/summary.json','scaling/evaluations/*/progress.json',
+                 'games/*/events.jsonl','games/*/summary.json','evaluations/*/metrics.json',
+                 'evaluations/*/progress.json','shared-inference/*/*.log','panel.json')
                 for p in sorted(root.glob(pattern))[-30:]]
     result = []
     for relative in dict.fromkeys(allowed):

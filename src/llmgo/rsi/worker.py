@@ -46,10 +46,10 @@ def execute(manifest_path, expected_sha=None):
         atomic_json(output/"environment.json", {"versions":versions,"inference_environment":inference,"manifest_sha256":wrapper["sha256"],
                     "image":site["image"], "cuda_visible_devices":os.environ.get("CUDA_VISIBLE_DEVICES"), "utc":utc()})
         try:
-            if payload["kind"] == "evaluate":
-                from .evaluator import evaluate
-                progress("evaluating", f"受保护裁判执行单档{payload['protocol']['games']}局，研究方法和候选Harness不受限")
-                artifact = evaluate(payload)
+            if payload['kind'] in {'evaluate','evaluate_panel'}:
+                from .evaluator import evaluate, evaluate_panel
+                progress('evaluating',f"受保护裁判执行{payload['protocol']['games']}局，使用登记的棋局协议")
+                artifact=evaluate_panel(payload) if payload['kind']=='evaluate_panel' else evaluate(payload)
             elif payload["kind"] == "research":
                 candidate = inside(site["user_root"], payload["candidate_source"]["root"])
                 command = payload["command"]
@@ -89,7 +89,9 @@ def execute(manifest_path, expected_sha=None):
                 "worker_wall_seconds":time.monotonic()-started, "allocated_gpu_count":payload.get("resources",{}).get("gpu_count",site["gpu_count"]),
                 "cost_scope":"worker execution, excludes queue/startup"}
             atomic_json(output/"result.json",result)
-            progress("completed", "产物已落盘，等待Executor收集",artifact=str(artifact))
+            counts=({'completed_games':payload['protocol']['games'],'total_games':payload['protocol']['games']}
+                    if payload['kind']=='evaluate_panel' else {})
+            progress("completed", "产物已落盘，等待Executor收集",artifact=str(artifact),**counts)
             return result
         except Exception as exc:
             progress("failed","任务失败，保留完整证据",error_type=type(exc).__name__)

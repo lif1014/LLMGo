@@ -149,6 +149,23 @@ def test_restart_after_validation_reuses_checkpoint_before_training(loop_fixture
     assert len([row for row in calls if row[0]=='eval'])==4
 
 
+def test_training_validation_submits_both_levels_to_one_pool(loop_fixture):
+    p,kwargs,calls=loop_fixture
+    p['site']['eval_shared_levels']=True
+    panels=[]
+    def panel(payloads):
+        panels.append(payloads)
+        return [kwargs['evaluator'](item) for item in payloads]
+    result=TrainingLoop(p,**kwargs,panel_evaluator=panel).run()
+    assert result['training_loop_action']=='finish'
+    assert len(panels)==3  # initial, step 5, step 10; one shared call each
+    for batch in panels:
+        assert [p['protocol']['opponent']['level'] for p in batch]==[2,3]
+        assert len({p['panel_output'] for p in batch})==1
+        assert len({p['games_output'] for p in batch})==1
+        assert batch[0]['game_id_prefix']!=batch[1]['game_id_prefix']
+
+
 def test_review_timeout_retains_model_and_native_receipt(loop_fixture):
     p,kwargs,calls=loop_fixture
     result=TrainingLoop(p,**{**kwargs,'sleep':lambda _:None}).run()

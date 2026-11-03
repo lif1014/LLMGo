@@ -56,13 +56,16 @@ def _pick_ports(preferred: int, count: int) -> list[int]:
     return chosen
 
 class VllmServer:
-    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None) -> None:
+    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8) -> None:
         self.model_path = model_path
         self.protocol = protocol
         self.log_path = log_path
         self.port = port
         self.gpu_id = gpu_id
         self.python = python
+        if type(max_num_seqs) is not int or not 1<=max_num_seqs<=40:
+            raise ValueError('vLLM max_num_seqs must be an integer from 1 to 40')
+        self.max_num_seqs=max_num_seqs
         self.proc: subprocess.Popen | None = None
         self.log = None
 
@@ -88,7 +91,7 @@ class VllmServer:
             "--tensor-parallel-size",
             "1",
             "--max-num-seqs",
-            "8",
+            str(self.max_num_seqs),
             "--max-model-len",
             str(max_len),
             "--gpu-memory-utilization",

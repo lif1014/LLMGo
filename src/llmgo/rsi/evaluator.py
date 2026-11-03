@@ -132,15 +132,16 @@ async def play_batch(payload, url, cards, output, *, indices=None):
             index = pair_id * 2 + (side == "black")
             if indices is not None and index not in indices:
                 continue
-            game_id = f"{payload['job_id']}-{index:02d}"
+            game_id = f"{payload.get('game_id_prefix',payload['job_id'])}-{index:02d}"
             result_path = output / "game_results" / f"{index:02d}.json"
             if result_path.exists():
                 games.append(checked_game(result_path, payload, index))
                 continue
-            game_root = output / "games" / game_id
+            games_output=inside(payload["site"]["user_root"],payload.get("games_output",output))
+            game_root = inside(games_output/'games',games_output/'games'/game_id)
             if game_root.exists():
                 # Keep every incomplete trace; each retry starts a fresh, deterministic game.
-                archive = output/"incomplete_games"
+                archive = games_output/"incomplete_games"
                 archive.mkdir(exist_ok=True)
                 number = sum(1 for _ in archive.glob(game_id+".*"))
                 game_root.rename(archive/f"{game_id}.{number:04d}")
@@ -191,64 +192,100 @@ async def play_batch(payload, url, cards, output, *, indices=None):
     return games
 
 
+def panel_payloads(payload):
+    """Expand a registered panel without changing any per-level chess protocol."""
+    root=Path(payload['output'])
+    result=[]
+    for batch in payload['evaluation_panel']:
+        level=batch['protocol']['opponent']['level']
+        name='L'+str(level).replace('.','p')
+        child={**payload,**batch,'kind':'evaluate','output':str(root/'evaluations'/name),
+               'panel_output':str(root),'games_output':str(root),'game_id_prefix':payload['job_id']+'-'+name}
+        child.pop('evaluation_panel',None)
+        if payload.get('resume_from'):
+            child['resume_from']=str(Path(payload['resume_from'])/'evaluations'/name)
+        result.append(child)
+    return result
+
+
+def evaluate_panel(payload):
+    batches=panel_payloads(payload)
+    paths=evaluate_many(batches)
+    rows=[{'level':p['protocol']['opponent']['level'],
+           'ref':{'path':str(path),'sha256':file_hash(path),'job_id':payload['job_id']}}
+          for p,path in zip(batches,paths,strict=True)]
+    target=Path(payload['output'])/'panel.json'
+    atomic_json(target,{'evaluations':rows,'total_games':sum(p['protocol']['games'] for p in batches)})
+    return target
+
+
 def evaluate(payload):
-    p, output = payload["protocol"], Path(payload["output"])
-    baseline = payload.get("role") == "baseline" and p.get("purpose") == "baseline"
-    validate_protocol(p, baseline=baseline)
-    seeds = payload["seed_schedule"]
-    if (not isinstance(seeds, list) or len(seeds) != p["games"]//2
-            or any(type(seed) is not int for seed in seeds) or len(set(seeds)) != len(seeds)):
-        raise ValueError("Seed schedule must contain one unique integer seed per white/black pair")
-    verify_source(payload["source"])
-    verify_source(payload["candidate_source"])
-    cards = None
-    if payload.get("track") == "model":
-        verify_source(payload["reference_source"])
-    identity = model_identity(payload["model_path"])
-    if payload.get("expected_model_sha256") and identity["sha256"] != payload["expected_model_sha256"]:
-        raise ValueError("Candidate model changed since its registered checkpoint")
-    from .ladder import LEVELS
-    if p["opponent"]["level"] not in LEVELS:
-        raise ValueError("Unsupported development validation level")
-    actual_engine = engine_identity(p["engine"], p["opponent"])
-    if actual_engine != payload["engine_identity"]:
-        raise ValueError("Opponent binary, NNUE or options changed")
-    helpers = runtime_helpers(payload["source"]["root"])
-    gpus = helpers.visible_gpu_ids()
-    if not gpus:
-        raise RuntimeError("Official evaluation must run in a GPU job")
-    count = payload.get("resources", {}).get("gpu_count", payload["site"]["gpu_count"])
-    if type(count) is not int or not 1 <= count <= 8 or len(gpus) < count:
-        raise RuntimeError(f"Evaluation requires 1-8 allocated GPUs; requested={count}, visible={len(gpus)}")
-    # Pin the actual initial-model hash too, before any completed game can be reused.
-    payload = {**payload, "expected_model_sha256":identity["sha256"]}
-    games = asyncio.run(parallel_batch(payload, cards, output, helpers, gpus[:count]))
-    metrics = {
-        "schema_version": 1, "candidate_id": payload["candidate_id"],
-        "comparison_id": payload["comparison_id"], "seed_schedule": payload["seed_schedule"],
-        "opponent_identity": digest(actual_engine), "protocol_identity": digest(p),
-        "track": payload.get("track", "player"),
-        "candidate_source_identity": payload["candidate_source"]["sha256"],
-        "reference_source_identity": payload.get("reference_source", {}).get("sha256"),
-        "source_identity": payload["source"]["sha256"], "skills_sha256": payload["skills_sha256"],
-        "model_identity": identity, "engine_identity": actual_engine, "protocol": p,
-        "host": platform.node(), "games": games,
-    }
-    metrics["statistics"] = batch_stats(metrics, expected_games=p["games"])
-    metrics["primary_score"] = metrics["statistics"]["score"]
-    # Do not publish if candidate execution changed the protected source/engine.
-    verify_source(payload["source"])
-    if engine_identity(p["engine"], p["opponent"]) != actual_engine:
-        raise ValueError("Evaluation engine changed during the batch")
-    verify_source(payload["candidate_source"])
-    if model_identity(payload["model_path"])["sha256"] != identity["sha256"]:
-        raise ValueError("Student weights changed during evaluation")
-    atomic_json(output / "metrics.json", metrics)
-    return output / "metrics.json"
+    return evaluate_many([payload])[0]
 
 
-async def parallel_batch(payload, cards, output, helpers, gpus):
-    """Independent games share owned vLLM replicas with bounded per-GPU concurrency."""
+def evaluate_many(payloads):
+    """One shared model pool, with independently verified metrics for each level."""
+    if not payloads:
+        raise ValueError('Empty evaluation panel')
+    outputs=[inside(p['site']['user_root'],p['output']) for p in payloads]
+    levels=[(p['protocol']['opponent']['level'],p.get('track','player')) for p in payloads]
+    if len(set(outputs))!=len(outputs) or len(set(levels))!=len(levels):
+        raise ValueError('Shared panel requires distinct levels and output directories')
+    first=payloads[0]
+    identity=model_identity(first['model_path'])
+    helpers=runtime_helpers(first['source']['root'])
+    gpus=helpers.visible_gpu_ids()
+    count=first.get('resources',{}).get('gpu_count',first['site']['gpu_count'])
+    if type(count) is not int or not 1<=count<=8 or len(gpus)<count:
+        raise RuntimeError(f'Evaluation requires 1-8 allocated GPUs; requested={count}, visible={len(gpus)}')
+    decode_keys=('model_name','max_tokens','temperature','top_p','top_k','presence_penalty',
+                 'repetition_penalty','enable_thinking','answer_protocol')
+    engines=[];pinned=[]
+    for payload in payloads:
+        p=payload['protocol']
+        if (any(payload.get(k)!=first.get(k) for k in ('site','source','candidate_source','model_path','skills_sha256','track','reference_source'))
+                or payload.get('resources',{})!=first.get('resources',{})
+                or any(p[k]!=first['protocol'][k] for k in decode_keys)):
+            raise ValueError('Shared evaluations require the same model, source, resources and decoding protocol')
+        baseline=payload.get('role')=='baseline' and p.get('purpose')=='baseline'
+        validate_protocol(p,baseline=baseline)
+        seeds=payload['seed_schedule']
+        if (not isinstance(seeds,list) or len(seeds)!=p['games']//2
+                or any(type(seed) is not int for seed in seeds) or len(set(seeds))!=len(seeds)):
+            raise ValueError('Seed schedule must contain one unique integer seed per white/black pair')
+        verify_source(payload['source']);verify_source(payload['candidate_source'])
+        if payload.get('track')=='model':verify_source(payload['reference_source'])
+        if payload.get('expected_model_sha256') and payload['expected_model_sha256']!=identity['sha256']:
+            raise ValueError('Candidate model changed since its registered checkpoint')
+        actual=engine_identity(p['engine'],p['opponent'])
+        if actual!=payload['engine_identity']:
+            raise ValueError('Opponent binary, NNUE or options changed')
+        engines.append(actual);pinned.append({**payload,'expected_model_sha256':identity['sha256']})
+    games=asyncio.run(parallel_panel(pinned,helpers,gpus[:count]))
+    # Verify the whole shared run before publishing any level's official score.
+    verify_source(first['source']);verify_source(first['candidate_source'])
+    if model_identity(first['model_path'])!=identity:
+        raise ValueError('Student weights changed during evaluation')
+    for payload,actual in zip(pinned,engines,strict=True):
+        if engine_identity(payload['protocol']['engine'],payload['protocol']['opponent'])!=actual:
+            raise ValueError('Evaluation engine changed during the batch')
+    paths=[]
+    for payload,actual,rows in zip(pinned,engines,games,strict=True):
+        p=payload['protocol']
+        metrics={'schema_version':1,'candidate_id':payload['candidate_id'],
+            'comparison_id':payload['comparison_id'],'seed_schedule':payload['seed_schedule'],
+            'opponent_identity':digest(actual),'protocol_identity':digest(p),
+            'track':payload.get('track','player'),'candidate_source_identity':payload['candidate_source']['sha256'],
+            'reference_source_identity':payload.get('reference_source',{}).get('sha256'),
+            'source_identity':payload['source']['sha256'],'skills_sha256':payload['skills_sha256'],
+            'model_identity':identity,'engine_identity':actual,'protocol':p,'host':platform.node(),'games':rows}
+        metrics['statistics']=batch_stats(metrics,expected_games=p['games'])
+        metrics['primary_score']=metrics['statistics']['score']
+        path=Path(payload['output'])/'metrics.json';atomic_json(path,metrics);paths.append(path)
+    return paths
+
+
+def prepared_games(payload, output):
     output.mkdir(parents=True, exist_ok=True)
     expected = payload["protocol"]["games"]
     if payload.get("resume_from"):
@@ -282,71 +319,103 @@ async def parallel_batch(payload, cards, output, helpers, gpus):
                 path.rename(archive/f"{index:02d}-{time.time_ns()}.json")
                 continue
             completed[index] = checked_game(path, payload, index)
-    queue = asyncio.Queue()
-    for index in range(expected):
-        if index not in completed:
-            queue.put_nowait(index)
-    lanes = payload.get('evaluation_games_per_gpu',payload['site'].get('eval_games_per_gpu',2))
-    if type(lanes) is not int or not 1 <= lanes <= 8:
-        raise ValueError('eval_games_per_gpu must be an integer from 1 to 8')
-    ports = helpers._pick_ports(8000, len(gpus))
-    slots = [{'slot':lane*len(gpus)+i,'replica':i,'lane':lane,'gpu':gpu,
-              'stage':'pending','game_index':None,'attempt':0}
-             for lane in range(lanes) for i,gpu in enumerate(gpus)]
-    failures = []
+    return completed
+
+
+async def parallel_batch(payload, cards, output, helpers, gpus):
+    del cards
+    return (await parallel_panel([{**payload,'output':str(output)}],helpers,gpus))[0]
+
+
+async def parallel_panel(payloads,helpers,gpus):
+    """Interleave all levels in one queue and reuse one vLLM process per GPU."""
+    from concurrent.futures import ThreadPoolExecutor
+    outputs=[Path(p['output']) for p in payloads]
+    completed=[prepared_games(p,out) for p,out in zip(payloads,outputs,strict=True)]
+    total=sum(p['protocol']['games'] for p in payloads)
+    first=payloads[0];site=first['site']
+    lanes=first.get('evaluation_games_per_gpu',site.get('eval_games_per_gpu',2))
+    cap=site.get('eval_max_parallel_games',40)
+    if type(lanes) is not int or not 1<=lanes<=40 or type(cap) is not int or not 1<=cap<=40:
+        raise ValueError('Evaluation concurrency must be an integer from 1 to 40')
+    parallelism=min(total,lanes*len(gpus),cap)
+    # Forty blocking HTTP requests must not be throttled by asyncio's default
+    # 32-thread executor while chess engines are also using to_thread.
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=max(32,parallelism+len(gpus)+16)))
+    queue=asyncio.Queue()
+    for offset in range(0,max(p['protocol']['games'] for p in payloads),len(gpus)):
+        for batch,p in enumerate(payloads):
+            for index in range(offset,min(offset+len(gpus),p['protocol']['games'])):
+                if index not in completed[batch]:queue.put_nowait((batch,index))
+    ports=helpers._pick_ports(8000,len(gpus))
+    slots=[{'slot':i,'replica':i%len(gpus),'lane':i//len(gpus),'gpu':gpus[i%len(gpus)],
+            'stage':'pending','game_index':None,'level':None,'attempt':0} for i in range(parallelism)]
+    shared=len(payloads)>1
+    poolroot=Path(first.get('panel_output',outputs[0].parent)) if shared else outputs[0]
+    logs=poolroot/'shared-inference' if shared else poolroot
+    failures=[]
     def progress():
-        atomic_json(output/'progress.json',{'stage':'evaluating','updated':utc(),
-            'message':f'并行评测：{len(completed)}/{expected}局，{len(gpus)}个GPU副本，每副本{lanes}局',
-            'completed_games':len(completed),'total_games':expected,
-            'parallelism':min(expected,len(slots)),'replica_count':len(gpus),
-            'games_per_gpu':lanes,'scheduling':'independent_games','slots':slots,'failures':failures[-8:]})
+        done=sum(map(len,completed))
+        value={'stage':'evaluating','updated':utc(),'completed_games':done,'total_games':total,
+            'message':f'共用队列：{done}/{total}局，{len(gpus)}个GPU副本，并行上限{parallelism}局',
+            'parallelism':parallelism,'replica_count':len(gpus),'games_per_gpu_limit':lanes,
+            'games_per_gpu':max((sum(s['replica']==i for s in slots) for i in range(len(gpus))),default=0),
+            'scheduling':'shared_level_queue' if shared else 'independent_games','slots':slots,'failures':failures[-8:]}
+        atomic_json(poolroot/'progress.json',value)
+        if shared:
+            for batch,(p,out) in enumerate(zip(payloads,outputs,strict=True)):
+                atomic_json(out/'progress.json',{**value,'completed_games':len(completed[batch]),
+                    'total_games':p['protocol']['games'],'level':p['protocol']['opponent']['level']})
     progress()
-
     def factory(replica):
-        return lambda index,attempt:helpers.VllmServer(Path(payload['model_path']),payload['protocol'],
-            output/f'gpu-{replica}'/f'vllm-{index:02d}-{attempt}.log',ports[replica],gpus[replica],
-            python=payload['site'].get('inference_python'))
-    replicas = [EvaluationReplica(factory(i),helpers._wait_servers) for i in range(len(gpus))]
-
+        def create(index,attempt):
+            options={'python':site.get('inference_python')}
+            if site.get('eval_vllm_max_num_seqs') is not None:
+                options['max_num_seqs']=site['eval_vllm_max_num_seqs']
+            return helpers.VllmServer(Path(first['model_path']),first['protocol'],
+                logs/f'gpu-{replica}'/f'vllm-{index:02d}-{attempt}.log',ports[replica],gpus[replica],**options)
+        return create
+    replicas=[EvaluationReplica(factory(i),helpers._wait_servers) for i in range(len(gpus))]
     async def worker(slot):
-        state = slots[slot]
-        replica = replicas[state['replica']]
+        state=slots[slot];replica=replicas[state['replica']]
         while True:
-            try:
-                index = queue.get_nowait()
+            try:batch,index=queue.get_nowait()
             except asyncio.QueueEmpty:
-                state.update(stage='completed',game_index=None)
-                progress()
-                return
-            state.update(game_index=index)
+                state.update(stage='completed',game_index=None);progress();return
+            p=payloads[batch];out=outputs[batch]
+            state.update(game_index=index,level=p['protocol']['opponent']['level'])
             for attempt in range(1,4):
-                state.update(attempt=attempt,stage='starting' if replica.service is None else 'playing')
-                progress()
+                state.update(attempt=attempt,stage='starting' if replica.service is None else 'playing');progress()
                 try:
                     async with replica.lease(index,attempt) as service:
-                        state['stage'] = 'playing';progress()
-                        rows = await play_batch(payload,service.base_url,cards,output,indices={index})
-                    completed[index] = rows[0]
-                    progress()
-                    break
-                except Exception as exc:
-                    detail = {'slot':slot,'replica':state['replica'],'game_index':index,'attempt':attempt,
-                        'error':str(exc),'traceback':traceback.format_exc(),'utc':utc()}
-                    atomic_json(output/'attempts'/f'game-{index:02d}-{attempt}.json',detail)
+                        state['stage']='playing';progress()
+                        rows=await play_batch(p,service.base_url,None,out,indices={index})
+                    completed[batch][index]=rows[0];progress();break
+                except Exception as error:
+                    detail={'slot':slot,'replica':state['replica'],'game_index':index,'attempt':attempt,
+                        'level':state['level'],'error':str(error),'traceback':traceback.format_exc(),'utc':utc()}
+                    atomic_json(out/'attempts'/f'game-{index:02d}-{attempt}.json',detail)
                     failures.append({k:v for k,v in detail.items() if k!='traceback'})
-                    state['stage'] = 'retrying' if attempt<3 else 'failed';progress()
+                    state['stage']='retrying' if attempt<3 else 'failed';progress()
                     if attempt==3:raise
-    tasks = [asyncio.create_task(worker(i)) for i in range(len(slots))]
+    tasks=[]
+    async def warmup(replica):
+        async with replica.lease(0,0):pass
     try:
-        results = await asyncio.gather(*tasks,return_exceptions=True)
+        if not queue.empty():
+            ready=await asyncio.gather(*(warmup(replica) for replica in replicas),return_exceptions=True)
+            errors=[r for r in ready if isinstance(r,BaseException)]
+            if errors:raise RuntimeError('Evaluation replicas did not all become ready') from errors[0]
+        tasks=[asyncio.create_task(worker(i)) for i in range(parallelism)]
+        results=await asyncio.gather(*tasks,return_exceptions=True)
     finally:
         for task in tasks:
             if not task.done():task.cancel()
         await asyncio.gather(*tasks,return_exceptions=True)
         await asyncio.gather(*(replica.close() for replica in replicas))
-    errors = [r for r in results if isinstance(r, BaseException)]
+    errors=[r for r in results if isinstance(r,BaseException)]
     if errors:
-        raise RuntimeError(f"Parallel evaluation incomplete; {len(completed)}/{expected} games retained. {errors[0]}") from errors[0]
-    if sorted(completed) != list(range(expected)):
-        raise RuntimeError("Refusing to merge an incomplete evaluation")
-    return [completed[i] for i in range(expected)]
+        raise RuntimeError(f'Parallel evaluation incomplete; {sum(map(len,completed))}/{total} games retained. {errors[0]}') from errors[0]
+    for p,rows in zip(payloads,completed,strict=True):
+        if sorted(rows)!=list(range(p['protocol']['games'])):raise RuntimeError('Refusing to merge an incomplete evaluation')
+    return [[rows[i] for i in sorted(rows)] for rows in completed]

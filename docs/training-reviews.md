@@ -2,6 +2,10 @@
 
 預設每 5 個 **optimizer update** 保存原生 checkpoint，退出訓練子程序並匯出 HF 模型，再完成 Fairy L2 / L3 各 20 局（各 10 個黑白配對）。初始 step 0 也用同樣協議。Lichess dev 不再是此流程每 5 step 的決策訊號；資料隔離照舊。初始 Qwen3.5-4B、Chess-R1 prompt 和 non-thinking 不變，預設仍用篩選資料，可選完整 Lichess 訓練池。
 
+L2/L3 共用同一個 40 局佇列和 vLLM 副本池，每卡一個 TP=1 副本。先等所有副本就緒，再一起派發 40 局；預設 8 GPU 為每卡約 5 局，1 GPU 也可排入 40 局。每卡的 max_num_seqs=40，整個池的評測並發上限同樣為 40。回覆推理與棋類引擎交替進行，因此並發 40 局不等於始終有 40 個 GPU 推理請求或滿載利用率。L2、L3 的協議、seed 配對、20 局計分和逐手證據保持分離。完整 40 局及身份校驗完成後才叫醒 Agent。
+
+首次基線也合併為一個 evaluate_panel 任務；單獨提交某一難度仍是 20 局。僅改評測排程與副本容量，沒有修改學生 prompt、reward 或對手強度。既有凍結任務沿用原版本；新版只對升級後建立的 manifest 生效。
+
 一個 HIGH job 保留 allocation，按「訓練 → 導出 → 驗證 → Meta 審查」循環，階段間釋放子程序。Controller 與外部 Executor 分開，Meta 思考時 Executor 仍能運作。排程器 GPU 查詢間隔 600 秒；審查請求經共享磁碟讀取，不受慢輪詢影響。同時最多一個活動或提交不確定的 HIGH job；遇到其他自己的 HIGH job 就等待，不停止任何其他任務。
 
 Worker 在 `scaling/reviews/step-N/request.json` 發佈綁定 checkpoint 與評測 SHA 的請求。Controller 建立審查研究副本，Meta 在 `proposal.json.training_review` 寫：

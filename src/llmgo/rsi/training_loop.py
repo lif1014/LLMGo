@@ -10,7 +10,7 @@ import sys
 import time
 
 from .contracts import atomic_json, digest, file_hash, inside, model_identity, protocol, read_json, utc
-from .evaluator import engine_identity, evaluate
+from .evaluator import engine_identity, evaluate, evaluate_many
 from .ladder import batch_stats, opponent
 from .training_review import publish, decision, expire
 from .research_control import require_research
@@ -43,7 +43,7 @@ def freeze_recipe(payload, output):
 
 class TrainingLoop:
     def __init__(self,payload, *, runner=subprocess.run, evaluator=evaluate, engine_probe=engine_identity,
-                 clock=time.monotonic, sleep=time.sleep):
+                 clock=time.monotonic, sleep=time.sleep,panel_evaluator=evaluate_many):
         self.p = payload
         self.site = payload['site']
         self.output = inside(self.site['user_root'],payload['output'])
@@ -51,6 +51,7 @@ class TrainingLoop:
         self.root.mkdir(parents=True,exist_ok=True)
         self.recipe = freeze_recipe(payload,self.output)
         self.runner,self.evaluator,self.engine_probe = runner,evaluator,engine_probe
+        self.panel_evaluator=panel_evaluator
         self.clock,self.sleep = clock,sleep
         self.campaign = Path(self.site['campaign_root'])/payload['campaign_id']
         self.history = read_json(self.root/'curve.json')['points'] if (self.root/'curve.json').exists() else []
@@ -107,7 +108,7 @@ class TrainingLoop:
             return next(point for point in self.history if point['step']==step)
         self.progress('validating_games',step)
         identity=model_identity(model)
-        rows=[]
+        rows=[];batches=[]
         before=self.clock()
         for level in (2,3):
             spec=opponent(level)
@@ -126,8 +127,17 @@ class TrainingLoop:
                 'expected_model_sha256':identity['sha256'],'protocol':protocol(spec,self.site['engine']),
                 'engine_identity':engine,'seed_schedule':[10000*int(level*10)+i for i in range(10)],
                 'comparison_id':f'validation20:L{level}:b0', 'reference_source':self.p['candidate_source']}
+            if self.site.get('eval_shared_levels'):
+                payload.update(panel_output=str(out.parent),games_output=str(self.output),
+                    game_id_prefix=f"{self.p['job_id']}-s{step:08d}-L{level}")
+            batches.append(payload)
+        paths=(self.panel_evaluator(batches) if self.site.get('eval_shared_levels')
+               else [self.evaluator(payload) for payload in batches])
+        if len(paths)!=len(batches):raise ValueError('Incomplete validation panel')
+        for payload,path in zip(batches,paths,strict=True):
+            level=payload['protocol']['opponent']['level']
             # Completed levels are reused only through the protected evaluator's game checks.
-            path=Path(self.evaluator(payload))
+            path=Path(path)
             metrics=read_json(path)
             if (metrics['model_identity']['sha256']!=identity['sha256']
                     or metrics['protocol_identity']!=digest(payload['protocol'])

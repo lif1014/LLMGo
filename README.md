@@ -30,6 +30,18 @@
 
 ## 執行
 
+在遠端 **0 GPU devspace** 啟動研究（沿用現有網頁）：
+
+```bash
+cd '/user/lyh4170/LLMGo!'
+export RSI_PYTHON=/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python
+export CCTL_SERVER=https://cybertron.modelbest.co
+export CCTL_NO_UPDATE_CHECK=1
+bash scripts/start_rsi.sh --campaign chess-grpo-v1
+```
+
+此命令會檢查認證並背景啟動 Controller 和獨立 Executor；已有同名服務則沿用。若要在當前 devspace 額外啟動網頁，可加 `--web`，預設埠 7860。日誌分別在 `var/campaigns/chess-grpo-v1/controller.log`、`executor-service.log`，啟動檢查記錄在 `var/readiness`。`--status` 看狀態，`--logs` 跟隨日誌。
+
 在遠端自己的 GPU job 中，Worker 研究任務可使用：
 
 ```json
@@ -47,3 +59,5 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 20 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
 
 預設每 5 個 optimizer step 完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。
+
+L2/L3 基線和驗證共用 40 局佇列，每卡一個 TP=1 vLLM 副本，所有副本就緒後開始派發。預設 8 卡時共 40 局同時進行，平均每卡 5 局；每副本 max_num_seqs=40，整個評測最多並行 40 局。兩個難度仍各自保存 20 局指標和完整棋譜。這是併發上限，不代表 GPU 計算利用率必定 100%。

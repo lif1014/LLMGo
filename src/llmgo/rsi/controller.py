@@ -118,7 +118,7 @@ class Controller:
         return read_json(ref["path"])
 
     def _new_job(self, kind, role, candidate, *, level=2, track="player", command=None,
-                 batch_index=0, comparison=None, resume_from=None):
+                 batch_index=0, comparison=None, resume_from=None, panel_levels=None):
         require_research(self.root)
         job_id = f"j{len(self.state['jobs'])+1:06d}"
         folder = inside(self.site["user_root"], self.root/"jobs"/job_id)
@@ -135,22 +135,30 @@ class Controller:
         payload['lineage_gpu_hours'] = candidate.get('lineage_gpu_hours',0.)
         payload['parent_curve'] = candidate.get('curve')
         payload['engine_pin'] = self.state.get('engine_pin')
-        if kind == "evaluate":
-            spec = opponent(level)
-            # Keep already-created campaigns on their frozen 20-game protocol.
-            short_baseline = role == "baseline" and self.state.get("baseline_games_per_level", 20) == 10
-            batch_protocol = protocol(spec, self.site["engine"], baseline=short_baseline)
-            # A panel has matched schedules across candidates; repeats use a new batch index.
-            actual_engine = self.engine_probe(self.site["engine"], spec)
-            pin = {k:v for k,v in actual_engine.items() if k != "spec"}
-            if self.state.get("engine_pin") is not None and self.state["engine_pin"] != pin:
-                raise ValueError("Official opponent binary/NNUE identity changed since campaign baseline")
-            self.state["engine_pin"] = pin
-            payload.update(protocol=batch_protocol, track=track, resources={"gpu_count":candidate.get("proposal", {}).get("evaluation_gpus", self.site["gpu_count"])},
-                engine_identity=actual_engine,
-                seed_schedule=[10000*int(level*10)+100*batch_index+i for i in range(batch_protocol["games"]//2)],
-                comparison_id=f"{'baseline10' if short_baseline else 'validation20'}:L{level}:b{batch_index}",
-                reference_source=self.state["initial"]["source"])
+        if kind in {'evaluate','evaluate_panel'}:
+            levels=panel_levels if kind=='evaluate_panel' else [level]
+            if not levels or len(set(levels))!=len(levels):raise ValueError('Invalid evaluation panel levels')
+            batches=[]
+            for selected in levels:
+                spec=opponent(selected)
+                short_baseline=role=='baseline' and self.state.get('baseline_games_per_level',20)==10
+                batch_protocol=protocol(spec,self.site['engine'],baseline=short_baseline)
+                actual_engine=self.engine_probe(self.site['engine'],spec)
+                pin={k:v for k,v in actual_engine.items() if k!='spec'}
+                if self.state.get('engine_pin') is not None and self.state['engine_pin']!=pin:
+                    raise ValueError('Official opponent binary/NNUE identity changed since campaign baseline')
+                self.state['engine_pin']=pin
+                batches.append({'protocol':batch_protocol,'engine_identity':actual_engine,
+                    'seed_schedule':[10000*int(selected*10)+100*batch_index+i for i in range(batch_protocol['games']//2)],
+                    'comparison_id':f"{'baseline10' if short_baseline else 'validation20'}:L{selected}:b{batch_index}"})
+            payload.update(**batches[0],track=track,
+                resources={'gpu_count':candidate.get('proposal',{}).get('evaluation_gpus',self.site['gpu_count'])},
+                reference_source=self.state['initial']['source'])
+            if kind=='evaluate_panel':
+                total=sum(row['protocol']['games'] for row in batches)
+                payload['evaluation_panel']=batches
+                payload['protocol']={'game':'chess_panel','games':total,'white':total//2,'black':total//2,
+                    'levels':levels,'purpose':'development_panel'}
         elif kind == "research":
             payload["command"] = command
             resources = command.get("resources", {})
@@ -167,7 +175,8 @@ class Controller:
         manifest = write_manifest(path, payload)
         job = {"id": job_id, "manifest": str(path), "sha256": manifest["sha256"], "role": role,
                "kind": kind, "batch_index": batch_index, "level": level if kind == "evaluate" else None,
-               "track": track if kind == "evaluate" else None, "candidate_id": candidate["id"], "status": "PREPARED"}
+               "track": track if kind in {'evaluate','evaluate_panel'} else None, "candidate_id": candidate["id"], "status": "PREPARED"}
+        if kind=='evaluate_panel':job['levels']=list(panel_levels)
         self.state["jobs"][job_id] = job
         self.state.update(active_job=job_id, phase="WAITING")
         self.save()
@@ -218,6 +227,18 @@ class Controller:
     def _consume(self, job, ref, payload):
         result = self.metrics(ref)
         candidate = self.state["initial"] if job["role"] == "baseline" else self.state["candidate"]
+        if payload['kind']=='evaluate_panel':
+            from .evaluator import panel_payloads
+            batches=panel_payloads(payload)
+            refs=result.get('evaluations',[])
+            levels=[p['protocol']['opponent']['level'] for p in batches]
+            if [row.get('level') for row in refs]!=levels:
+                raise ValueError('Evaluation panel does not match its registered levels')
+            for child,row in zip(batches,refs,strict=True):
+                inside(payload['output'],row['ref']['path'])
+                subjob={**job,'kind':'evaluate','level':row['level'],'id':job['id']+'-L'+str(row['level'])}
+                self._consume(subjob,row['ref'],child)
+            return
         if payload["kind"] == "research":
             candidate.setdefault("artifacts", []).append(ref)
             if result.get("model_path"):
@@ -450,8 +471,11 @@ class Controller:
         cursor = self.state["evaluation_cursor"]
         if cursor < len(schedule):
             track, level = schedule[cursor]
-            self._new_job("evaluate", role, candidate, track=track, level=level,
-                          batch_index=candidate.get("proposal", {}).get("evaluation_batch", 0))
+            remaining=[l for t,l in schedule[cursor:] if t==track]
+            shared=self.site.get('eval_shared_levels') and len(remaining)>1
+            self._new_job('evaluate_panel' if shared else 'evaluate',role,candidate,track=track,level=level,
+                          panel_levels=remaining if shared else None,
+                          batch_index=candidate.get('proposal',{}).get('evaluation_batch',0))
             return True
         return False
 
@@ -569,7 +593,7 @@ class Controller:
         self.memory.append("explicit_retry", {"previous_job": old, "partial_artifacts_retained": payload["output"]})
         self._new_job(payload["kind"], old["role"], candidate, level=old.get("level") or 2,
                       track=old.get("track") or "player", command=payload.get("command"),
-                      batch_index=old["batch_index"], resume_from=payload["output"])
+                      batch_index=old["batch_index"], resume_from=payload["output"],panel_levels=old.get('levels'))
 
     def recover_meta(self):
         if self.state["phase"] != "PLANNING" or self.state.get("active_job") or not self.state.get("workspace"):

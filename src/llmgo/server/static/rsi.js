@@ -269,7 +269,7 @@ async function files(generation){
       (p.games_per_gpu?" · 每副本最多"+p.games_per_gpu+"局":"")+"\n"+
       (p.slots||[]).map(s=>"GPU "+s.gpu+(s.lane!=null?" / 并发位"+(s.lane+1):"")+" · "+s.stage+" · 棋局 "+show(s.game_index)+" · 尝试 "+s.attempt).join("\n"):"")+
     (p?.total_steps?"\n训练更新："+p.step+"/"+p.total_steps+" · Actor GPU："+p.actor_gpus:"")+
-    "\n评测已落盘："+data.game_results+"/"+data.formal_games+"局\n阶段时间："+date(p?.updated);
+    "\n评测已落盘："+(p?.completed_games??data.game_results)+"/"+data.formal_games+"局\n阶段时间："+date(p?.updated);
   el("file-status").textContent=data.files.length+"个已存在文件 · 只在点击时读正文";
   const signature=JSON.stringify(data.files.map(f=>[f.path,f.bytes]));if(el("job-files").dataset.signature===signature)return;
   el("job-files").dataset.signature=signature;el("job-files").replaceChildren();

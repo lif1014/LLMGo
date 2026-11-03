@@ -316,8 +316,9 @@ def job_files(name: str, job_id: str):
             if path.is_file():
                 files.append({'path':f'jobs/{job_id}/output/{relative}',
                               'bytes':path.stat().st_size,'modified':path.stat().st_mtime})
-        results = list(islice((output/'game_results').glob('*.json'), 21))
         payload = read_json(job/'manifest.json').get('payload',{})
+        pattern='evaluations/*/game_results/*.json' if payload.get('kind')=='evaluate_panel' else 'game_results/*.json'
+        results=list(islice(output.glob(pattern),61))
         return {'files':files,'game_results':len(results),
                 'formal_games':payload.get('protocol',{}).get('games',20),
                 'progress':limited_json(output/'progress.json',16384)}

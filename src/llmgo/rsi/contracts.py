@@ -98,8 +98,13 @@ def load_site(path: str | Path) -> dict:
         inside(site["user_root"], site[key])
     if type(site.get("gpu_count")) is not int or not 1 <= site["gpu_count"] <= 8:
         raise ValueError("Default worker gpu_count must be an integer from 1 to 8")
-    if type(site.get('eval_games_per_gpu',2)) is not int or not 1 <= site.get('eval_games_per_gpu',2) <= 8:
-        raise ValueError('eval_games_per_gpu must be an integer from 1 to 8')
+    for key,default in [('eval_games_per_gpu',2),('eval_max_parallel_games',40),('eval_vllm_max_num_seqs',8)]:
+        if type(site.get(key,default)) is not int or not 1<=site.get(key,default)<=40:
+            raise ValueError(key+' must be an integer from 1 to 40')
+    if site.get('eval_games_per_gpu',2)>site.get('eval_vllm_max_num_seqs',8):
+        raise ValueError('Game concurrency exceeds the vLLM sequence capacity')
+    if type(site.get('eval_shared_levels',False)) is not bool:
+        raise ValueError('eval_shared_levels must be a boolean')
     if site.get("executor_mode", "embedded") not in {"embedded", "external"}:
         raise ValueError("executor_mode must be embedded or external")
     if site.get("runtime_root"):

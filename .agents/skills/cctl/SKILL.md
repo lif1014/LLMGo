@@ -11,7 +11,7 @@ description: 为本项目在 Cybertron 查询自己的资源和任务，按用�
 2026-10-30用户更新：自有GPU任务并发上限为5个（含排队、启动和运行），每任务最多8GPU；提交前按--own与intent对账，不为腾资源停止其他实验。
 只写 `/user/lyh4170`；现有模型和已获许可的来源配置只读。不改 `$HOME`，也不打印认证材料。
 
-评测默认8个单卡Qwen副本，每卡TP=1，同时进行8局；`python scripts/request_evaluation.py --level L2 --gpus 4` 可改为4卡，不改变正式比赛数。Chess-R1 GRPO 使用同任务的 CPU 270M reward oracle；申请卡数须與冻结配方一致。GPU任务交给Executor每600秒查询一次，纯CPU任务可较频繁查询。
+评测默认8个单卡Qwen副本，每卡TP=1，L2/L3各20局合并为40局共享队列；8卡时每卡约5局，每副本max_num_seqs=40，全池并发上限40。所有副本先就绪再派发对局。`python scripts/request_evaluation.py --level L2 --gpus 4` 可改为4卡，不改变正式比赛数；单档请求仍为20局。Chess-R1 GRPO 使用同任务的 CPU 270M reward oracle；申请卡数须與冻结配方一致。GPU任务交给Executor每600秒查询一次，纯CPU任务可较频繁查询。
 
 2026-11-03 使用者明確更新授權：預設 HIGH，同時最多一個活動或提交不確定的 HIGH 任務；這取代參考原文中的歷史 NORMAL 限制，官方原文仍原樣保留。提交不確定先對帳，不搶占或停止其他任務。
 

@@ -102,12 +102,12 @@ function matrix(rows){
   const groups=new Map();
   for(const e of rows){const key=e.candidate_id+":"+(e.track||"player");if(!groups.has(key))groups.set(key,{id:e.candidate_id,track:e.track||"player",levels:{}});groups.get(key).levels[e.level]=e;}
   const table=document.createElement("table"),head=document.createElement("tr");
-  for(const title of ["候选 / 验证","L2","L2.5","L3","L2/L3 均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
+  for(const title of ["候选 / 验证","L2 胜率","L2 得分率","L2.5 得分率","L3 胜率","L3 得分率","L2/L3 均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
   for(const group of [...groups.values()].slice(-20)){
     const row=document.createElement("tr"),name=document.createElement("td");name.textContent=group.id+" / "+(group.track==="model"?"模型对照":"完整玩家");row.append(name);
-    for(const level of [2,2.5,3]){const cell=document.createElement("td"),r=group.levels[level],v=r?.statistics?.score;
-      cell.textContent=typeof v==="number"?(v*100).toFixed(1)+"%":"—";
-      if(typeof v==="number")cell.title="胜/和/负 "+[r.statistics.wins,r.statistics.draws,r.statistics.losses].map(show).join("/")+" · "+(r.statistics.games??20)+"局";row.append(cell);}
+    for(const [level,metric] of [[2,"win"],[2,"score"],[2.5,"score"],[3,"win"],[3,"score"]]){const cell=document.createElement("td"),s=group.levels[level]?.statistics;
+      cell.textContent=percent(metric==="win"?(s?.games>0?s.wins/s.games:null):s?.score);
+      if(s)cell.title="胜/和/负 "+[s.wins,s.draws,s.losses].map(show).join("/")+" · "+show(s.games)+"局";row.append(cell);}
     const score=document.createElement("td"),l2=group.levels[2]?.statistics?.score,l3=group.levels[3]?.statistics?.score;
     score.textContent=typeof l2==="number"&&typeof l3==="number"?((l2+l3)/2*100).toFixed(1)+"%":"待 L2/L3 齐备";row.append(score);table.append(row);
   }target.append(table);
@@ -152,6 +152,17 @@ async function loadArchivedJobs(generation){
   }catch(e){if(generation===state.generation&&e.name!=="AbortError")state.archivesLoaded=true;}
 }
 function jobLevel(id){return state.manifests.get(id)?.payload?.protocol?.opponent?.level??jobInfo(id).level;}
+function gameLevel(game){
+  const encoded=game.id?.match(/(?:^|-)L(\d+(?:\.\d+)?)(?:-|$)/);
+  const nested=game.folder?.match(/\/L(\d+(?:\.\d+)?)\//);
+  return game.level??(encoded?Number(encoded[1]):nested?Number(nested[1]):jobLevel(gameJob(game)));
+}
+function jobLevels(id){
+  const p=state.manifests.get(id)?.payload;
+  const levels=p?.protocol?.levels??jobInfo(id).levels??p?.evaluation_panel?.map(row=>row.protocol.opponent.level);
+  const found=Array.isArray(levels)?levels:[jobLevel(id),...state.games.filter(g=>gameJob(g)===id).map(gameLevel)];
+  return [...new Set(found.filter(level=>typeof level==="number"))].sort((a,b)=>a-b);
+}
 function difficulty(id){
   const levels=state.manifests.get(id)?.payload?.protocol?.levels??jobInfo(id).levels;
   if(Array.isArray(levels)&&levels.length)return levels.map(level=>"L"+level).join(" / ");
@@ -195,7 +206,7 @@ function studentResult(game){
   if(!["white","black"].includes(game.model_seat))return "结果身份不完整";
   return s.result==="draw"?"和棋":s.result===game.model_seat+"_win"?"学生胜":s.result===(game.model_seat==="white"?"black_win":"white_win")?"学生负":"未完成";
 }
-function jobStats(id){
+function jobStats(id,level=null){
   const job=jobInfo(id),payload=state.manifests.get(id)?.payload;
   const matched=state.evaluations.filter(e=>e.ref?.job_id===id);
   const latest=new Map(matched.map(e=>[String(e.level)+"|"+(e.track??"player"),e]));
@@ -204,11 +215,11 @@ function jobStats(id){
   const complete=!isPanel||Array.isArray(levels)&&levels.every(level=>Array.from(latest.values()).some(e=>e.level===level));
   let formal=null;
   if(complete&&latest.size){
-    const rows=Array.from(latest.values(),e=>e.statistics),games=rows.reduce((n,r)=>n+r.games,0);
-    formal={games,wins:rows.reduce((n,r)=>n+r.wins,0),draws:rows.reduce((n,r)=>n+r.draws,0),
+    const rows=Array.from(latest.values()).filter(e=>level==null||e.level===level).map(e=>e.statistics),games=rows.reduce((n,r)=>n+r.games,0);
+    if(games)formal={games,wins:rows.reduce((n,r)=>n+r.wins,0),draws:rows.reduce((n,r)=>n+r.draws,0),
       losses:rows.reduce((n,r)=>n+r.losses,0),score:rows.reduce((n,r)=>n+r.score*r.games,0)/games};
   }
-  const games=state.games.filter(g=>gameJob(g)===id);
+  const games=state.games.filter(g=>gameJob(g)===id&&(level==null||gameLevel(g)===level));
   const covered=state.gamesScope==="campaign"||state.gamesScope===id;
   const counts={wins:0,draws:0,losses:0,errors:0,running:0,random:0,length:0};
   for(const game of games){
@@ -223,23 +234,39 @@ function jobStats(id){
     winRate:completed?(formal?formal.wins:counts.wins)/completed:null,
     score:completed?(formal?formal.score:(counts.wins+.5*counts.draws)/completed):null};
 }
+function plannedGames(id,level=null){
+  const p=state.manifests.get(id)?.payload;
+  if(level!=null){
+    const row=p?.evaluation_panel?.find(row=>row.protocol.opponent.level===level);
+    if(row)return row.protocol.games;
+    const collected=state.evaluations.findLast(e=>e.ref?.job_id===id&&e.level===level);
+    if(collected)return collected.statistics.games;
+    const levels=p?.protocol?.levels??jobInfo(id).levels;
+    if(Array.isArray(levels)&&levels.length){
+      const total=p?.protocol?.games??(state.fileData?.job===id?state.fileData.data.formal_games:null);
+      return typeof total==="number"?total/levels.length:null;
+    }
+  }
+  return p?.protocol?.games??(state.fileData?.job===id?state.fileData.data.formal_games:null);
+}
 function renderEvaluationJobs(){
   const target=el("evaluation-jobs"),rows=visibleJobs().slice().reverse().filter(j=>j.level!=null||j.kind==="evaluate_panel"),table=document.createElement("table"),header=document.createElement("tr");
   const hidden=state.jobs.length-visibleJobs().length;el("archived-job-count").textContent=hidden?" 已隐藏"+hidden+"项旧任务；编号与提交凭据保留。":"";
   for(const title of ["任务 / 平台ID","难度","用途 / 候选","状态","有效完成 / 计划","胜 / 和 / 负","胜率","得分率","结果来源"]){const th=document.createElement("th");th.textContent=title;header.append(th);}table.append(header);
   for(const job of rows){
-    const s=jobStats(job.id),manifest=state.manifests.get(job.id)?.payload,expected=manifest?.protocol?.games;
-    const collected=state.evaluations.findLast(e=>e.ref?.job_id===job.id);
-    const expectedText=expected??(job.kind==="evaluate_panel"?"?":collected?.statistics?.games)??(state.fileData?.job===job.id?state.fileData.data.formal_games:"?");
-    const values=[job.id+" / "+show(job.task_id),difficulty(job.id),roleName(job.role)+" / "+show(job.candidate_id),show(job.status),
-      (s.available?s.completed:"—")+" / "+expectedText,s.available?[s.wins,s.draws,s.losses].join(" / "):"—",s.available?percent(s.winRate):"—",s.available?percent(s.score):"—",
-      s.formal?"正式已收集":s.available?"暂时统计" :"无可用对局记录"];
-    const row=document.createElement("tr");if(job.id===state.job)row.className="selected";
-    values.forEach((value,index)=>{const cell=document.createElement("td");if(index===0){const button=document.createElement("button");button.textContent=value;button.onclick=()=>selectJob(job.id);cell.append(button);}else cell.textContent=value;row.append(cell);});table.append(row);
+    const levels=jobLevels(job.id);
+    for(const level of levels.length?levels:[null]){
+      const s=jobStats(job.id,level),expected=plannedGames(job.id,level);
+      const values=[job.id+" / "+show(job.task_id),level==null?difficulty(job.id):"L"+level,roleName(job.role)+" / "+show(job.candidate_id),show(job.status),
+        (s.available?s.completed:"—")+" / "+(expected??"?"),s.available?[s.wins,s.draws,s.losses].join(" / "):"—",s.available?percent(s.winRate):"—",s.available?percent(s.score):"—",
+        s.formal?"正式已收集":s.available?"暂时统计" :"无可用对局记录"];
+      const row=document.createElement("tr");if(job.id===state.job)row.className="selected";
+      values.forEach((value,index)=>{const cell=document.createElement("td");if(index===0){const button=document.createElement("button");button.textContent=value;button.onclick=()=>selectJob(job.id);cell.append(button);}else cell.textContent=value;row.append(cell);});table.append(row);
+    }
   }
-  const signature=JSON.stringify(rows.map(j=>[j,jobStats(j.id),state.manifests.get(j.id)?.payload?.protocol?.games]))+state.job+state.fileData?.data.formal_games;
+  const signature=JSON.stringify(rows.map(j=>[j,jobStats(j.id),jobLevels(j.id).map(level=>[level,jobStats(j.id,level),plannedGames(j.id,level)])]))+state.job+state.fileData?.data.formal_games;
   if(target.dataset.signature!==signature){target.dataset.signature=signature;target.replaceChildren(table);}
-  el("evaluation-scope").textContent="最近最多30项评测；胜负以学生视角统计。"+(state.gamesScope==="campaign"?"对局范围：本研究最近1000局。":"对局范围：选中任务，其他任务只显示已收集的正式结果。")+"程序异常不计入分母；旧记录已清理时显示—，不表示胜率0%。";
+  el("evaluation-scope").textContent="最近最多30项评测；L2/L3分行统计，胜率=胜局/有效完成局，得分率=(胜局+半数和局)/有效完成局。"+(state.gamesScope==="campaign"?"对局范围：本研究最近1000局。":"对局范围：选中任务，其他任务只显示已收集的正式结果。")+"程序异常不计入分母；旧记录已清理时显示—，不表示胜率0%。";
   renderJobContext();
 }
 function renderJobContext(){
@@ -247,10 +274,11 @@ function renderJobContext(){
   const job=jobInfo(state.job),entry=state.manifests.get(state.job),p=entry?.payload,s=jobStats(state.job),g=p?.protocol;
   if(purgedJob(job)){el("job-context").textContent="任务 "+state.job+" 已清理，仅保留编号占位；原始参数和对局文件已移出当前研究。";return;}
   const expected=g?.games??(state.fileData?.job===state.job?state.fileData.data.formal_games:null);
+  const levelSummary=jobLevels(state.job).map(level=>{const v=jobStats(state.job,level);return "L"+level+" · 有效完成 "+(v.available?v.completed:"—")+" / "+(plannedGames(state.job,level)??"?")+" · 胜/和/负 "+(v.available?[v.wins,v.draws,v.losses].join("/"):"—")+" · 胜率 "+percent(v.winRate)+" · 得分率 "+percent(v.score);}).join("\n");
   el("job-context").textContent="选中任务："+(state.job||"—")+" · 平台ID "+show(job.task_id)+" · "+roleName(job.role)+"\n"+
     opponentText(state.job)+"\n候选："+show(p?.candidate_id??job.candidate_id)+" · "+((p?.track??job.track)==="model"?"模型对照":"完整玩家（模型与研究配置）")+
     "\n计划："+show(expected)+"局"+(typeof expected==="number"?"，白黑各"+expected/2+"局":"")+" · 最多 "+show(g?.max_plies??200)+"个半回合（双方合计）"+
-    "\n有效完成："+(s.available?s.completed:"—")+" · 胜/和/负："+(s.available?[s.wins,s.draws,s.losses].join("/"):"—")+" · 胜率 "+percent(s.winRate)+" · 得分率 "+percent(s.score)+
+    "\n"+(levelSummary||"有效完成："+(s.available?s.completed:"—")+" · 胜/和/负："+(s.available?[s.wins,s.draws,s.losses].join("/"):"—")+" · 胜率 "+percent(s.winRate)+" · 得分率 "+percent(s.score))+
     "\n"+(s.formal?"结果已正式收集。":"暂时统计，整批完成并收集后才有正式成绩。")+
     "已读取记录中的程序异常："+(s.available?s.errors:"—")+" · 进行中："+(s.available?s.running:"—")+" · 随机后备："+(s.available?s.random:"—")+" · 输出达长度上限："+(s.available?s.length:"—")+
     (state.fileError?.job===state.job?"\n任务文件读取失败："+state.fileError.message:entry?.error?"\n对手参数读取失败："+entry.error:!p?"\n正在读取正式任务参数…":"\n参数来自本任务manifest；Skill和时间上限不是校准Elo，时间上限不是固定每步用时。");
@@ -445,7 +473,7 @@ async function student(generation){
   state.gamesScope=scope==="job"?job:"campaign";
   renderEvaluationJobs();
   if(state.autoGame&&latest&&state.game!==latest.folder||!state.viewer&&latest)openGame(latest);
-  options("game",games,state.game,g=>difficulty(gameJob(g))+" · "+seatName(g.model_seat)+" · "+studentResult(g)+" · "+g.id,g=>g.folder);
+  options("game",games,state.game,g=>(gameLevel(g)==null?difficulty(gameJob(g)):"L"+gameLevel(g))+" · "+seatName(g.model_seat)+" · "+studentResult(g)+" · "+g.id,g=>g.folder);
   const r=state.viewer;if(!r)return;const info=games.find(g=>g.folder===r.folder);
   if(info){r.info=info;r.summary=info.summary||r.summary;}
   await loadJobManifest(gameJob(r.info));if(generation!==state.generation||state.viewer!==r)return;

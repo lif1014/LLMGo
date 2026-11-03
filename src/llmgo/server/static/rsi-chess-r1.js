@@ -9,7 +9,7 @@
   const select=document.createElement('select');select.setAttribute('aria-label','选择实验');bar.append(select);
   const status=document.createElement('p');section.append(status);
   const metrics=document.createElement('div');metrics.className='matrix';section.append(metrics);
-  const scaling=document.createElement('div');section.append(scaling);
+  const scaling=document.createElement('div');scaling.className='matrix';section.append(scaling);
   const gameLinks=document.createElement('div');section.append(gameLinks);
   const fileSelect=document.createElement('select');fileSelect.setAttribute('aria-label','选择实验文件');section.append(fileSelect);
   const content=document.createElement('pre');content.className='stream';section.append(content);
@@ -79,10 +79,14 @@
     }
     scaling.append(svg);
     const table=document.createElement('table'),head=document.createElement('tr');
-    for(const name of ['累计 step','L2','L3','平均','观测最优','阶段 GPU h','checkpoint / 对局']){const th=document.createElement('th');th.textContent=name;head.append(th);}table.append(head);
+    for(const name of ['累计 step','L2 胜/和/负','L2 胜率','L2 得分率','L3 胜/和/负','L3 胜率','L3 得分率','平均得分率','观测最优','阶段 GPU h','checkpoint / 对局']){const th=document.createElement('th');th.textContent=name;head.append(th);}table.append(head);
     for(const p of points){
       const row=document.createElement('tr');
-      for(const v of [p.lineage_step,...[2,3].map(l=>(100*p.levels.find(r=>r.level===l).statistics.score).toFixed(1)+'%'),(100*p.score).toFixed(1)+'%',(100*p.best_observed).toFixed(1)+'%',Number(p.lineage_gpu_hours||0).toFixed(2)]){const td=document.createElement('td');td.textContent=String(v);row.append(td);}
+      const levelValues=[2,3].flatMap(level=>{
+        const s=p.levels.find(r=>r.level===level)?.statistics;
+        return s?[`${s.wins} / ${s.draws} / ${s.losses}`,s.games>0?(100*s.wins/s.games).toFixed(1)+'%':'—',(100*s.score).toFixed(1)+'%']:['—','—','—'];
+      });
+      for(const v of [p.lineage_step,...levelValues,(100*p.score).toFixed(1)+'%',(100*p.best_observed).toFixed(1)+'%',Number(p.lineage_gpu_hours||0).toFixed(2)]){const td=document.createElement('td');td.textContent=String(v);row.append(td);}
       const td=document.createElement('td');const model=document.createElement('code');model.textContent=p.model_path;td.append(model);
       for(const level of p.levels){
         const match=level.ref.path.match(/\/var\/runs\/([^/]+)\/(scaling\/.+)$/);if(!match)continue;

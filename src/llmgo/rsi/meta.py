@@ -202,7 +202,7 @@ class CodexBackend:
             "Phase 1不可改Chess-R1提示或答案协议，不可新增harness.py，skills.json必须保持空数组；不要通过数据字段或训练配置间接更换提示。Phase 2才会开放RL与harness共同研究。"
             "请检查每局完整events.jsonl，特别是输棋每一步、模型原文、fallback及终局原因，并据此写假设。"
             "离线教师可用于RL奖励/价值估计和局面分析，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
-            "开发验证只允许Fairy-Stockfish L2、L2.5、L3；L2.5固定skill -3/depth5/0.125秒。最终测试是保留的DeepSeek Flash non-thinking对手，由独立流程在选定成果后执行；不要把它用于研究迭代或调参。"
+            "开发验证只允许Fairy-Stockfish L2、L2.5、L3；L2.5固定skill -3/depth5/0.125秒。"
             "新campaign先做L2和L3基线，每档10局、白黑各5局，共20局，然后开始研究。"
             "每项计算任务最多8 GPU，默认8卡。评测每卡一个Qwen副本并行棋局；可用request_evaluation.py --level L2 --gpus 4改并行数。GRPO奖励使用同任务CPU运行的270M搜索模型。不要在devspace使用GPU。每次研究可只测一个验证难度；L2和L3两档齐备才计算可比较的锚点分数。"
             "在workspace运行 python scripts/request_evaluation.py --level L2 即可更新proposal.json为只测L2，保留已有训练任务；"

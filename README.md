@@ -9,7 +9,6 @@
 | `assets/models/Qwen3.5-4B/` | 學生 HF 權重與 tokenizer |
 | `assets/models/searchless-270M/270M/` | Chess-R1 動作價值 reward model |
 | `assets/datasets/chess-r1/boxed-nonthinking-v2/` | GRPO 訓練與驗證 parquet |
-| `assets/datasets/chess-r1/boxed-v2/` | 思考版歷史資料，供對照 |
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/` | 可選完整 Lichess 訓練池及分類索引，已排除現有 dev/test；使用前核對 verification.json |
 | `assets/vendor/Chess-R1-830c0597/` | searchless Chess 上游原始碼 |
 | `assets/engines/` | Fairy-Stockfish 與 NNUE |

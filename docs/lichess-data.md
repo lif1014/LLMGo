@@ -72,3 +72,7 @@ python scripts/report_training_data.py \
 ```
 
 The old filtered data lacks themes/opening tags, so this report gives rating and side distributions and marks the missing classifications explicitly. Development validation remains L2/L2.5/L3; DeepSeek Flash non-thinking remains the separate held-out final opponent.
+
+## 舊 thinking 副本
+
+`assets/datasets/chess-r1/boxed-v2` 已按使用者要求移除。逐列核對 train/dev/test 共 125,105 筆，和 boxed-nonthinking-v2 的唯一差異是 system prompt：舊版要求 `<think>`，目前只要求 boxed SAN。局面、答案、合法步、rating、ID、split 和 schema 完全相同，沒有額外的教師思考標注。刪除前後 non-thinking 三份 parquet 的 SHA 必須相同；回執在遠端 `var/migrations/20261103/remove-thinking-dataset/`。完整 Lichess 訓練池另外保留，不受此清理影響。

@@ -172,6 +172,7 @@ def test_high_slot_blocks_other_own_jobs_and_unknown_intents(tmp_path):
     with pytest.raises(AdmissionBusy,match='own HIGH'):
         with high_slot(transport,second):raise AssertionError('must not submit')
     transport.rows=[{'priority':'NORMAL','status':'Running'}]
+    transport.rows.append({'status':'Succeeded'})  # Legacy terminal records may omit priority.
     with high_slot(transport,second):atomic_json(second,{'status':'UNKNOWN'})
 
 

@@ -32,18 +32,34 @@ def cctl_environment(environment=None, *, config_root=None, token_file=None, ide
             if folder.is_symlink():
                 raise ValueError('Project cctl metadata profile must not be a symlink')
             folder.mkdir(parents=True,exist_ok=True,mode=0o700)
-            for name in ('user_id','server'):
+            for name in ('user_id','server','alias'):
                 target=folder/name
+                value='modelbest' if name=='alias' else identity[name]
                 if target.exists():
-                    if target.read_text().strip()!=identity[name]:
+                    if target.read_text().strip()!=value:
                         raise ValueError('Project cctl identity metadata differs; existing profile preserved')
                     continue
                 fd,temp=tempfile.mkstemp(prefix='.'+name+'-',dir=folder)
                 try:
-                    with os.fdopen(fd,'w') as handle:handle.write(identity[name]+'\n')
+                    with os.fdopen(fd,'w') as handle:handle.write(value+'\n')
                     os.replace(temp,target)
                 finally:
                     if os.path.exists(temp):os.unlink(temp)
+            cached_token=folder/'token'
+            if cached_token.is_symlink():
+                if cached_token.resolve()!=path.resolve():
+                    raise ValueError('Project cctl credential link differs; preserved')
+            elif cached_token.exists():
+                if cached_token.read_text().strip()!=token:
+                    raise ValueError('Project cctl cached credential differs; preserved')
+            else:
+                cached_token.symlink_to(path.resolve())
+            # This CLI resolves --own via current-profile. Initialize an empty
+            # container's default only; never replace an existing default.
+            try:
+                with (cache/'current-profile').open('x') as handle:handle.write(profile+'\n')
+            except FileExistsError:
+                pass
             env['CCTL_PROFILE']=profile
             env.setdefault('CCTL_SERVER',identity['server'])
     env["CCTL_NO_UPDATE_CHECK"] = "1"

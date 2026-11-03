@@ -15,7 +15,7 @@ def high_slot(transport,intent_path):
     folder=Path(transport.site['repo'])/'var/runtime/high-admission'
     folder.mkdir(parents=True,exist_ok=True)
     registry=folder/'reservations.json'
-    terminal={'Succeeded','Completed','Failed','Killed','Stopped','Deleted','OOMKilled','Invalid','Expired','ImagePullBackOff'}
+    terminal={'Succeeded','Completed','Failed','Killed','Stopped','Deleted','OOMKilled','Invalid','Expired'}
     with (folder/'lock').open('a+') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
         paths=read_json(registry) if registry.exists() else []
@@ -38,7 +38,8 @@ def high_slot(transport,intent_path):
             value=transport.command(['task','list','--own','--cluster','beijing','--pool','model-autosft',
                 '--type','job,pytorchjob','--page',str(page),'--limit','100'])
             rows=value if isinstance(value,list) else value.get('tasks',value.get('items',[]))
-            if not isinstance(rows,list) or any('priority' not in row or 'status' not in row for row in rows):
+            if not isinstance(rows,list) or any('status' not in row or
+                    row['status'] not in terminal and 'priority' not in row for row in rows):
                 raise AdmissionBusy('Own HIGH task status is incomplete')
             if any(str(row.get('priority')).upper()=='HIGH' and row.get('status') not in terminal for row in rows):
                 raise AdmissionBusy('An own HIGH job already occupies the single submission slot')

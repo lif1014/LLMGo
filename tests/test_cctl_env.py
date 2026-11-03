@@ -62,10 +62,20 @@ def test_own_queries_use_authenticated_project_identity_without_switching_defaul
     assert env['CCTL_PROFILE']=='llmgo-rsi' and env['HOME']=='unchanged'
     assert (cache/'current-profile').read_text()=='unchanged'
     assert (cache/'profiles/llmgo-rsi/user_id').read_text().strip()=='ou_fixture'
-    assert not (cache/'profiles/llmgo-rsi/token').exists()
+    assert (cache/'profiles/llmgo-rsi/token').is_symlink()
+    assert (cache/'profiles/llmgo-rsi/token').resolve()==token
     identity.write_text(json.dumps({'user_id':'ou_other','server':'https://cybertron.modelbest.co'}))
     with pytest.raises(ValueError,match='existing profile preserved'):
         cctl_environment({},config_root=cache,token_file=token,identity_file=identity)
+
+
+def test_empty_cli_cache_gets_a_project_default_without_copying_credentials(tmp_path):
+    token=tmp_path/'token';token.write_text('private-test-token');token.chmod(0o600)
+    identity=tmp_path/'identity.json';identity.write_text(json.dumps({'user_id':'ou_fixture','server':'https://cybertron.modelbest.co'}))
+    cache=tmp_path/'empty-cache'
+    cctl_environment({},config_root=cache,token_file=token,identity_file=identity)
+    assert (cache/'current-profile').read_text().strip()=='llmgo-rsi'
+    assert (cache/'profiles/llmgo-rsi/token').resolve()==token
 
 
 @pytest.mark.parametrize('pools,success', [([{'name':'model-autosft'}],True),([],False),

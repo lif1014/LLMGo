@@ -152,8 +152,14 @@ async function loadArchivedJobs(generation){
   }catch(e){if(generation===state.generation&&e.name!=="AbortError")state.archivesLoaded=true;}
 }
 function jobLevel(id){return state.manifests.get(id)?.payload?.protocol?.opponent?.level??jobInfo(id).level;}
-function difficulty(id){const level=jobLevel(id);return level==null?"难度未登记":"L"+level;}
+function difficulty(id){
+  const levels=state.manifests.get(id)?.payload?.protocol?.levels??jobInfo(id).levels;
+  if(Array.isArray(levels)&&levels.length)return levels.map(level=>"L"+level).join(" / ");
+  const level=jobLevel(id);return level==null?"难度未登记":"L"+level;
+}
 function opponentText(id){
+  const panel=state.manifests.get(id)?.payload?.evaluation_panel;
+  if(panel)return panel.map(row=>{const o=row.protocol.opponent;return "L"+o.level+" · Fairy-Stockfish Skill "+show(o.skill)+" · depth "+show(o.depth)+" · 时间上限 "+show(o.movetime_sec)+"秒";}).join("\n");
   const o=state.manifests.get(id)?.payload?.protocol?.opponent;
   return o?difficulty(id)+" · Fairy-Stockfish Skill "+show(o.skill)+" · depth "+show(o.depth)+" · 时间上限 "+show(o.movetime_sec)+"秒":difficulty(id);
 }
@@ -190,7 +196,18 @@ function studentResult(game){
   return s.result==="draw"?"和棋":s.result===game.model_seat+"_win"?"学生胜":s.result===(game.model_seat==="white"?"black_win":"white_win")?"学生负":"未完成";
 }
 function jobStats(id){
-  const formal=state.evaluations.findLast(e=>e.ref?.job_id===id)?.statistics;
+  const job=jobInfo(id),payload=state.manifests.get(id)?.payload;
+  const matched=state.evaluations.filter(e=>e.ref?.job_id===id);
+  const latest=new Map(matched.map(e=>[String(e.level)+"|"+(e.track??"player"),e]));
+  const levels=payload?.protocol?.levels??job.levels;
+  const isPanel=job.kind==="evaluate_panel"||Array.isArray(levels);
+  const complete=!isPanel||Array.isArray(levels)&&levels.every(level=>Array.from(latest.values()).some(e=>e.level===level));
+  let formal=null;
+  if(complete&&latest.size){
+    const rows=Array.from(latest.values(),e=>e.statistics),games=rows.reduce((n,r)=>n+r.games,0);
+    formal={games,wins:rows.reduce((n,r)=>n+r.wins,0),draws:rows.reduce((n,r)=>n+r.draws,0),
+      losses:rows.reduce((n,r)=>n+r.losses,0),score:rows.reduce((n,r)=>n+r.score*r.games,0)/games};
+  }
   const games=state.games.filter(g=>gameJob(g)===id);
   const covered=state.gamesScope==="campaign"||state.gamesScope===id;
   const counts={wins:0,draws:0,losses:0,errors:0,running:0,random:0,length:0};
@@ -207,13 +224,13 @@ function jobStats(id){
     score:completed?(formal?formal.score:(counts.wins+.5*counts.draws)/completed):null};
 }
 function renderEvaluationJobs(){
-  const target=el("evaluation-jobs"),rows=visibleJobs().slice().reverse().filter(j=>j.level!=null),table=document.createElement("table"),header=document.createElement("tr");
+  const target=el("evaluation-jobs"),rows=visibleJobs().slice().reverse().filter(j=>j.level!=null||j.kind==="evaluate_panel"),table=document.createElement("table"),header=document.createElement("tr");
   const hidden=state.jobs.length-visibleJobs().length;el("archived-job-count").textContent=hidden?" 已隐藏"+hidden+"项旧任务；编号与提交凭据保留。":"";
   for(const title of ["任务 / 平台ID","难度","用途 / 候选","状态","有效完成 / 计划","胜 / 和 / 负","胜率","得分率","结果来源"]){const th=document.createElement("th");th.textContent=title;header.append(th);}table.append(header);
   for(const job of rows){
     const s=jobStats(job.id),manifest=state.manifests.get(job.id)?.payload,expected=manifest?.protocol?.games;
     const collected=state.evaluations.findLast(e=>e.ref?.job_id===job.id);
-    const expectedText=expected??collected?.statistics?.games??(state.fileData?.job===job.id?state.fileData.data.formal_games:"?");
+    const expectedText=expected??(job.kind==="evaluate_panel"?"?":collected?.statistics?.games)??(state.fileData?.job===job.id?state.fileData.data.formal_games:"?");
     const values=[job.id+" / "+show(job.task_id),difficulty(job.id),roleName(job.role)+" / "+show(job.candidate_id),show(job.status),
       (s.available?s.completed:"—")+" / "+expectedText,s.available?[s.wins,s.draws,s.losses].join(" / "):"—",s.available?percent(s.winRate):"—",s.available?percent(s.score):"—",
       s.formal?"正式已收集":s.available?"暂时统计" :"无可用对局记录"];

@@ -42,4 +42,6 @@ Meta 使用該輪 `finish_research.py` 交接，Controller 校驗才提交不可
 
 評測任務表中 L2／L3 各佔一行，分別顯示有效完成局、勝／和／負、勝率與得分率；每個 checkpoint 的表格也列出兩檔各自的勝／和／負、勝率和得分率。共享 40 局排程不合併兩檔勝率。未完成整批校驗時，逐局統計標為暫時統計；完整 L2／L3 收集後才標為正式成績。
 
+獨立的「GRPO · 訓練指標」區塊以 `grpo/metrics.jsonl`、`latest.json` 和已驗證更新收據顯示每項 RL 實驗。曲線每15秒增量讀取，支援 Reward/Q、Reference KL、entropy、合法／格式比例、回答 tokens、梯度范數、policy loss、零優勢組比例及任意額外標量；逐步表格每頁25步。完成步數依 `update/mean_abs_logprob_change` 或完整更新收據判斷，`progress.step` 僅為當前階段標記。Entropy coefficient=0 仍可量測策略 entropy。續訓時同一步採最新記錄，回退到 checkpoint 後不將舊分支的未保留更新冒充新分支。網頁透過既有 artifact API 讀取，舊 Web 行程無須重啟，訓練任務與凍結源碼不變。
+
 每輪另交付選樣程式／查詢、選中 ID、分類統計與敗局假設，見 [資料說明](lichess-data.md)。選定最終模型後由使用者另行執行 DeepSeek non-thinking 測試。測試 provider、請求模型名與回應模型名都應記錄，不能把供應商別名未經核實地當作同一模型。

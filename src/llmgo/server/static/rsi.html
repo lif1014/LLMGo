@@ -18,7 +18,7 @@
 </head>
 <body>
   <header><a href="rsi">研究面板</a><h1>国际象棋 RSI</h1>
-    <label>研究 <select id="campaign"></select></label><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
+    <label>研究 <select id="campaign"></select></label><a href="#grpo-metrics-panel">GRPO 训练指标</a><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
   <p id="overview">上传框架并创建 campaign 后，这里显示远端研究状态。</p>
   <div class="status-grid">
     <section><h2>强 Agent 状态</h2><pre id="meta-status">尚未读取</pre><p id="meta-usage" class="muted">等待服务返回Token用量</p></section>
@@ -96,4 +96,5 @@
     loadDashboardScript("static/rsi.js?v=grpo-1", "connection");
   </script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
+<script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
 </body></html>

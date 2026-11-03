@@ -6,6 +6,8 @@
 
 預設 prompt 要求唯一合法 SAN 步，以 `\\boxed{Nf3}` 作答，關閉 thinking。response 上限 16,384 tokens；temperature 1、top-p 0.95、top-k 20、presence penalty 1.5、repetition penalty 1。每題 8 個回答，GRPO 同題分組；過長的組整組拒收並補新批次。reward = 270M 的 Q(s,a) + 0.1 格式 + 0.1 英文；Lichess 標準答案僅作驗證指標。
 
+`src/llmgo/training/chess_r1_config.py` 產生原生 verl 設定：KL loss 使用 `low_var_kl`、係數 `0.05`；entropy coefficient 為 `0`，仍計算 entropy 供診斷與紀錄。訓練每卡一個 TP=1 vLLM 副本，預設 `max_num_seqs=384`。
+
 ## 執行與產物
 
 `configs/grpo/default.json` 是新任務模板。提案用 `scripts/run_grpo.py` 登記標準訓練；受保護 Worker 的 `rsi/training_loop.py` 凍結配方，每 5 step 呼叫 GPU 入口、核對 checkpoint、合併 FSDP shards 並修正 Transformers 5.4 權重命名，再驗證與等待 Meta 決策。原生 checkpoint 含 actor、optimizer、RNG 和 dataloader；續訓只認同一實驗、同一配方及完整收據。改 reward、模型或配方時建立新實驗。

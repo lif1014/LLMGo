@@ -57,7 +57,7 @@ def fingerprint(key):
     return hashlib.sha256(key.encode()).digest()
 
 
-def download(destination, url=URL):
+def download(destination, url=URL, *, proxy=None):
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     receipt = destination.with_suffix(destination.suffix+'.json')
@@ -67,7 +67,8 @@ def download(destination, url=URL):
         return json.loads(receipt.read_text())
     temporary = destination.with_suffix(destination.suffix+'.partial')
     # A complete retry replaces only this tool's incomplete download.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    proxies = {'http':proxy, 'https':proxy} if proxy else {} if proxy == '' else None
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
     with opener.open(url, timeout=120) as response, temporary.open('wb') as stream:
         headers = dict(response.headers)
         total = 0

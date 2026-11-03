@@ -14,6 +14,7 @@ def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument('--snapshot', type=Path, required=True)
     parser.add_argument('--raw', type=Path, help='Use an existing official CSV.zst instead of downloading')
+    parser.add_argument('--proxy', help='Download proxy; defaults to the process http_proxy/https_proxy settings')
     parser.add_argument('--reference', type=Path, default=root/'assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet')
     parser.add_argument('--heldout', action='append', type=Path, help='Repeat for dev and test; defaults to the current frozen files')
     parser.add_argument('--workers', type=int, default=8)
@@ -27,7 +28,7 @@ def main():
     if not args.verify_only:
         raw = args.raw or args.snapshot/'raw/lichess_db_puzzle.csv.zst'
         if args.raw is None:
-            print(json.dumps(download(raw)), flush=True)
+            print(json.dumps(download(raw, proxy=args.proxy)), flush=True)
         result = prepare(raw, output, args.reference, heldouts, workers=args.workers, progress=args.progress)
         print(json.dumps({'stage':'prepared','counts':result['counts']}), flush=True)
     if args.progress:

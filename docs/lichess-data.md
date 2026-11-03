@@ -17,9 +17,11 @@ Use the dedicated CPU interpreter `/user/lyh4170/venvs/llmgo-lichess-data-202611
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/manifest.json` | Source/reference/held-out identities, processing counts and file hashes |
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/verification.json` | Independent full scan; require `status: passed` before using the pool |
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/stats.json` | Position/puzzle counts, rating bands, side and category distributions |
-| `var/runs/lichess-pool-20261103-dataenv2/prepare.log` | Download, conversion and verification log |
+| `var/runs/lichess-pool-20261103-offline/prepare.log` | Conversion and verification log |
 
 The official source is [Lichess Puzzle Database](https://database.lichess.org/#puzzles), downloaded from [CSV.zst](https://database.lichess.org/lichess_db_puzzle.csv.zst), under CC0. This is the full published puzzle collection, which Lichess itself has generated and curated. It is not the database of all chess games. The snapshot and original compressed source are retained.
+
+The downloader respects the process `http_proxy`/`https_proxy` settings, or explicit `--proxy`. The 2026-11-03 remote probe reached USTC's package index/wheel and hf-mirror through `http://whitelist-proxy.cybertron.svc.cluster.local:7891`, while the official Lichess address failed TLS. This snapshot therefore uses the official file downloaded locally and uploaded with full-file SHA verification. `HF_ENDPOINT=https://hf-mirror.com` affects Hugging Face clients; it does not redirect the official Lichess URL. Probe evidence is in `var/campaigns/chess-grpo-v1/operator-audits/network-proxy-probe.json`.
 
 The current filtered dataset has 99,571 train positions, 2,291 dev positions and 23,243 test positions. It is a Chess-R1-derived dataset, not a verified exact copy of the paper's 19.2k training subset. The [paper](https://arxiv.org/html/2507.00726v1) and [public preprocessing code](https://github.com/krafton-ai/Chess-R1/tree/830c059702e7b2d51ddd923a8c9a577c3f6d06d5/data_preprocess) describe different sample counts.
 

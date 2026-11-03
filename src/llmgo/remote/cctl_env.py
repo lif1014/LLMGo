@@ -7,8 +7,16 @@ import re
 from urllib.parse import urlsplit
 
 
-def cctl_environment(environment=None, *, config_root=None):
+def cctl_environment(environment=None, *, config_root=None, token_file=None):
     env = dict(os.environ if environment is None else environment)
+    if token_file and not env.get('CYBERTRON_TOKEN'):
+        path=Path(token_file)
+        if path.stat().st_mode & 0o077:
+            raise ValueError('cctl token file must have private permissions (0600)')
+        token=path.read_text().strip()
+        if not token:
+            raise ValueError('cctl token file is empty')
+        env['CYBERTRON_TOKEN']=token
     env["CCTL_NO_UPDATE_CHECK"] = "1"
     server = env.get("CCTL_SERVER", "").strip()
     if not server:

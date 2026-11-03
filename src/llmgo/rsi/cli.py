@@ -57,7 +57,7 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
                 check("codex_login_status", False, type(exc).__name__)
         if platform and shutil.which(site["cctl_bin"]):
             try:
-                cctl_env = cctl_environment()
+                cctl_env = cctl_environment(token_file=site.get('cctl_token_file'))
                 check("cctl_server", True, cctl_env.get("CCTL_SERVER", "CLI default configuration"))
                 result = subprocess.run([site["cctl_bin"], "pool", "list", "--own", "--no-input", "-o", "json"],
                                         capture_output=True, text=True, timeout=90,

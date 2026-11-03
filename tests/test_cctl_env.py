@@ -43,6 +43,17 @@ def test_error_keeps_actionable_reason_and_redacts_credentials():
     assert 'HTTP 401' in detail and 'opaque-token' not in detail and 'abcdef' not in detail
 
 
+def test_private_remote_token_file_does_not_change_home_or_override_explicit_env(tmp_path):
+    path=tmp_path/'token';path.write_text('private-test-token\n');path.chmod(0o600)
+    original={'HOME':'unchanged','CCTL_SERVER':'https://cybertron.modelbest.co'}
+    env=cctl_environment(original,token_file=path)
+    assert env['CYBERTRON_TOKEN']=='private-test-token' and env['HOME']=='unchanged'
+    assert 'CYBERTRON_TOKEN' not in original
+    assert cctl_environment({**original,'CYBERTRON_TOKEN':'explicit'},token_file=path)['CYBERTRON_TOKEN']=='explicit'
+    path.chmod(0o644)
+    with pytest.raises(ValueError,match='private permissions'):cctl_environment(original,token_file=path)
+
+
 @pytest.mark.parametrize('pools,success', [([{'name':'model-autosft'}],True),([],False),
     ({'data':[{'name':'model-autosft'}],'success':True},True),
     ({'pools':[{'name':'resource-pools/525','alias':'model-autosft'}]},True),

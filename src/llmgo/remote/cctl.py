@@ -60,7 +60,7 @@ class CctlExecutor:
         if self.record_commands:
             self.memory.append("command_started", {"argv": command, "operation_id": operation_id, "timeout_sec": timeout})
         try:
-            environment = cctl_environment()
+            environment = cctl_environment(token_file=self.site.get('cctl_token_file'))
             result = self.runner(command, capture_output=True, text=True, timeout=timeout,
                                  env=environment)
         except (OSError, subprocess.TimeoutExpired) as exc:

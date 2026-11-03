@@ -10,6 +10,7 @@
 | `assets/models/searchless-270M/270M/` | Chess-R1 動作價值 reward model |
 | `assets/datasets/chess-r1/boxed-nonthinking-v2/` | GRPO 訓練與驗證 parquet |
 | `assets/datasets/chess-r1/boxed-v2/` | 思考版歷史資料，供對照 |
+| `assets/datasets/lichess/20261103/boxed-nonthinking-v2/` | 可選完整 Lichess 訓練池及分類索引，已排除現有 dev/test；使用前核對 verification.json |
 | `assets/vendor/Chess-R1-830c0597/` | searchless Chess 上游原始碼 |
 | `assets/engines/` | Fairy-Stockfish 與 NNUE |
 | `configs/grpo/default.json` | GRPO 配方模板 |
@@ -25,6 +26,8 @@
 | `var/runtime/` | 暫存與服務日誌 |
 
 大型權重、parquet、引擎、實驗輸出和憑證留在遠端，不進 Git；原始碼、配方、測試與文檔進 GitHub。逐檔 SHA-256 資產搬遷回執在遠端 `var/migrations/20261102/assets.json`。資料有 99,571 筆訓練、2,291 筆驗證、23,243 筆測試。詳細內容見 [GRPO pipeline](docs/grpo-pipeline.md)。
+
+預設仍用現有篩選資料。Meta-Agent 可自行決定是否使用新的完整 Lichess 訓練池，以及如何篩選、混合或安排課程；也可修改超參、reward 等 RL 設計。初始 Qwen3.5-4B checkpoint、prompt 與 non-thinking 模式固定。每輪記錄選樣程式／查詢、ID 清單、分類統計及基於敗局的假設，不要求資料選樣 random seed 或算力預算比較。工具與範例見 [Lichess 資料使用](docs/lichess-data.md)。
 
 ## 執行
 

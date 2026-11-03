@@ -22,6 +22,7 @@ def main():
     assert r['framework'] == 'verl' and r['algorithm'] == 'grpo'
     assert not any(r[k] for k in ('sft', 'harness', 'skills'))
     assert r['answer_protocol'] == 'chess-r1-boxed-san-v2'
+    assert r.get('enable_thinking', False) is False
     assert r['temperature'] == 1 and r['max_response_tokens'] == 16384
     assert r['checkpoint_every'] == 10
     a.output.mkdir(parents=True, exist_ok=True)

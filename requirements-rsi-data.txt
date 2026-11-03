@@ -1,0 +1,4 @@
+# Install in a dedicated CPU data environment, not the training/control overlays.
+python-chess
+pyarrow>=19
+zstandard

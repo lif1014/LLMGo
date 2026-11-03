@@ -98,6 +98,14 @@ def test_phase1_keeps_prompt_fixed_but_accepts_rl_edits(tmp_path):
     with pytest.raises(ValueError, match='freezes the Chess-R1 prompt'):
         controller.prepare(workspace/'proposal.json')
     prompt_copy.write_text(prompt.read_text())
+    config_copy = workspace/'configs/grpo/default.json'
+    config = json.loads(config_copy.read_text())
+    config['model_path'] = str(tmp_path/'another-initial-model')
+    config_copy.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match='initial Qwen3.5-4B checkpoint'):
+        controller.prepare(workspace/'proposal.json')
+    config.pop('model_path')
+    config_copy.write_text(json.dumps(config))
     (workspace/'src/llmgo/training/chess_r1_verl.py').write_text('ALGORITHM = "new_rl"\n')
     candidate = controller.prepare(workspace/'proposal.json')
     assert candidate['id'] == 'r000001'

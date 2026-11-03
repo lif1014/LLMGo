@@ -4,6 +4,8 @@
 
 Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt、空 `skills.json`，禁止候選 `harness.py` 和 SFT。默認訓練提案：
 
+初始 Qwen3.5-4B checkpoint 固定，可持續訓練它派生的研究 checkpoint；允許改超參與 reward 等。預設篩選資料不變，完整 Lichess 訓練池由 Meta-Agent 自行決定是否使用及如何選樣。每輪資料選擇交付項目與工具見 [Lichess 資料](lichess-data.md)。
+
 ```json
 {"hypothesis":"驗證 Chess-R1 GRPO 非思考基線","evidence_refs":[],"jobs":[{"label":"Chess-R1 GRPO","argv":["{python}","scripts/run_grpo.py","--output","{output}","--model","{model}"],"resources":{"gpu_count":8,"cpu":64,"memory_gib":512}}],"evaluation":{"levels":[2],"tracks":["player"]},"recommend":false}
 ```

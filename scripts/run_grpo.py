@@ -28,6 +28,8 @@ def main():
     training_output.mkdir(exist_ok=True)
     recipe_path = training_output/'recipe.json'
     recipe = json.loads(args.template.read_text())
+    if recipe.get('enable_thinking', False) is not False:
+        raise ValueError('Phase 1 requires non-thinking training')
     if args.model:
         recipe['model_path'] = str(Path(args.model).resolve())
     recipe['run_id'] = output.name

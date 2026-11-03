@@ -14,6 +14,8 @@
 
 當前 W&B 預設 offline；更新 JSON、分組表和原生日誌是權威證據。要用遠端 W&B 時需另立新實驗和 run ID。
 
+完整 Lichess 訓練池是額外選項，預設配方仍使用現有篩選資料。Meta-Agent 可自行選樣或沿用預設，並修改超參、reward 等 RL 設計；初始學生 checkpoint、prompt 與 non-thinking 模式固定。每輪資料選擇需要程式／查詢、ID 清單、分類統計與基於敗局的假設，不要求 random seed 或算力預算比較。詳見 [資料使用與轉檔](lichess-data.md)。
+
 ## 評測與 Meta-Agent
 
 開發驗證固定 Fairy L2（skill -5、depth 5、0.10 秒）、L2.5（skill -3、depth 5、0.125 秒）、L3（skill -1、depth 5、0.15 秒）。L2/L3 基線每檔 10 局，候選每檔 20 局；L2.5 可作中間難度診斷，完整 L2/L3 才計算可比較的錨點分數。`ChessEpisode` 每手寫 `events.jsonl`，含初始局面、模型消息和原文、學生步、對手步、forced move、fallback 和終局。Phase 1 只允許 RL 研究，固定 Chess-R1 非思考 prompt；`skills.json` 為空，不能新增 `harness.py`。每輪研究應讀輸棋的全部步驟。具體規則與 Phase 2 設計見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。

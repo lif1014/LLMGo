@@ -356,6 +356,8 @@ class Controller:
             recipe = read_json(config)
             if recipe.get("enable_thinking") is not False or recipe.get("answer_protocol") != "chess-r1-boxed-san-v2":
                 raise ValueError("Phase 1 requires non-thinking boxed SAN training")
+            if recipe.get("model_path", self.site["base_model"]) != self.site["base_model"]:
+                raise ValueError("Phase 1 freezes the initial Qwen3.5-4B checkpoint")
 
     def _evaluate_next(self, candidate, plan, role):
         schedule = [(t,l) for t in plan["tracks"] for l in plan["levels"]]
@@ -578,6 +580,9 @@ class Controller:
                         "不可修改 prompt 或答案协议，不可新增 harness.py，skills.json 必须保持空数组。"
                         "正式裁判、历史回执和冻结评测源码不可改。"
                         "270M 教师只用于 RL reward 与分析，不替学生正式走棋。"
+                        "初始Qwen3.5-4B checkpoint固定，可继续本研究派生checkpoint。默认仍用现有筛选数据；可自主决定是否使用新的完整Lichess训练池、如何筛选与混合。"
+                        "完整池位于 assets/datasets/lichess/20261103/boxed-nonthinking-v2，先检查verification.json。详见docs/lichess-data.md。"
+                        "允许修改超参和reward等；无需random seed或算力预算比较。每轮交付选样程序/查询、ID清单、分类统计、基于败局的选样假设；沿用默认数据也记录选择。"
                         "先做有证据的假设与资源计划，再提出训练或 L2/L2.5/L3 Fairy-Stockfish 开发验证。"
                         "新 campaign 的 L2/L3 基线每档10局，后续验证每档20局；DeepSeek Flash non-thinking 留作独立最终测试。每任务最多8 GPU，优先使用 NORMAL。"
                         "按 docs/grpo-pipeline.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"

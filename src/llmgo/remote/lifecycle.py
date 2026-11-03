@@ -15,6 +15,7 @@ from pathlib import Path
 from llmgo.rsi.contracts import atomic_json, digest, file_hash, identifier, inside, read_json, utc
 from llmgo.rsi.memory import MemoryStore, redact
 from .cctl import CctlExecutor, CctlCommandError, SubmissionUncertain, TERMINAL_FAILURE
+from .high_admission import AdmissionBusy
 
 FINAL = {"collected", "failed", "artifact_invalid"}
 
@@ -118,6 +119,8 @@ class JobExecutor:
                     self._collect_result(payload, report)
                     if report["status"] in FINAL:
                         self._collect_logs(job, intent, report)
+            except AdmissionBusy as exc:
+                report.update(status='waiting_for_capacity',summary=str(exc))
             except SubmissionUncertain as exc:
                 self.memory.append("reconciliation_required", {"job_id": job["id"], "error": str(exc)})
                 report.update(status="submission_uncertain", summary="Submission uncertain; reconcile existing intent, never blindly resubmit")

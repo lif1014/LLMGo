@@ -28,6 +28,8 @@ def main():
     training_output.mkdir(exist_ok=True)
     recipe_path = training_output/'recipe.json'
     recipe = json.loads(args.template.read_text())
+    if recipe.get('training_review',False):
+        raise ValueError('Reviewed GRPO must run through its registered Worker and protected training supervisor')
     if recipe.get('enable_thinking', False) is not False:
         raise ValueError('Phase 1 requires non-thinking training')
     if args.model:

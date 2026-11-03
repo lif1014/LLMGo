@@ -165,7 +165,7 @@ else
 fi
 if [[ ! -f "$campaign_root/campaign.json" ]]; then
   "$rsi_python" scripts/rsi.py --site "$site" init "$campaign" >"$runtime/$campaign-init.json"
-  echo '已创建campaign：L2/L3 每档10局，共20局初始基线。'
+  echo '已创建campaign：L2/L3 每档20局，共40局初始基线。'
 else
   if [[ "$recover_meta" == true ]]; then
     "$rsi_python" scripts/rsi.py --site "$site" recover-meta "$campaign" >"$runtime/$campaign-recover-meta.json"

@@ -8,9 +8,9 @@
 
 ## 執行與產物
 
-`configs/grpo/default.json` 是新任務模板。`scripts/run_grpo.py` 凍結配方，呼叫 `scripts/chess_r1_gpu_entry.py` 和訓練入口，最後核對最終 checkpoint 收據、合併 FSDP shards、修正 Transformers 5.4 權重命名，輸出完整 HF 模型和 `submission.json`。原生 checkpoint 含 actor、optimizer、RNG 和 dataloader；續訓只認同一實驗、同一配方及完整收據。改 reward、模型或配方時建立新實驗。
+`configs/grpo/default.json` 是新任務模板。提案用 `scripts/run_grpo.py` 登記標準訓練；受保護 Worker 的 `rsi/training_loop.py` 凍結配方，每 5 step 呼叫 GPU 入口、核對 checkpoint、合併 FSDP shards 並修正 Transformers 5.4 權重命名，再驗證與等待 Meta 決策。原生 checkpoint 含 actor、optimizer、RNG 和 dataloader；續訓只認同一實驗、同一配方及完整收據。改 reward、模型或配方時建立新實驗。
 
-標準路徑：`var/runs/<實驗ID>/grpo/{recipe.json,identity.json,progress.json,result.json,logs/train.log,oracle.log,updates/,tables/,sampling/,checkpoints/,native-checkpoints/,model/}`；Worker 收據在實驗根 `var/runs/<實驗ID>/{result.json,submission.json,research.log}`。兩種 `result.json` 位於不同目錄。導出前核對 `grpo/checkpoints/receipt-<最終step>.json` 和各 shard 大小。
+訓練路徑：`var/runs/<實驗ID>/grpo/{recipe.json,identity.json,progress.json,result.json,logs/train.log,oracle.log,updates/,tables/,sampling/,checkpoints/,native-checkpoints/}`。分段匯出在 `scaling/models/step-N/`，驗證與決策在 `scaling/evaluations/`、`scaling/reviews/`；Worker 收據在實驗根的 result.json、submission.json。兩種 result.json 位於不同目錄。導出前核對對應 step 收據與各 shard 大小。舊的非分段配方仍可使用 grpo/model/。
 
 當前 W&B 預設 offline；更新 JSON、分組表和原生日誌是權威證據。要用遠端 W&B 時需另立新實驗和 run ID。
 
@@ -18,8 +18,10 @@
 
 ## 評測與 Meta-Agent
 
-開發驗證固定 Fairy L2（skill -5、depth 5、0.10 秒）、L2.5（skill -3、depth 5、0.125 秒）、L3（skill -1、depth 5、0.15 秒）。L2/L3 基線每檔 10 局，候選每檔 20 局；L2.5 可作中間難度診斷，完整 L2/L3 才計算可比較的錨點分數。`ChessEpisode` 每手寫 `events.jsonl`，含初始局面、模型消息和原文、學生步、對手步、forced move、fallback 和終局。Phase 1 只允許 RL 研究，固定 Chess-R1 非思考 prompt；`skills.json` 為空，不能新增 `harness.py`。每輪研究應讀輸棋的全部步驟。具體規則與 Phase 2 設計見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。
+開發驗證固定 Fairy L2（skill -5、depth 5、0.10 秒）、L2.5（skill -3、depth 5、0.125 秒）、L3（skill -1、depth 5、0.15 秒）。L2/L3 基線每檔 20 局，候選每檔 20 局；L2.5 可作中間難度診斷，完整 L2/L3 才計算可比較的錨點分數。`ChessEpisode` 每手寫 `events.jsonl`，含初始局面、模型消息和原文、學生步、對手步、forced move、fallback 和終局。Phase 1 只允許 RL 研究，固定 Chess-R1 非思考 prompt；`skills.json` 為空，不能新增 `harness.py`。每輪研究應讀輸棋的全部步驟。具體規則與 Phase 2 設計見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。
 
 最終測試保留給選定的成果，使用 `scripts/run_final_test.py` 讓 Qwen 與 DeepSeek Flash non-thinking 對戰 10 局，白黑各五局。DeepSeek 走法沿用 `run_deepseek_loose.py` 的無歧義 boxed SAN 解析和代理設定；Qwen 仍使用嚴格 Chess-R1 格式。失效回覆使用有記錄的隨機合法步，雙方原始回覆、每步局面和終局寫入 `var/runs/<實驗ID>/final-test`。不要以此測試結果調整 Meta-Agent 的研究提案。
 
 程序和網頁從 `var/runs` 讀日誌；活動索引在 `var/campaigns`。舊 PPO、LC0、舊 Harness 和舊 Memory 網頁面板已退出新 pipeline。
+
+預設每 5 個 optimizer step 完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](training-reviews.md)。

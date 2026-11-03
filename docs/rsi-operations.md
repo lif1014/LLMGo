@@ -1,6 +1,6 @@
 # RSI 操作
 
-遠端 0 GPU devspace 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web` 建新 campaign。`configs/rsi/site.beijing.json` 固定 `beijing / model-autosft / NORMAL`，每項最多 8 GPU。Controller 把 Meta-Agent 每輪副本放在 `var/workspaces`；Worker 與 Executor 把任務結果放在 `var/runs/<campaign>-<job>`。每項 job 有源碼快照與配方身份。舊 campaign 的凍結源碼不會被 live 倉庫更新。
+遠端 0 GPU devspace 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web` 建新 campaign。`configs/rsi/site.beijing.json` 固定 `beijing / model-autosft，預設 HIGH（同時最多一個活動或提交不確定的 HIGH 任務）`，每項最多 8 GPU。Controller 把 Meta-Agent 每輪副本放在 `var/workspaces`；Worker 與 Executor 把任務結果放在 `var/runs/<campaign>-<job>`。每項 job 有源碼快照與配方身份。舊 campaign 的凍結源碼不會被 live 倉庫更新。
 
 Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt、空 `skills.json`，禁止候選 `harness.py` 和 SFT。默認訓練提案：
 
@@ -12,6 +12,10 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 
 `{python}`、`{candidate}`、`{output}`、`{model}`、`{source}` 由 Worker 代換；命令以 argv 執行。研究只寫 `/user/lyh4170`；來源 `/user/liyaohu4170` 只讀。每個實驗有獨立 ID、配方、結果與日誌，不覆蓋前一實驗。Meta-Agent 可執行 `python scripts/request_evaluation.py --level L2`、`L2.5` 或 `L3`；`--full-panel` 是 L2/L3 雙檔驗證。完成後以 prompt 中的 `finish_research.py` 保存交接記錄，Controller 再交 Executor 提交、輪詢和收集。
 
-選定成果後，另開獨立 1 GPU NORMAL job 執行 `python scripts/run_final_test.py --model <導出HF模型> --candidate <凍結候選副本> --output /user/lyh4170/LLMGo!/var/runs/<實驗ID>/final-test --inference-python /user/lyh4170/venvs/llmgo-rsi-20261022-inference/bin/python`。測試固定 Qwen 對 DeepSeek Flash non-thinking 十局；Meta-Agent 的驗證提案不能提交 DeepSeek 測試。原始事件、棋局、結果和 vLLM 日誌都在同一實驗的 `final-test/`。
+選定成果後，另開獨立 1 GPU HIGH job 執行 `python scripts/run_final_test.py --model <導出HF模型> --candidate <凍結候選副本> --output /user/lyh4170/LLMGo!/var/runs/<實驗ID>/final-test --inference-python /user/lyh4170/venvs/llmgo-rsi-20261022-inference/bin/python`。測試固定 Qwen 對 DeepSeek Flash non-thinking 十局；Meta-Agent 的驗證提案不能提交 DeepSeek 測試。原始事件、棋局、結果和 vLLM 日誌都在同一實驗的 `final-test/`。
+
+最終測試 CLI 預設請求 `deepseek-v4.1-flash` 並禁止 thinking；可用 `--opponent-base-url` 指定支援此名稱的 provider、`DEEPSEEK_KEY_FILE` 指定該 provider 的密鑰。不能假設官方 DeepSeek endpoint 接受自訂 provider 的同名別名，執行前先確認模型可用性。protocol 記錄請求模型／base URL，逐手事件另記 response_model；不把別名當作已核實的模型版本。舊參考 pipeline 的預設 `deepseek-flash` 保留，可透過 DEEPSEEK_MODEL、DEEPSEEK_BASE_URL 明確指定。
 
 網頁 `/rsi` 的「Chess-R1 · verl GRPO」讀取 `var/runs` 的當前實驗和原始日誌，棋局頁按每一步回放模型、引擎、forced move 和 fallback。Meta-Agent 應讀輸棋的 `games/<id>/events.jsonl` 全部步驟與 `summary.json`，再提出下一輪假設。Phase 1 的提示文字和 Phase 2 開放方案見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。`training` 逐檔保留與搬移理由見 [訓練目錄審核](training-module-audit.md)。
+
+預設每 5 個 optimizer step 完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](training-reviews.md)。

@@ -66,8 +66,13 @@ def execute(manifest_path, expected_sha=None):
                        "LLMGO_CANDIDATE":str(candidate), "LLMGO_SITE":str(Path(manifest_path).resolve()),
                        "LLMGO_RESUME_FROM":payload.get("resume_from", "")}
                 progress("research", command.get("label", "执行自主研究任务"), argv=argv)
-                with (output/"research.log").open("a") as log:
-                    subprocess.run(argv, cwd=candidate, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+                standard_grpo = any(x in {'scripts/run_grpo.py',str(candidate/'scripts/run_grpo.py')} for x in argv)
+                if standard_grpo and site.get('training_review',False):
+                    from .training_loop import TrainingLoop
+                    TrainingLoop(payload).run()
+                else:
+                    with (output/"research.log").open("a") as log:
+                        subprocess.run(argv, cwd=candidate, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
                 # Optional receipt may point to any exported own-directory model.
                 artifact = output/"research-result.json"
                 receipt = read_json(output/"submission.json") if (output/"submission.json").is_file() else {}

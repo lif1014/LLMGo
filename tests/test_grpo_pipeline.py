@@ -154,3 +154,15 @@ def test_run_api_reads_remote_layout_and_every_game_step(tmp_path,monkeypatch):
     assert replay['events'][-1]['event']['summary']['result']=='white_win'
     artifact=client.get('/api/rsi/campaigns/demo/artifact',params={'path':'jobs/j000001/games/g0/events.jsonl','length':64})
     assert artifact.status_code==200
+    # Training-loop games retain the same replay format inside checkpoint/level directories.
+    import shutil
+    nested=run/'scaling/evaluations/step-00000005/L2/games/g1'
+    shutil.copytree(game,nested)
+    atomic_json(run/'scaling/curve.json',{'points':[{'step':5}]})
+    listing=client.get('/api/rsi/campaigns/demo/games').json()
+    item=next(x for x in listing if '/scaling/' in x['folder'])
+    replay=client.get('/api/rsi/campaigns/demo/game-events',params={'folder':item['folder']})
+    assert replay.status_code==200 and replay.json()['events'][-1]['event']['type']=='game_finished'
+    files=client.get('/api/grpo/runs/demo-j000001/files').json()
+    assert any(x['path']=='scaling/curve.json' for x in files)
+    assert any(x['path'].endswith('g1/events.jsonl') for x in files)

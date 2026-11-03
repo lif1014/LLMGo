@@ -366,7 +366,9 @@ def games(name: str, limit: int = Query(200, ge=1, le=1000), job_id: str | None 
     jobs = [identifier(job_id)] if job_id else [p.name for p in sorted((root/'jobs').iterdir()) if p.is_dir()]
     for ident in jobs:
         output = job_output(root,ident)
-        for summary in sorted((output/'games').glob('*/summary.json')):
+        summaries=sorted((output/'games').glob('*/summary.json'))
+        summaries+=sorted(output.glob('scaling/evaluations/*/*/games/*/summary.json'))
+        for summary in summaries[-limit:]:
             original = limited_json(summary,262144)
             if not original:
                 continue
@@ -382,7 +384,9 @@ def games(name: str, limit: int = Query(200, ge=1, le=1000), job_id: str | None 
                       'completion_tokens':original.get('response_tokens'),
                       'random_moves':original.get('random_moves'),
                       'fallback_reasons':original.get('fallback_reasons',{})}
-            result.append({'id':summary.parent.name,'folder':f'jobs/{ident}/games/{summary.parent.name}',
+            relative=summary.parent.relative_to(output).as_posix()
+            folder=f'jobs/{ident}/games/{summary.parent.name}' if relative.startswith('games/') else f'jobs/{ident}/output/{relative}'
+            result.append({'id':summary.parent.name,'folder':folder,
                            'candidate_id':original.get('policy_version'),
                            'model_seat':side,'summary':mapped if original.get('completed') else None})
     if result:
@@ -395,10 +399,11 @@ def game_events(name: str, folder: str, cursor: int = Query(0, ge=0), limit: int
                 view: Literal["full", "compact"] = "full"):
     root = campaign(name)
     parts = Path(folder).parts
-    if len(parts) == 4 and parts[0] == 'jobs' and parts[2] == 'games':
+    if len(parts)>=4 and parts[0]=='jobs' and (parts[2]=='output' or len(parts)==4 and parts[2]=='games'):
         try:
             output = job_output(root, parts[1])
-            directory = inside(output, output/'games'/identifier(parts[3]))
+            relative=Path('games')/identifier(parts[3]) if parts[2]=='games' else Path(*parts[3:])
+            directory = inside(output,output/relative)
             if not (directory/'events.jsonl').is_file():
                 raise ValueError('Unknown game')
         except ValueError as exc:

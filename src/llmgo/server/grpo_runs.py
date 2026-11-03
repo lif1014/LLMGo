@@ -65,11 +65,16 @@ def files(name: str):
                'grpo/result.json','grpo/failure.json','grpo/identity.json',
                'grpo/resolved-config.json','grpo/oracle.log','grpo/logs/train.log']
     allowed += ['final-test/protocol.json','final-test/progress.json','final-test/result.json','final-test/vllm.log']
+    allowed += ['scaling/curve.json','scaling/best.json','scaling/cost.json',
+                'scaling/pending-review.json','scaling/final.json','scaling/identity.json']
     allowed += [p.relative_to(root).as_posix() for pattern in
                 ('grpo/updates/*.json','grpo/checkpoints/receipt-*.json','grpo/sampling/*.json',
                  'grpo/tables/*.json','evaluations/*/summary.json','evaluations/*/progress.json',
                  'final-test/game_results/*.json','final-test/games/*/summary.json',
-                 'final-test/games/*/events.jsonl')
+                 'final-test/games/*/events.jsonl','logs/*.log',
+                 'scaling/reviews/*/*.json','scaling/evaluations/*/*/metrics.json',
+                 'scaling/evaluations/*/*/games/*/events.jsonl',
+                 'scaling/evaluations/*/*/games/*/summary.json')
                 for p in sorted(root.glob(pattern))[-30:]]
     result = []
     for relative in dict.fromkeys(allowed):

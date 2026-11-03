@@ -1,17 +1,19 @@
 ---
 name: cctl
-description: 为本项目在 Cybertron 查询自己的资源和任务，按用户指定的 beijing、model-autosft、NORMAL 约束提交计算 job。
+description: 为本项目在 Cybertron 查询自己的资源和任务，按用户指定的 beijing、model-autosft、HIGH 约束提交计算 job。
 ---
 
 本项目操作摘要依据用户提供的 `/home/lif/.local/bin/.cursor/skills/cctl/SKILL.md`（v0.0.22）与已成功任务整理；原机器路径不要求在 devspace 存在。
 
 完整原文见 [references/cctl-full.md](references/cctl-full.md)，按源文件逐字保留。登录、profile、任务参数、镜像、文件系统等操作细节可按需查阅对应章节；原文中的通用示例仍须遵守下面的本项目资源与目录约束。
 
-**固定约束：** cluster `beijing`、资源池 `model-autosft`、priority `NORMAL`；新建 devspace 必须 GPU=0。GPU 通过 job/pytorchjob，每项任务最多8 GPU；GPU任务默认8卡，Meta-Agent可按需选择1–8卡，纯CPU任务使用0卡。不得停止、删除、抢占他人任务。
+**固定约束：** cluster `beijing`、资源池 `model-autosft`、priority 預設 `HIGH`，同時最多一個活動或提交不確定的 HIGH 任務；新建 devspace 必须 GPU=0。GPU 通过 job/pytorchjob，每项任务最多8 GPU；GPU任务默认8卡，Meta-Agent可按需选择1–8卡，纯CPU任务使用0卡。不得停止、删除、抢占他人任务。
 2026-10-30用户更新：自有GPU任务并发上限为5个（含排队、启动和运行），每任务最多8GPU；提交前按--own与intent对账，不为腾资源停止其他实验。
 只写 `/user/lyh4170`；现有模型和已获许可的来源配置只读。不改 `$HOME`，也不打印认证材料。
 
-评测默认8个单卡Qwen副本，每卡TP=1，同时进行8局；`python scripts/request_evaluation.py --level L2 --gpus 4` 可改为4卡，不改变正式比赛数。Chess-R1 GRPO 使用同任务的 CPU 270M reward oracle；申请卡数须與冻结配方一致。GPU任务交给Executor每5–10分钟查询一次，纯CPU任务可较频繁查询。
+评测默认8个单卡Qwen副本，每卡TP=1，同时进行8局；`python scripts/request_evaluation.py --level L2 --gpus 4` 可改为4卡，不改变正式比赛数。Chess-R1 GRPO 使用同任务的 CPU 270M reward oracle；申请卡数须與冻结配方一致。GPU任务交给Executor每600秒查询一次，纯CPU任务可较频繁查询。
+
+2026-11-03 使用者明確更新授權：預設 HIGH，同時最多一個活動或提交不確定的 HIGH 任務；這取代參考原文中的歷史 NORMAL 限制，官方原文仍原樣保留。提交不確定先對帳，不搶占或停止其他任務。
 
 先 `CCTL_NO_UPDATE_CHECK=1 cctl pool list --own --no-input -o json`。
 训练/评测优先交给 `scripts/rsi.py` 的冻结 manifest 与防重机制；一般不手写第二套提交。

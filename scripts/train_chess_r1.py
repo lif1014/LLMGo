@@ -24,7 +24,7 @@ def main():
     assert r['answer_protocol'] == 'chess-r1-boxed-san-v2'
     assert r.get('enable_thinking', False) is False
     assert r['temperature'] == 1 and r['max_response_tokens'] == 16384
-    assert r['checkpoint_every'] == 10
+    assert type(r['checkpoint_every']) is int and r['checkpoint_every'] > 0
     a.output.mkdir(parents=True, exist_ok=True)
     run_lock = (a.output/'run.lock').open('a')
     fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -41,6 +41,9 @@ def main():
     os.environ.update(CHESS_R1_RESUME_ATTEMPT=str(resumed['attempt']),
                       CHESS_R1_RESUME_STEP=str(resumed['step']))
     os.environ['CHESS_R1_MEMORY_ONLY'] = '1' if r.get('mode') == 'long_context_acceptance' else '0'
+    segment_target = int(os.environ.get('CHESS_R1_SEGMENT_TARGET', r['steps']))
+    if not 1 <= segment_target <= r['steps']:
+        raise ValueError('Segment target outside the frozen training plan')
     os.environ['CHESS_R1_VERIFY_CHECKPOINT_RESTORE'] = str(int(
         r['steps'] == 2 and r.get('mode') != 'long_context_acceptance'))
     from llmgo.training.chess_r1_verl import atomic, progress, ChessR1TaskRunner
@@ -96,6 +99,8 @@ def main():
                                           'TOKENIZERS_PARALLELISM', 'LLMGO_WAKE_CACHE_FLUSH', 'CHESS_R1_MEMORY_ONLY',
                                           'CHESS_R1_VERIFY_CHECKPOINT_RESTORE')}
         env.update({k: os.environ[k] for k in ('CHESS_R1_RESUME_ATTEMPT', 'CHESS_R1_RESUME_STEP')})
+        if 'CHESS_R1_SEGMENT_TARGET' in os.environ:
+            env['CHESS_R1_SEGMENT_TARGET'] = str(segment_target)
         env['PYTHONPATH'] = source
         for key in ('MAX_JOBS','FLASHINFER_NVCC_THREADS','TORCHINDUCTOR_COMPILE_THREADS',
                     'VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS','FLASHINFER_WORKSPACE_BASE',
@@ -128,10 +133,13 @@ def main():
         receipts = list((a.output/'checkpoints').glob('receipt-*.json'))
         if not receipts or not list((a.output/'updates').glob('step-*.json')):
             raise RuntimeError('No complete optimizer/checkpoint evidence')
-        atomic(a.output/'result.json', {'status': 'completed', 'steps': r['steps'], 'run_id': r['run_id'],
+        if not (a.output/'checkpoints'/f'receipt-{segment_target:08d}.json').is_file():
+            raise RuntimeError('Segment ended without its complete checkpoint')
+        result_path = a.output/'result.json' if segment_target == r['steps'] else a.output/'segment-result.json'
+        atomic(result_path, {'status': 'completed' if segment_target == r['steps'] else 'segment_complete', 'steps': segment_target, 'run_id': r['run_id'],
                                        'gpu_worker_compatibility': workers,
                                        'checkpoint_receipts': [json.loads(x.read_text()) for x in receipts]})
-        progress('completed', step=r['steps'])
+        progress('completed' if segment_target == r['steps'] else 'segment_complete', step=segment_target)
     except BaseException as error:
         atomic(a.output/'failure.json', {'type': type(error).__name__, 'error': str(error)[-6000:]})
         progress('failed', error_type=type(error).__name__)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ import chess
 from llmgo.training.chess_r1 import extract_answer, messages
 from llmgo.rsi.game import ChessEpisode
 from .contracts import atomic_json, file_hash, inside, model_identity, read_json, utc
-from .deepseek_client import extract_loose_answer, request as deepseek_request
+from .deepseek_client import extract_loose_answer, opponent_identity, request as deepseek_request
 from .evaluator import candidate_messages, request_completion
 from .service import VllmServer, _pick_ports, _wait_servers, visible_gpu_ids
 
@@ -37,6 +38,8 @@ class DeepSeekPlayer:
         request_id = f'{self.game_id}-opponent-{len(board.move_stack)}-{time.time_ns()}'
         response = deepseek_request(messages(fen, enable_thinking=False), request_id)
         choice = response['choices'][0]
+        if (choice['message'].get('reasoning_content') or '').strip():
+            raise ValueError('Final opponent returned reasoning despite non-thinking request')
         content = choice['message'].get('content') or ''
         parsed = extract_loose_answer(content, fen, finish_reason=choice.get('finish_reason'))
         fallback = None
@@ -45,7 +48,7 @@ class DeepSeekPlayer:
         else:
             fallback = parsed.error or 'invalid_final_answer'
             uci = self.rng.choice(sorted(move.uci() for move in board.legal_moves))
-        return uci, {'model': 'deepseek-flash', 'thinking': 'disabled',
+        return uci, {**opponent_identity(), 'response_model':response.get('model'),
                      'request_id': request_id, 'raw_output': content,
                      'finish_reason': choice.get('finish_reason'),
                      'parsed_san': parsed.san, 'parsed_uci': parsed.uci,
@@ -120,7 +123,7 @@ def run(model, candidate, output, *, inference_python=None):
     payload = {'candidate_id': candidate.name, 'candidate_source': {'root': str(candidate)},
                'skills_path': str(skills) if skills.is_file() else None}
     atomic_json(output/'protocol.json', {'role': 'held_out_final_test',
-        'opponent': OPPONENT, 'student_protocol': PROTOCOL, 'games': 10,
+        'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': 10,
         'white': 5, 'black': 5, 'seed_pairs': [417000+i for i in range(5)],
         'max_plies': 200, 'invalid_move_policy': 'random_legal',
         'student_model_identity': identity, 'candidate': str(candidate),
@@ -147,7 +150,7 @@ def run(model, candidate, output, *, inference_python=None):
         raise ValueError('Candidate prompt or skills changed during final test')
     score = sum((row['result'] + 1)/2 for row in rows)/10
     result = {'status': 'completed', 'role': 'held_out_final_test',
-              'opponent': 'deepseek-flash', 'thinking': 'disabled',
+              'opponent': opponent_identity(), 'thinking': 'disabled',
               'games': 10, 'wins': sum(x['result'] == 1 for x in rows),
               'draws': sum(x['result'] == 0 for x in rows),
               'losses': sum(x['result'] == -1 for x in rows),
@@ -162,7 +165,11 @@ def main(argv=None):
     parser.add_argument('--candidate', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--inference-python')
+    parser.add_argument('--opponent-model',default=os.environ.get('DEEPSEEK_MODEL','deepseek-v4.1-flash'))
+    parser.add_argument('--opponent-base-url',default=os.environ.get('DEEPSEEK_BASE_URL','https://api.deepseek.com'))
     args = parser.parse_args(argv)
+    os.environ['DEEPSEEK_MODEL']=args.opponent_model
+    os.environ['DEEPSEEK_BASE_URL']=args.opponent_base_url.rstrip('/')
     root = Path('/user/lyh4170')
     for path in (args.model, args.candidate, args.output):
         inside(root, path)

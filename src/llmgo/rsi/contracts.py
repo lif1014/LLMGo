@@ -85,8 +85,13 @@ def load_site(path: str | Path) -> dict:
     sandbox_mode(site)
     if site.get("schema_version") != SCHEMA:
         raise ValueError("Unsupported site schema")
-    if (site["cluster"], site["resource_pool"], site["priority"]) != ("beijing", "model-autosft", "NORMAL"):
-        raise ValueError("Only beijing / model-autosft / NORMAL is authorized")
+    if (site['cluster'], site['resource_pool']) != ('beijing', 'model-autosft') or site['priority'] not in {'NORMAL','HIGH'}:
+        raise ValueError('Only beijing / model-autosft with NORMAL or HIGH is authorized')
+    if site.get('max_active_high_jobs',1) != 1:
+        raise ValueError('Exactly one active or uncertain HIGH submission is allowed')
+    if site.get('training_review') and site.get('executor_mode') != 'external':
+        raise ValueError('Training reviews require an external Executor')
+    finite(site.get('review_timeout_seconds',900),'review_timeout_seconds',1,86400)
     if site["user_root"] != "/user/lyh4170":
         raise ValueError("Remote writable root must be /user/lyh4170")
     for key in ("repo", "codex_home", "campaign_root", "worktree_root", "checkpoint_root", "engine", "codex_bin"):

@@ -26,6 +26,10 @@ install_wake_cache_flush()
 install_3d_position_compat()
 
 
+class SegmentComplete(Exception):
+    """A committed optimizer boundary, not a failed experiment."""
+
+
 def root():
     return Path(os.environ['CHESS_R1_OUTPUT'])
 
@@ -394,6 +398,11 @@ class ChessR1Trainer(RayPPOTrainer):
                 original.log(self, data, step, *a, **kw)
                 emit(step, {**data, **trainer.chess_metrics}, trainer.chess_tables)
                 progress('update_completed' if trainer.chess_tables else 'validation', step=step)
+                target = int(os.environ.get('CHESS_R1_SEGMENT_TARGET', '0'))
+                if target and step >= target and trainer.chess_tables:
+                    if not (root()/'checkpoints'/f'receipt-{step:08d}.json').is_file():
+                        trainer._save_checkpoint()
+                    raise SegmentComplete()
         tracking.Tracking = ObserveTracking
         original_generate = self.async_rollout_manager.generate_sequences
         def complete_groups(data):
@@ -473,6 +482,11 @@ class ChessR1Trainer(RayPPOTrainer):
         try:
             # Native fit computes GRPO advantages and calls native actor/checkpoint.
             return super().fit()
+        except SegmentComplete:
+            if hasattr(self.actor_rollout_wg, 'async_calls_finalize_fn_exec'):
+                self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=True)
+            self._shutdown_dump_executor()
+            return
         finally:
             tracking.Tracking = original
             self.async_rollout_manager.generate_sequences = original_generate

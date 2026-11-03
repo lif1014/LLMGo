@@ -55,7 +55,7 @@ class Controller:
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
                  "research_scope": PHASE1_SCOPE,
                  "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
-                 "phase": "BASELINE", "baseline_games_per_level": 10, "baseline_levels": [2,3],
+                 "phase": "BASELINE", "baseline_games_per_level": 20, "baseline_levels": [2,3],
                  "round": 0, "active_job": None, "jobs": {},
                  "candidate": None, "workspace": None, "attempts": [], "meta_stalls": 0,
                  "initial": initial, "incumbent": initial.copy(), "working": initial.copy(),
@@ -77,7 +77,7 @@ class Controller:
         # show recovery without loading a multi-megabyte campaign or raw log.
         atomic_json(self.root/"controller-status.json", {"schema_version":1,
             **{key:self.state.get(key) for key in ("campaign_id","phase","round","active_job",
-                                                  "controller_recovery","updated")},
+                                                  "controller_recovery","training_review","final_checkpoint","updated")},
             "research_control": read_control(self.root)})
 
     def upgrade(self, site, repo=None):
@@ -101,6 +101,8 @@ class Controller:
         self.state.setdefault("upgrades", []).append({"utc":utc(),"previous_source":old_source,
             "source":snapshot,"previous_site":self.site,"site":site})
         self.state.update(site=site,source=snapshot,working=working)
+        if not self.state['jobs'] and site.get('training_review'):
+            self.state['baseline_games_per_level'] = 20
         self.site = site
         self.lifecycle = JobExecutor(self.root,site)
         self.memory.append("pipeline_upgraded", {"source":snapshot["sha256"],"gpu_count":site["gpu_count"],
@@ -129,6 +131,10 @@ class Controller:
                    "output": str(run_output), "model_path": candidate["model_path"],
                    "expected_model_sha256": candidate.get("model_sha256"),
                    "skills_path": candidate["skills_path"], "skills_sha256": candidate["skills_sha256"]}
+        payload['lineage_steps'] = candidate.get('lineage_steps',0)
+        payload['lineage_gpu_hours'] = candidate.get('lineage_gpu_hours',0.)
+        payload['parent_curve'] = candidate.get('curve')
+        payload['engine_pin'] = self.state.get('engine_pin')
         if kind == "evaluate":
             spec = opponent(level)
             # Keep already-created campaigns on their frozen 20-game protocol.
@@ -220,6 +226,22 @@ class Controller:
                 if result.get("model_identity") and result["model_identity"] != identity:
                     raise ValueError("Research export identity changed before collection")
                 candidate.update(model_path=model_path, model_sha256=identity["sha256"])
+            action = result.get('training_loop_action')
+            if action:
+                candidate.update(training_loop_action=action,lineage_steps=result['lineage_steps'],
+                                 lineage_gpu_hours=result.get('lineage_gpu_hours',0.),curve=result['curve'],evaluation=None)
+                candidate['jobs'] = candidate['jobs'][:self.state['candidate_step']+1]
+                for row in result['evaluations']:
+                    metrics = self.metrics(row['ref'])
+                    if metrics['model_identity']['sha256'] != candidate['model_sha256']:
+                        raise ValueError('Selected loop model differs from its evaluation')
+                    self.state['pending_evaluations'].append({**row,'role':'candidate','candidate_id':candidate['id']})
+                if action == 'finish':
+                    candidate['proposal'].update(recommend=True,recommendation=result['reason'])
+                if action == 'review_timeout':
+                    self._finish({'status':'review_timeout','checkpoint':result.get('checkpoint_receipt')},persist=False)
+                    self.state.update(phase='NEEDS_INPUT',resume_phase='PLANNING',needs_input='Meta review timed out; native checkpoint and selected HF model retained. Resume after restoring Meta connectivity.')
+                    return
             self.state["candidate_step"] += 1
             self.state["phase"] = "EXPERIMENT"
             return
@@ -247,7 +269,8 @@ class Controller:
         self.state["round"] += 1
         folder = inside(self.site["user_root"], Path(self.site["worktree_root"])/self.state["campaign_id"]/f"round-{self.state['round']:06d}")
         parent = self.state["working"]
-        source_snapshot(Path(parent["source"]["root"]), folder)
+        next_source = self.state.pop('next_replan_source',None)
+        source_snapshot(Path((next_source or parent['source'])['root']), folder)
         # Preserve the parent cards so phase 1 can verify that they stay empty.
         if parent.get("skills_path"):
             shutil.copy2(parent["skills_path"], folder/"skills.json")
@@ -257,6 +280,66 @@ class Controller:
         self.state["workspace"] = str(folder)
         self.save()
         return folder
+
+    def training_review(self,job):
+        """Observe the shared disk, never issue a scheduler poll to find a review."""
+        from .training_review import request, decision
+        payload=read_json(job['manifest'])['payload']
+        output=inside(self.site['user_root'],payload['output'])
+        pending=output/'scaling/pending-review.json'
+        if not pending.is_file():
+            return None
+        path=inside(output,read_json(pending)['path'])
+        review=request(path)
+        if path.with_name('expired.json').exists() or decision(path) is not None:
+            return None
+        p=review['payload']
+        if p['job_id']!=job['id'] or p['campaign_id']!=self.root.name or p['candidate_source_sha256']!=payload['candidate_source']['sha256']:
+            raise ValueError('Training review belongs to another job/source')
+        workspace=inside(self.site['user_root'],Path(self.site['worktree_root'])/self.root.name/'reviews'/f"{job['id']}-{p['step']:08d}")
+        if not workspace.exists():
+            source_snapshot(Path(payload['candidate_source']['root']),workspace)
+            atomic_json(workspace/'proposal.json',{'hypothesis':f"Review training step {p['step']}",'jobs':[]})
+        atomic_json(workspace/'context.json',{'campaign':self.memory.context(),'training_review':review,
+            'curve':read_json(p['curve_path'])})
+        self.state['training_review']={'request':str(path),'workspace':str(workspace),'step':p['step'],'request_id':review['request_id']}
+        self.save()
+        return {'status':'needs_training_review','workspace':str(workspace),'request':str(path)}
+
+    def finish_training_review(self,answer):
+        from .training_review import commit, validate
+        item=self.state['training_review']
+        if Path(item['request']).with_name('expired.json').exists():
+            self.memory.append('training_review_expired',{'request_id':item['request_id'],'step':item['step']})
+            self.state['training_review']=None
+            self.save()
+            return {'status':'expired','checkpoint_retained':True}
+        workspace=Path(item['workspace'])
+        path=inside(workspace,answer['proposal_path'])
+        if path.parent!=workspace:
+            raise ValueError('Review proposal outside its registered workspace')
+        proposal=read_json(path)
+        value=validate(item['request'],proposal.get('training_review'))
+        self._validate_phase1_workspace(workspace)
+        if value['action']=='continue':
+            from .artifacts import snapshot_files
+            frozen=self.state['candidate']['source']['files']
+            changed=[str(rel) for rel,file in snapshot_files(workspace)
+                     if rel.parts[0] in {'src','scripts','configs'} and file_hash(file)!=frozen.get(rel.as_posix())]
+            missing=[name for name in frozen if name.split('/')[0] in {'src','scripts','configs'} and not (workspace/name).is_file()]
+            if changed or missing:
+                raise ValueError('Continue keeps the frozen training plan; use replan to change code/configuration')
+        if value['action']=='replan':
+            folder=self.root/'review-sources'/item['request_id']
+            if not folder.exists():
+                source_snapshot(workspace,folder)
+            snapshot=read_json(folder/'source-manifest.json');verify_source(snapshot)
+            self.state['next_replan_source']=snapshot
+        result=commit(item['request'],value)
+        self.memory.append('training_review_decision',{**result,'job_id':self.state['active_job'],'step':item['step']},event_id='training-review-'+item['request_id'])
+        self.state['training_review']=None
+        self.save()
+        return result
 
     def prepare(self, proposal_path):
         require_research(self.root)
@@ -331,6 +414,9 @@ class Controller:
                      "model_path": model, "model_sha256": None, "skills_path": str(cards) if cards else None, "skills_sha256": file_hash(cards) if cards else None,
                      "hypothesis": proposal["hypothesis"], "proposal": proposal, "jobs": jobs,
                      "evaluation": plan, "evaluations": [], "fingerprint": digest({"source":snapshot["sha256"], "model":model})}
+        parent = self.state['working']
+        if model == parent['model_path']:
+            candidate.update(lineage_steps=parent.get('lineage_steps',0),lineage_gpu_hours=parent.get('lineage_gpu_hours',0.),curve=parent.get('curve'))
         self.state.update(candidate=candidate, candidate_step=0, evaluation_cursor=0,
                           pending_evaluations=[], phase="EXPERIMENT", meta_stalls=0)
         self.memory.append("hypothesis", {"candidate_id": candidate["id"], "hypothesis": candidate["hypothesis"],
@@ -399,6 +485,9 @@ class Controller:
         self.memory.handoff({"completed": [record], "next": "Read evidence; choose any next research method",
                              "working": candidate["id"], "best": self.state.get("best", {}).get("score") if self.state.get("best") else None})
         self.state.update(candidate=None, workspace=None, phase="PLANNING")
+        if candidate.get('training_loop_action')=='finish':
+            self.state.update(phase='COMPLETE',final_checkpoint={'model_path':candidate['model_path'],
+                'model_sha256':candidate['model_sha256'],'curve':candidate['curve'],'candidate_id':candidate['id']})
         if persist:
             self.save()
 
@@ -414,6 +503,10 @@ class Controller:
                 if not confirmed:
                     return {"status": "research_paused", "control": control,
                             "pending_job": job["id"], "submission_held": True}
+            if not control['paused']:
+                review=self.training_review(job)
+                if review:
+                    return review
             return self._poll()
         phase = self.state["phase"]
         if control["paused"]:
@@ -453,6 +546,8 @@ class Controller:
                 self._finish()
         elif phase == "NEEDS_INPUT":
             return {"status": "needs_input", "detail": self.state.get("needs_input")}
+        elif phase == 'COMPLETE':
+            return {'status':'completed','checkpoint':self.state['final_checkpoint']}
         else:
             raise ValueError("Unknown controller phase")
         return {"status": "advanced", "phase": self.state["phase"]}
@@ -569,6 +664,33 @@ class Controller:
                     continue
                 if result["status"] != "research_paused":
                     self._clear_recovery("advance")
+                if result['status']=='needs_training_review':
+                    from .meta import CodexBackend
+                    from .training_review import ReviewExpired
+                    active_backend=backend or CodexBackend(self.site,self.memory)
+                    prompt=(f"读取context.json、.agents/skills/rsi-training-review/SKILL.md和完整曲线。当前训练在安全checkpoint等待你的决定；请求位于 {result['request']}。"
+                        "检查L2/L3结果和败局每一步。选择continue、replan或finish；在proposal.json的training_review写request_id、action、reason、selected_step。"
+                        "continue保留当前冻结配方并原地续训；replan保留父模型并在本副本修改下一轮方案；finish选择一个已评测checkpoint交用户做独立DeepSeek测试。"
+                        "不要提交第二个GPU任务，不修改运行中的冻结源。使用正常finish_research.py交接，status=ready。")
+                    try:
+                        answer=active_backend.turn(Path(result['workspace']),prompt)
+                        if answer['status']!='ready':
+                            raise MetaFailure(answer['summary'],code='review_needs_input',retryable=False)
+                        self.finish_training_review(answer)
+                        self._clear_recovery('training_review')
+                    except ResearchPaused:
+                        self._publish_control_status()
+                    except ReviewExpired:
+                        item=self.state.get('training_review') or {}
+                        self.memory.append('training_review_expired',{'request_id':item.get('request_id'),'step':item.get('step')})
+                        self.state['training_review']=None
+                        self.state.pop('next_replan_source',None)
+                        self.save()
+                    except Exception as exc:
+                        outcome=self._control_failure(exc,'training_review')
+                        if outcome['status']=='needs_input':
+                            return outcome
+                    continue
                 if result["status"] == "needs_meta":
                     workspace = Path(result["workspace"])
                     prompt = (f"读取 {workspace/'context.json'}、Memory 和 .agents/skills/rsi-memory/SKILL.md。"
@@ -583,7 +705,8 @@ class Controller:
                         "完整池位于 assets/datasets/lichess/20261103/boxed-nonthinking-v2，先检查verification.json。详见docs/lichess-data.md。"
                         "允许修改超参和reward等；无需random seed或算力预算比较。每轮交付选样程序/查询、ID清单、分类统计、基于败局的选样假设；沿用默认数据也记录选择。"
                         "先做有证据的假设与资源计划，再提出训练或 L2/L2.5/L3 Fairy-Stockfish 开发验证。"
-                        "新 campaign 的 L2/L3 基线每档10局，后续验证每档20局；DeepSeek Flash non-thinking 留作独立最终测试。每任务最多8 GPU，优先使用 NORMAL。"
+                        "L2/L3 基线和验证每档20局、白黑各10局。默认每5个optimizer step保存完整checkpoint并验证，验证后你决定continue、replan或finish；读取rsi-training-review技能。"
+                        "保留全部中间checkpoint、原始得分与observed-best曲线；不把观测最优包络当作实际能力单调增长。DeepSeek non-thinking只留给用户做最终测试。每任务最多8 GPU，默认HIGH，同时最多一个HIGH任务。"
                         "按 docs/grpo-pipeline.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
                         "完成 proposal.json 与必要验证后调用 finish_research.py 交接；确有障碍时返回 needs_input。"
                         f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")
@@ -633,6 +756,6 @@ class Controller:
                 elif result["status"] == "research_paused":
                     if max_steps is None:
                         time.sleep(5)
-                elif result["status"] in ("submission_uncertain", "needs_input"):
+                elif result["status"] in ("submission_uncertain", "needs_input", 'completed'):
                     return result
             return {"status": "step_limit", "phase": self.state["phase"]}

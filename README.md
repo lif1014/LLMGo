@@ -37,7 +37,7 @@
 {"argv":["{python}","scripts/run_grpo.py","--output","{output}","--model","{model}"],"resources":{"gpu_count":8,"cpu":64,"memory_gib":512}}
 ```
 
-配方凍結於 `var/runs/<實驗ID>/grpo/recipe.json`，原生 verl checkpoint、指標與 oracle 日誌在 `grpo/`，完整 HF 模型在 `grpo/model/`，供 Controller 收集的 `submission.json` 在實驗根。所有作業限 `beijing / model-autosft / NORMAL`，每項最多 8 GPU，devspace 0 GPU。
+配方凍結於 `var/runs/<實驗ID>/grpo/recipe.json`，原生 verl checkpoint、指標與 oracle 日誌在 `grpo/`，每次驗證的 HF 模型在 `scaling/models/step-N/`，供 Controller 收集的 `submission.json` 在實驗根。作業限 `beijing / model-autosft`，預設 HIGH，同時最多一個活動或提交不確定的 HIGH 任務；每項最多 8 GPU，devspace 0 GPU。
 
 遠端已有專用 verl、teacher 與推理環境。首次新 campaign 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web`；不沿用舊 campaign 的凍結快照。詳見 [RSI 操作](docs/rsi-operations.md)。網頁讀取 `var/runs/` 的指標和日誌，驗證棋局的 `events.jsonl` 可逐手復盤，包含輸棋每一步、模型回覆和隨機後備。
 
@@ -45,4 +45,6 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 
 ## 研究起點
 
-目前 Meta-Agent 的起點是新 campaign `chess-grpo-v1` 的 `BASELINE`：學生模型為 Qwen3.5-4B，固定 Chess-R1 非思考 prompt；先做 L2、L3 各 10 局基線，之後才能提出 Phase 1 RL 研究與 L2～L3 驗證。至今沒有啟動正式訓練。已啟動的 job 使用提交時的凍結快照；live 倉庫更新不會熱改已有實驗。
+新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 20 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
+
+預設每 5 個 optimizer step 完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。

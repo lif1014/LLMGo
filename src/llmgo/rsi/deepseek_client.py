@@ -15,12 +15,19 @@ DEFAULT_KEY = Path('/user/lyh4170/.config/llmgo/deepseek-api-key')
 DEFAULT_PROXY = 'http://whitelist-proxy.cybertron.svc.cluster.local:7891'
 
 
+def opponent_identity():
+    return {'model':os.environ.get('DEEPSEEK_MODEL','deepseek-flash'),
+            'base_url':os.environ.get('DEEPSEEK_BASE_URL','https://api.deepseek.com').rstrip('/'),
+            'thinking':'disabled'}
+
+
 def request(messages, request_id, timeout=90, max_tokens=16384):
     key = Path(os.environ.get('DEEPSEEK_KEY_FILE', str(DEFAULT_KEY))).read_text().strip()
-    body = {'model': 'deepseek-flash', 'thinking': {'type': 'disabled'},
+    identity = opponent_identity()
+    body = {'model': identity['model'], 'thinking': {'type': 'disabled'},
             'messages': messages, 'temperature': 1, 'top_p': .95,
             'max_tokens': max_tokens, 'stream': False}
-    req = urllib.request.Request('https://api.deepseek.com/chat/completions',
+    req = urllib.request.Request(identity['base_url']+'/chat/completions',
         data=json.dumps(body).encode(), headers={'Authorization': 'Bearer ' + key,
         'Content-Type': 'application/json', 'X-Client-Request-Id': request_id})
     proxy = os.environ.get('DEEPSEEK_PROXY_URL', DEFAULT_PROXY)

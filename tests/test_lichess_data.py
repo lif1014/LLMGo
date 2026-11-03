@@ -95,6 +95,12 @@ def test_selection_produces_compatible_training_and_four_delivery_artifacts(corp
     assert json.loads((output/'stats.json').read_text())['themes']['fork']==1
     assert pq.read_schema(output/'train.parquet').equals(pq.read_schema(reference))
     assert 'seed' not in result['query']
+    own_query = pool.parent/'chosen-sample-ids.txt'
+    own_query.write_text('train:3\n')
+    precise = pool.parent/'precise-selection'
+    select(pool,precise,hypothesis='Use a custom query ID list',sample_ids=own_query)
+    precise_gt=json.loads(pq.read_table(precise/'train.parquet').to_pylist()[0]['reward_model']['ground_truth'])
+    assert precise_gt['next_move_san']=='e6'
     retained = pool.parent/'retained-default'
     report = report_training_data([pool/'train.parquet'],retained,hypothesis='Keep the default data')
     assert report['positions']==2 and report['puzzles']==1

@@ -17,9 +17,11 @@ Use the dedicated CPU interpreter `/user/lyh4170/venvs/llmgo-lichess-data-202611
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/manifest.json` | Source/reference/held-out identities, processing counts and file hashes |
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/verification.json` | Independent full scan; require `status: passed` before using the pool |
 | `assets/datasets/lichess/20261103/boxed-nonthinking-v2/stats.json` | Position/puzzle counts, rating bands, side and category distributions |
-| `var/runs/lichess-pool-20261103-offline/prepare.log` | Conversion and verification log |
+| `var/campaigns/chess-grpo-v1/operator-audits/lichess-pool-result.json` | Build receipt, including the preparation log's run-specific path |
 
 The official source is [Lichess Puzzle Database](https://database.lichess.org/#puzzles), downloaded from [CSV.zst](https://database.lichess.org/lichess_db_puzzle.csv.zst), under CC0. This is the full published puzzle collection, which Lichess itself has generated and curated. It is not the database of all chess games. The snapshot and original compressed source are retained.
+
+The retrieved raw snapshot contains 6,193,530 puzzles in 309,751,173 compressed bytes (SHA-256 `7b0d235fa40cfd7fdb7df1fec56a96b3b6ee1496b32ed2eb05be90d0ebf94253`). Independent local decompression checked the complete source row count. Prepared training counts and final exclusions are recorded in the pool manifest and verification receipt.
 
 The downloader respects the process `http_proxy`/`https_proxy` settings, or explicit `--proxy`. The 2026-11-03 remote probe reached USTC's package index/wheel and hf-mirror through `http://whitelist-proxy.cybertron.svc.cluster.local:7891`, while the official Lichess address failed TLS. This snapshot therefore uses the official file downloaded locally and uploaded with full-file SHA verification. `HF_ENDPOINT=https://hf-mirror.com` affects Hugging Face clients; it does not redirect the official Lichess URL. Probe evidence is in `var/campaigns/chess-grpo-v1/operator-audits/network-proxy-probe.json`.
 

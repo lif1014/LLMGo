@@ -12,7 +12,7 @@ import time
 from .contracts import atomic_json, digest, file_hash, inside, model_identity, protocol, read_json, utc
 from .evaluator import engine_identity, evaluate, evaluate_many
 from .ladder import batch_stats, opponent
-from .training_review import publish, decision, expire
+from .training_review import publish, decision
 from .research_control import require_research
 from llmgo.training.chess_r1_config import token_budgets
 
@@ -186,7 +186,6 @@ class TrainingLoop:
         atomic_json(self.root/'pending-review.json',{'path':str(path),'request_id':read_json(path)['request_id']})
         self.progress('awaiting_meta_review',step,request=str(path))
         started=self.clock()
-        timeout=self.site.get('review_timeout_seconds',900)
         while True:
             require_research(self.campaign)
             answer=decision(path)
@@ -195,8 +194,6 @@ class TrainingLoop:
                 atomic_json(self.root/'cost.json',self.cost)
                 atomic_json(path.with_name('ack.json'),{'request_id':answer['request_id'],'action':answer['action'],'utc':utc()})
                 return answer
-            if self.clock()-started>timeout and expire(path):
-                return {'action':'review_timeout','selected_step':step,'reason':'Meta review timed out; complete checkpoint retained'}
             self.sleep(2)
 
     def run(self):

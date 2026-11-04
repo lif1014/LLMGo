@@ -38,6 +38,18 @@ def validate(path, value):
     if Path(path).with_name('expired.json').exists():
         raise ReviewExpired('Training review expired; checkpoint is retained')
     current = request(path)
+    return validate_choice(current,value)
+
+
+def validate_choice(current, value):
+    """Validate a choice independently of delivery/expiry for operator recovery.
+
+    Normal Worker commits must use validate(path, value), which continues to
+    reject historical expired requests. Recovery records a new operator event;
+    it never pretends the exited Worker received a late decision.
+    """
+    if current['request_id'] != digest(current['payload']):
+        raise ValueError('Corrupt training review')
     p = current['payload']
     if (not isinstance(value,dict) or value.get('request_id') != current['request_id']
             or value.get('action') not in ACTIONS

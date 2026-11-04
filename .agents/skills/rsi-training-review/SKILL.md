@@ -11,4 +11,4 @@ description: 在每個已驗證的原生 checkpoint 上決定繼續訓練、改�
 - replan：可選任一已完整驗證 checkpoint。寫明新假設並在此研究副本修改 RL 方案；Controller 保留副本作下一輪起點，從所選父模型開始新實驗、新 optimizer。下一輪仍需提交提案與選樣交付。
 - finish：可選任一已完整驗證 checkpoint，包括初始 step 0。交付模型與完整曲線，由使用者另行做 DeepSeek non-thinking 最終測試。
 
-審查期間當前 HIGH allocation 仍保留，但訓練／推理子程序已退出；不要提交第二個 GPU 任務。不改凍結源碼或裁判。Phase 1 固定初始 Qwen3.5-4B、prompt、non-thinking，skills.json=[]，不新增 harness.py；允許修改 RL 超參、reward、資料與課程。預設 900 秒沒收到有效決策則保留完整 checkpoint 並退出 GPU job，Controller 進 NEEDS_INPUT；修好連線後顯式恢復，不能宣稱已自動續訓。
+審查期間當前 HIGH allocation 仍保留，但訓練／推理子程序已退出；不要提交第二個 GPU 任務。不改凍結源碼或裁判。Phase 1 固定初始 Qwen3.5-4B、prompt、non-thinking，skills.json=[]，不新增 harness.py；允許修改 RL 超參、reward、資料與課程。使用者已取消固定審查期限：Worker 保留 allocation 與完整 checkpoint，持續等待有效的 continue／replan／finish 決策，不因經過 900 秒或 15 分鐘自動過期。排程輪詢仍由 Executor 每 600 秒處理，與 Agent 審查等待分開。歷史已過期請求不能改寫，operator 可在 Worker 結束且交接身份核驗後恢復已完成的 replan。

@@ -91,7 +91,9 @@ def load_site(path: str | Path) -> dict:
         raise ValueError('Exactly one active or uncertain HIGH submission is allowed')
     if site.get('training_review') and site.get('executor_mode') != 'external':
         raise ValueError('Training reviews require an external Executor')
-    finite(site.get('review_timeout_seconds',900),'review_timeout_seconds',1,86400)
+    # Legacy sites may still carry the removed review deadline. Reviews now
+    # wait for the Agent's decision; never forward a misleading old limit.
+    site.pop('review_timeout_seconds',None)
     if site["user_root"] != "/user/lyh4170":
         raise ValueError("Remote writable root must be /user/lyh4170")
     for key in ("repo", "codex_home", "campaign_root", "worktree_root", "checkpoint_root", "engine", "codex_bin"):

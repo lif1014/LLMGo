@@ -16,7 +16,6 @@
   "priority": "HIGH",
   "max_active_high_jobs": 1,
   "training_review": true,
-  "review_timeout_seconds": 900,
   "project": "rsi",
   "billing_account_id": "N00069",
   "image": "share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb",

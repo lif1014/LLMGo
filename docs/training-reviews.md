@@ -22,7 +22,7 @@ Meta 使用該輪 `finish_research.py` 交接，Controller 校驗才提交不可
 | replan | 選一個已評測父模型，保留審查副本的修改，下一輪新提案、新實驗與 optimizer；可改 reward、超參、資料、RL 實作 |
 | finish | 選一個已評測 checkpoint（可以早於最後一步），campaign COMPLETE，交付模型與證據；不自動執行 DeepSeek 最終測試 |
 
-每次模型身份均核對權重與配置 SHA。原生 actor/optimizer/extra_state shards、data.pt 與 checkpoint 收據不完整就拒絕接續。審查超時預設 900 秒，GPU job 釋放、保留 checkpoint 與 HF 模型，Controller NEEDS_INPUT；恢復連線後需顯式 resume 和新提案，此時不聲稱自動恢復原 optimizer。異常退出也需先核對提交身份與 checkpoint，不盲目再提交。
+每次模型身份均核對權重與配置 SHA。原生 actor/optimizer/extra_state shards、data.pt 與 checkpoint 收據不完整就拒絕接續。審查不設固定期限：Worker 在安全 checkpoint 保留 allocation，等待 Agent 提交有效決策，不因 15 分鐘或任何舊 review_timeout_seconds 設定自動退出。排程器輪詢間隔仍為 600 秒。異常退出也需先核對提交身份與 checkpoint，不盲目再提交。
 
 ## 曲線與交付
 
@@ -45,3 +45,7 @@ Meta 使用該輪 `finish_research.py` 交接，Controller 校驗才提交不可
 獨立的「GRPO · 訓練指標」區塊以 `grpo/metrics.jsonl`、`latest.json` 和已驗證更新收據顯示每項 RL 實驗。曲線每15秒增量讀取，支援 Reward/Q、Reference KL、entropy、合法／格式比例、回答 tokens、梯度范數、policy loss、零優勢組比例及任意額外標量；逐步表格每頁25步。完成步數依 `update/mean_abs_logprob_change` 或完整更新收據判斷，`progress.step` 僅為當前階段標記。Entropy coefficient=0 仍可量測策略 entropy。續訓時同一步採最新記錄，回退到 checkpoint 後不將舊分支的未保留更新冒充新分支。網頁透過既有 artifact API 讀取，舊 Web 行程無須重啟，訓練任務與凍結源碼不變。
 
 每輪另交付選樣程式／查詢、選中 ID、分類統計與敗局假設，見 [資料說明](lichess-data.md)。選定最終模型後由使用者另行執行 DeepSeek non-thinking 測試。測試 provider、請求模型名與回應模型名都應記錄，不能把供應商別名未經核實地當作同一模型。
+
+## 歷史審查過期的恢復
+
+只有已結束且收集完成的舊 Worker、NEEDS_INPUT 審查邊界、匹配原 request_id 的 Agent 完成交接、未改動的提案／源碼哈希、有效 checkpoint 和評測身份全部成立，operator 才能用 `scripts/rsi.py recover-training-review <campaign> --job <job-id>` 接回已完成的 replan。此操作保留 expired.json、舊任務和成績，另存恢復回執與研究源碼，讓下一輪正常提交新實驗；不偽造舊 Worker 的 decision／ack，也不重做已完成研究。操作需先取得 Controller lock，原 Controller 已退出時可在另一個自己的 0 GPU 容器接管，保留現有 Executor 與網頁。

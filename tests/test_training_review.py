@@ -201,12 +201,123 @@ def test_export_uses_frozen_candidate_training_code(loop_fixture):
     assert p['source']['root']!=p['candidate_source']['root']
 
 
-def test_review_timeout_retains_model_and_native_receipt(loop_fixture):
+def test_review_waits_past_the_removed_legacy_deadline(loop_fixture):
     p,kwargs,calls=loop_fixture
-    result=TrainingLoop(p,**{**kwargs,'sleep':lambda _:None}).run()
-    assert result['training_loop_action']=='review_timeout' and result['selected_step']==5
-    assert Path(result['checkpoint_receipt']).is_file()
-    assert not (Path(p['output'])/'scaling/final.json').exists()
+    elapsed=[0.];waits=[]
+    def delayed(_):
+        elapsed[0]+=901;waits.append(elapsed[0])
+        if len(waits)==2:
+            path=Path(read_json(Path(p['output'])/'scaling/pending-review.json')['path']);r=request(path)
+            commit(path,{'request_id':r['request_id'],'action':'finish','selected_step':5,'reason':'completed long review'})
+    loop=TrainingLoop(p,**{**kwargs,'clock':lambda:elapsed[0],'sleep':delayed})
+    loop.validation(0,p['model_path']);loop.train(5);point=loop.validation(5,loop.export(5))
+    result=loop.review(point)
+    assert result['action']=='finish' and waits==[901,1802]
+    assert not (Path(p['output'])/'scaling/reviews/step-00000005/expired.json').exists()
+    assert (Path(p['output'])/'grpo/checkpoints/receipt-00000005.json').is_file()
+
+
+def test_cli_accepts_retired_deadline_without_changing_executor_identity(loop_fixture,monkeypatch,capsys):
+    from llmgo.rsi import cli
+    from llmgo.rsi.controller import Controller
+    p,*_=loop_fixture
+    site={**p['site'],'base_model':p['model_path'],'worktree_root':str(Path(p['site']['user_root'])/'workspaces')}
+    c=Controller.create(site,'legacy-site')
+    normalized={k:v for k,v in site.items() if k!='review_timeout_seconds'}
+    monkeypatch.setattr(cli,'load_site',lambda _:normalized)
+    cli.main(['status','legacy-site']);capsys.readouterr()
+    assert read_json(c.root/'campaign.json')['site']==site
+    normalized['priority']='HIGH' if site.get('priority')!='HIGH' else 'NORMAL'
+    with pytest.raises(ValueError,match='site is frozen'):
+        cli.main(['status','legacy-site'])
+
+
+@pytest.fixture
+def expired_completed_review(loop_fixture):
+    from llmgo.rsi.controller import Controller
+    from llmgo.rsi.meta_protocol import ResearchHandshake
+    p,kwargs,calls=loop_fixture
+    site=p['site'];site.update(worktree_root=str(Path(site['user_root'])/'workspaces'),base_model=p['model_path'])
+    cfg=Path(site['repo'])/'configs/grpo/default.json'
+    atomic_json(cfg,{**read_json(cfg),'answer_protocol':'chess-r1-boxed-san-v2'})
+    c=Controller.create(site,'demo');c.state['phase']='PLANNING';c.save()
+    workspace=c.workspace()
+    atomic_json(workspace/'proposal.json',{'hypothesis':'fixture','jobs':[{'argv':['{python}','scripts/run_grpo.py']}],'evaluation':False})
+    c.prepare(workspace/'proposal.json');c.step()
+    job=c.state['jobs'][c.state['active_job']]
+    p=read_json(job['manifest'])['payload'];loop=TrainingLoop(p,**kwargs)
+    loop.validation(0,p['model_path']);loop.train(5);point=loop.validation(5,loop.export(5))
+    class StopBeforeDecision(Exception):pass
+    loop.sleep=lambda _:(_ for _ in ()).throw(StopBeforeDecision())
+    with pytest.raises(StopBeforeDecision):loop.review(point)
+    response=c.training_review(job);path=Path(response['request']);review=request(path)
+    ws=Path(response['workspace'])
+    script=ws/'scripts/next_curriculum.py';script.parent.mkdir(parents=True,exist_ok=True);script.write_text('RESEARCH = "quiet opening"\n')
+    atomic_json(ws/'proposal.json',{'hypothesis':'next curriculum','jobs':[],
+        'training_review':{'request_id':review['request_id'],'action':'replan','reason':'completed late analysis','selected_step':5}})
+    assert expire(path)
+    handshake=ResearchHandshake(c.root,ws,'a'*64);handshake.publish()
+    answer=handshake.commit({'status':'ready','summary':'replan from step five','proposal_path':str(ws/'proposal.json')})
+    atomic_json(c.root/'meta-session.json',{'status':'completed','process':None,'cwd':str(ws),
+        'request_key':handshake.request_id,'answer':answer,'result_source':'file'})
+    result={'model_path':point['model_path'],'model_identity':point['model_identity'],
+        'training_loop_action':'review_timeout','selected_step':5,'lineage_steps':5,'lineage_gpu_hours':1.,
+        'curve':str(loop.root/'curve.json'),'evaluations':point['levels'],'reason':'legacy timeout',
+        'checkpoint_receipt':str(Path(p['output'])/'grpo/checkpoints/receipt-00000005.json')}
+    artifact=Path(p['output'])/'research-result.json';atomic_json(artifact,result)
+    ref={'path':str(artifact),'sha256':file_hash(artifact),'job_id':job['id']}
+    c._consume(job,ref,p)
+    job.update(status='Succeeded',executor_status='collected',handled=True)
+    report=c.root/'jobs'/job['id']/'executor/report.json'
+    atomic_json(report,{'status':'collected','platform_status':'Succeeded','artifact':ref})
+    job['executor_report']=str(report)
+    c.state.update(active_job=None,training_review=None);c.save()
+    return c,job,path,ws,calls
+
+
+def test_recover_completed_expired_review_preserves_history_and_replan_code(expired_completed_review):
+    from copy import deepcopy
+    c,job,path,ws,calls=expired_completed_review
+    before=deepcopy(c.state['attempts']);expired=path.with_name('expired.json').read_bytes()
+    count=len(calls)
+    result=c.recover_training_review(job['id'])
+    assert result['action']=='replan' and result['selected_step']==5
+    assert result['gpu_jobs_submitted']==0 and result['inference_performed'] is False
+    assert c.state['phase']=='PLANNING' and c.state['needs_input'] is None
+    assert path.with_name('expired.json').read_bytes()==expired and not path.with_name('decision.json').exists()
+    assert c.state['attempts']==before and len(calls)==count
+    replay=c.recover_training_review(job['id']);assert replay['already_recovered'] is True
+    next_workspace=c.workspace()
+    assert (next_workspace/'scripts/next_curriculum.py').read_text()=='RESEARCH = "quiet opening"\n'
+
+
+def test_recovery_refuses_research_edited_after_the_bound_completion(expired_completed_review):
+    c,job,path,ws,calls=expired_completed_review
+    (ws/'scripts/next_curriculum.py').write_text('CHANGED = True\n')
+    with pytest.raises(ValueError,match='changed after completion'):
+        c.recover_training_review(job['id'])
+    assert c.state['phase']=='NEEDS_INPUT' and path.with_name('expired.json').exists()
+
+
+def test_recovery_requires_a_terminal_worker_receipt(expired_completed_review):
+    c,job,path,ws,calls=expired_completed_review
+    job['status']='Running'
+    with pytest.raises(ValueError,match='terminal and collected'):
+        c.recover_training_review(job['id'])
+    assert c.state['phase']=='NEEDS_INPUT'
+
+
+def test_recovery_replays_a_committed_event_after_a_state_save_failure(expired_completed_review,monkeypatch):
+    from llmgo.rsi.controller import Controller
+    c,job,path,ws,calls=expired_completed_review
+    def interrupted():raise RuntimeError('simulated state save interruption')
+    monkeypatch.setattr(c,'save',interrupted)
+    with pytest.raises(RuntimeError,match='save interruption'):
+        c.recover_training_review(job['id'])
+    fresh=Controller(c.root)
+    result=fresh.recover_training_review(job['id'])
+    assert result['action']=='replan' and fresh.state['phase']=='PLANNING'
+    assert len(fresh.memory.recent(20,'expired_training_review_recovered'))==1
 
 
 def test_high_slot_blocks_other_own_jobs_and_unknown_intents(tmp_path):

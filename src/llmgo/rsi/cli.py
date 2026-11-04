@@ -87,13 +87,15 @@ def parser():
     d.add_argument("--codex-auth", action="store_true", help="Check provider credential configuration or CLI login status, without inference")
     init = sub.add_parser("init")
     init.add_argument("campaign")
-    for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "recover-meta", "index-activity", "upgrade"):
+    for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "recover-meta", "recover-training-review", "index-activity", "upgrade"):
         cmd = sub.add_parser(name)
         cmd.add_argument("campaign")
         if name == "prepare":
             cmd.add_argument("--proposal", required=True)
         if name in ("preview", "submit"):
             cmd.add_argument("--job")
+        if name == "recover-training-review":
+            cmd.add_argument("--job",required=True)
         if name == "run":
             cmd.add_argument("--steps", type=int, help="Optional operator limit; omitted means continuous operation")
     mem = sub.add_parser("memory")
@@ -128,7 +130,10 @@ def main(argv=None):
         if not root.is_dir():
             raise FileNotFoundError(f"Unknown campaign: {root}")
         controller = Controller(root)
-        if site != controller.site and args.command != "upgrade":
+        # Preserve the canonical identity used by a running external Executor.
+        # Only the retired deadline is ignored when comparing a legacy profile.
+        campaign_site = {k:v for k,v in controller.site.items() if k != 'review_timeout_seconds'}
+        if site != campaign_site and args.command != "upgrade":
             raise ValueError("Campaign site is frozen; use its original site profile")
         if args.command == "index-activity":
             # Constructor replay indexes legacy records once, outside HTTP.
@@ -195,5 +200,7 @@ def main(argv=None):
                     result = controller.resume()
                 elif args.command == "recover-meta":
                     result = controller.recover_meta()
+                elif args.command == "recover-training-review":
+                    result = controller.recover_training_review(args.job)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if args.command == "doctor" and not result["ok"] else 0

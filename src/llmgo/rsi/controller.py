@@ -612,6 +612,100 @@ class Controller:
         return {"recovered": True, "candidate_id": candidate["id"], "phase": self.state["phase"],
                 "evaluation": candidate["evaluation"], "inference_performed": False}
 
+    def recover_training_review(self, job_id):
+        """Recover a completed replan after a legacy timed review released GPU.
+
+        Caller holds the Controller lock. Keep the old expiry, job, grade and
+        completion unchanged; validate the real request-bound Agent handoff and
+        preserve its editable source for the next ordinary research round.
+        """
+        from .artifacts import load_manifest
+        from .meta_protocol import ResearchHandshake
+        from .training_review import request, validate_choice
+        job=self.state['jobs'].get(job_id)
+        if not job or job.get('kind')!='research':
+            raise ValueError('Recovery requires a registered training job')
+        payload=load_manifest(job['manifest'],job['sha256'])['payload']
+        output=inside(self.site['user_root'],payload['output'])
+        path=inside(output,read_json(output/'scaling/pending-review.json')['path'])
+        review=request(path);p=review['payload'];key=review['request_id']
+        recovered=self.state.get('recovered_training_reviews',{}).get(key)
+        if recovered:
+            return {**read_json(recovered),'already_recovered':True}
+        if (self.state['phase']!='NEEDS_INPUT' or self.state.get('active_job') or self.state.get('workspace')
+                or self.state.get('training_review') or self.state.get('resume_phase')!='PLANNING'):
+            raise ValueError('Recovery requires an idle NEEDS_INPUT training-review boundary')
+        if not job.get('handled') or job.get('status')!='Succeeded' or job.get('executor_status')!='collected':
+            raise ValueError('Training Worker must be terminal and collected before recovery')
+        report=read_json(job['executor_report'])
+        if report.get('status')!='collected' or report.get('platform_status')!='Succeeded':
+            raise ValueError('Missing terminal Worker collection receipt')
+        result=self.metrics(report['artifact'])
+        if result.get('training_loop_action')!='review_timeout':
+            raise ValueError('This Worker did not exit through the legacy review deadline')
+        if (p['job_id']!=job_id or p['campaign_id']!=self.root.name
+                or p['candidate_source_sha256']!=payload['candidate_source']['sha256']
+                or read_json(path.with_name('expired.json'))['request_id']!=key):
+            raise ValueError('Expired review does not match the registered training job')
+        workspace=inside(self.site['user_root'],Path(self.site['worktree_root'])/self.root.name/'reviews'/f"{job_id}-{p['step']:08d}")
+        session=read_json(self.root/'meta-session.json')
+        if session.get('status')!='completed' or session.get('process') is not None or session.get('cwd')!=str(workspace):
+            raise ValueError('Recovery requires the completed Agent session in this review workspace')
+        handshake=ResearchHandshake(self.root,workspace,session['request_key'])
+        answer=handshake.read()
+        if answer is None or answer['status']!='ready' or answer!=session.get('answer'):
+            raise ValueError('Missing matching request-bound Agent completion')
+        proposal_path=inside(workspace,answer['proposal_path'])
+        if proposal_path.parent!=workspace:
+            raise ValueError('Review proposal outside its registered workspace')
+        proposal=read_json(proposal_path)
+        choice=validate_choice(review,proposal.get('training_review'))
+        if choice['action']!='replan':
+            raise ValueError('This recovery accepts a completed replan; the exited Worker cannot continue')
+        self._validate_phase1_workspace(workspace)
+        point=next(row for row in read_json(inside(output,p['curve_path']))['points'] if row['step']==choice['selected_step'])
+        identity=model_identity(inside(self.site['user_root'],point['model_path']))
+        if identity!=point['model_identity']:
+            raise ValueError('Selected checkpoint identity changed')
+        working=self.state['working']
+        if (working['id']!=payload['candidate_id'] or working['model_path']!=result['model_path']
+                or working.get('training_loop_action')!='review_timeout'):
+            raise ValueError('Campaign has moved beyond the timed-out training result')
+        folder=self.root/'recoveries'/('training-review-'+key)
+        if not (folder/'previous-state.json').exists():
+            atomic_json(folder/'previous-state.json',self.state)
+            atomic_json(folder/'meta-session.json',session)
+        if not (folder/'source').exists():
+            source_snapshot(workspace,folder/'source')
+        snapshot=read_json(folder/'source/source-manifest.json');verify_source(snapshot)
+        from .meta_protocol import workspace_hash
+        if snapshot['sha256']!=workspace_hash(workspace):
+            raise ValueError('Recovery snapshot differs from the completed research')
+        record={'recovered':True,'job_id':job_id,'request_id':key,'action':'replan',
+            'selected_step':choice['selected_step'],'model_path':point['model_path'],
+            'model_sha256':identity['sha256'],'reason':choice['reason'],'review_source':snapshot,
+            'completion_path':str(handshake.result_path),'completion_sha256':file_hash(handshake.result_path),
+            'proposal_sha256':file_hash(proposal_path),'expired_request_preserved':True,
+            'worker_decision_not_written':True,'inference_performed':False,'gpu_jobs_submitted':0,'utc':utc()}
+        if (folder/'recovery.json').exists():
+            previous=read_json(folder/'recovery.json')
+            if any(previous.get(k)!=v for k,v in record.items() if k!='utc'):
+                raise ValueError('Existing recovery receipt differs from this completed review')
+            record=previous
+        else:
+            atomic_json(folder/'recovery.json',record)
+        working.update(model_path=point['model_path'],model_sha256=identity['sha256'],
+            lineage_steps=payload.get('lineage_steps',0)+point['step'],training_loop_action='replan')
+        self.state.setdefault('recovered_training_reviews',{})[key]=str(folder/'recovery.json')
+        self.state.update(next_replan_source=snapshot,phase='PLANNING',needs_input=None,
+            meta_stalls=0,meta_request_revision=self.state.get('meta_request_revision',0)+1)
+        self.state.pop('resume_phase',None)
+        self.memory.append('expired_training_review_recovered',record,event_id='recover-training-review-'+key)
+        self.memory.handoff({'completed':[record],'next':'Use the recovered review source and submit the next ordinary research proposal',
+            'working':working['id'],'best':(self.state.get('best') or {}).get('score')})
+        self.save()
+        return record
+
     def resume(self):
         """An explicit operator resume authorizes a new Meta turn, not cached output."""
         if self.state["phase"] != "NEEDS_INPUT":
@@ -693,6 +787,7 @@ class Controller:
                     from .training_review import ReviewExpired
                     active_backend=backend or CodexBackend(self.site,self.memory)
                     prompt=(f"读取context.json、.agents/skills/rsi-training-review/SKILL.md和完整曲线。当前训练在安全checkpoint等待你的决定；请求位于 {result['request']}。"
+                        "用户已取消审查的固定截止时间；旧副本中900秒或15分钟的条款已失效，Worker将等待有效决定。"
                         "检查L2/L3结果和败局每一步。选择continue、replan或finish；在proposal.json的training_review写request_id、action、reason、selected_step。"
                         "continue保留当前冻结配方并原地续训；replan保留父模型并在本副本修改下一轮方案；finish选择一个已评测checkpoint交用户做独立DeepSeek测试。"
                         "不要提交第二个GPU任务，不修改运行中的冻结源。使用正常finish_research.py交接，status=ready。")

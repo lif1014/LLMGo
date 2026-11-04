@@ -37,7 +37,7 @@ class DeepSeekPlayer:
     def _play_board(self, board):
         fen = board.fen()
         request_id = f'{self.game_id}-opponent-{len(board.move_stack)}-{time.time_ns()}'
-        response = deepseek_request(messages(fen, enable_thinking=False), request_id)
+        response = deepseek_request(messages(fen, enable_thinking=False), request_id, timeout=None)
         choice = response['choices'][0]
         if (choice['message'].get('reasoning_content') or '').strip():
             raise ValueError('Final opponent returned reasoning despite non-thinking request')
@@ -76,7 +76,7 @@ def play_game(index, output, url, payload):
                 messages(fen, enable_thinking=False))
             request_id = f'{game_id}-student-{len(episode.board.move_stack)}-{time.time_ns()}'
             episode.event('model_request_started', request_id=request_id, messages=prompt)
-            response = request_completion(url, PROTOCOL, prompt)
+            response = request_completion(url, PROTOCOL, prompt, timeout=None)
             choice = response['choices'][0]
             content = choice['message'].get('content') or ''
             reasoning = choice['message'].get('reasoning_content') or ''
@@ -133,6 +133,8 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
         'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': games,
         'white': games//2, 'black': games//2, 'seed_pairs': [417000+i for i in range(games//2)],
         'parallel_games': concurrency,
+        'student_request_timeout_seconds': None,
+        'opponent_request_timeout_seconds': None,
         'student_async_scheduling': False,
         'student_compilation_config': {'cudagraph_mode': 'PIECEWISE'},
         'max_plies': 200, 'invalid_move_policy': 'random_legal',

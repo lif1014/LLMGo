@@ -22,7 +22,7 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 
 2026-11-04 使用者另行授權對第六輪 step 5／10 各做二十局獨立最終測試；兩個 1 GPU 任務用 NORMAL，保留主研究的 HIGH 名額。結果只作使用者最終測試，不寫入 Meta-Agent 的開發驗證分數或調參回饋。這是本次額外測試的排程選擇，不修改研究任務的 HIGH 預設。
 
-首批任務 1460436／1460438 在本地學生首步請求 600 秒逾時，各 0/20 局完成；DeepSeek 首步回覆正常。保留失敗輸出，不計為棋局敗局。最終測試使用同步排程及 PIECEWISE CUDA Graph。依使用者要求，已移除額外的 128-token／120 秒啟動生成檢查；服務就緒後直接開始正式對局。正式每手仍為最多 16384 tokens，請求逾時仍為 600 秒；學生權重、prompt、non-thinking 與對手設定不變。GET /models 就緒不保證生成成功，若正式對局發生推論故障，保留錯誤與未完成紀錄，不計為敗局。同步排程及 PIECEWISE 尚未證實解決首步卡住，根因仍待診斷。
+首批任務 1460436／1460438 在本地學生首步請求 600 秒逾時，各 0/20 局完成；DeepSeek 首步回覆正常。保留失敗輸出，不計為棋局敗局。最終測試使用同步排程及 PIECEWISE CUDA Graph。依使用者要求，已移除額外的 128-token／120 秒啟動生成檢查；服務就緒後直接開始正式對局。正式每手仍為最多 16384 tokens，正式學生與 DeepSeek 對手請求均不設客戶端時間期限（timeout=None）；這只作用於獨立最終測試，L2/L3 請求設定不變；學生權重、prompt、non-thinking 與對手設定不變。GET /models 就緒不保證生成成功，若正式對局發生推論故障，保留錯誤與未完成紀錄，不計為敗局。同步排程及 PIECEWISE 尚未證實解決首步卡住，根因仍待診斷。
 
 最終測試 CLI 預設請求 `deepseek-v4.1-flash` 並禁止 thinking；可用 `--opponent-base-url` 指定支援此名稱的 provider、`DEEPSEEK_KEY_FILE` 指定該 provider 的密鑰。不能假設官方 DeepSeek endpoint 接受自訂 provider 的同名別名，執行前先確認模型可用性。protocol 記錄請求模型／base URL，逐手事件另記 response_model；不把別名當作已核實的模型版本。舊參考 pipeline 的預設 `deepseek-flash` 保留，可透過 DEEPSEEK_MODEL、DEEPSEEK_BASE_URL 明確指定。
 

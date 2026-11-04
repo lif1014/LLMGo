@@ -33,14 +33,14 @@ def test_deepseek_opponent_uses_loose_box_and_records_fallback(monkeypatch):
     assert OPPONENT['thinking'] == 'disabled'
     assert extract_loose_answer('I choose \\boxed{e4}.', board.fen()).uci == 'e2e4'
     monkeypatch.setattr('llmgo.rsi.deepseek_final.deepseek_request',
-        lambda messages, request_id: {'choices': [{'message': {'content': '\\boxed{e4}'},
+        lambda messages, request_id, **kwargs: {'choices': [{'message': {'content': '\\boxed{e4}'},
             'finish_reason': 'stop'}], 'usage': {'completion_tokens': 12}})
     player = DeepSeekPlayer('white', 'example', 7)
     move, detail = player._play_board(board)
     assert move == 'e2e4' and detail['fallback_reason'] is None
     assert detail['raw_output'] == '\\boxed{e4}'
     monkeypatch.setattr('llmgo.rsi.deepseek_final.deepseek_request',
-        lambda messages, request_id: {'choices': [{'message': {'content': 'invalid'},
+        lambda messages, request_id, **kwargs: {'choices': [{'message': {'content': 'invalid'},
             'finish_reason': 'stop'}]})
     move, detail = player._play_board(board)
     assert chess.Move.from_uci(move) in board.legal_moves
@@ -87,6 +87,8 @@ def test_final_test_balances_twenty_games_and_uses_actual_denominator(final_fixt
     assert sorted(seen)==list(range(games))
     assert protocol['games']==games and protocol['white']==protocol['black']==games//2
     assert protocol['seed_pairs']==[417000+i for i in range(games//2)]
+    assert protocol['student_request_timeout_seconds'] is None
+    assert protocol['opponent_request_timeout_seconds'] is None
     assert protocol['parallel_games']==parallel
     assert [row['index'] for row in result['rows']]==list(range(games))
     assert sum(row['student_color']=='white' for row in result['rows'])==games//2
@@ -143,3 +145,39 @@ def test_final_replica_explicitly_disables_async_scheduler(tmp_path,monkeypatch)
     assert '--no-async-scheduling' in calls[0]
     assert json.loads(calls[0][calls[0].index('--compilation-config')+1])=={'cudagraph_mode':'PIECEWISE'}
     server.stop()
+
+
+def test_formal_student_request_has_no_socket_deadline(tmp_path,monkeypatch):
+    import io
+    from llmgo.rsi import deepseek_final as module
+    calls=[]
+    class Opener:
+        def open(self,req,*,timeout):
+            calls.append(timeout)
+            return io.BytesIO(json.dumps({'choices':[{'message':{'content':r'\boxed{e4}'},'finish_reason':'stop'}]}).encode())
+    monkeypatch.setattr('urllib.request.build_opener',lambda *args:Opener())
+    class Episode:
+        def __init__(self,*args,**kwargs):
+            self.board=chess.Board();self.done=False;self.output=args[5];self.output.mkdir(parents=True)
+            (self.output/'events.jsonl').write_text('')
+        def advance(self):pass
+        def event(self,*args,**kwargs):pass
+        def act(self,uci,*args,**kwargs):
+            assert uci=='e2e4';self.done=True
+            (self.output/'summary.json').write_text(json.dumps({'completed':True,'aborted':False,'result':0,'plies':1,'reason':'fixture','random_moves':0}))
+        def close(self):pass
+    monkeypatch.setattr(module,'ChessEpisode',Episode)
+    monkeypatch.setattr(module,'candidate_messages',lambda payload,fen,board,default:default)
+    module.play_game(0,tmp_path,'http://fixture/v1',{'candidate_id':'fixture'})
+    assert calls==[None]
+
+
+def test_formal_opponent_request_has_no_deadline(monkeypatch):
+    from llmgo.rsi import deepseek_final as module
+    calls=[]
+    def request(messages,request_id,*,timeout):
+        calls.append(timeout)
+        return {'choices':[{'message':{'content':r'\boxed{e4}'},'finish_reason':'stop'}]}
+    monkeypatch.setattr(module,'deepseek_request',request)
+    move,_=module.DeepSeekPlayer('white','fixture',0)._play_board(chess.Board())
+    assert move=='e2e4' and calls==[None]

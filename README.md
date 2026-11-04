@@ -56,7 +56,9 @@ bash scripts/start_rsi.sh --campaign chess-grpo-v1
 
 遠端已有專用 verl、teacher 與推理環境。首次新 campaign 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web`；不沿用舊 campaign 的凍結快照。詳見 [RSI 操作](docs/rsi-operations.md)。網頁讀取 `var/runs/` 的指標和日誌，驗證棋局的 `events.jsonl` 可逐手復盤，包含輸棋每一步、模型回覆和隨機後備。
 
-Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時提交 L2/L3。只有 L2 和 L3 兩檔齊備時才更新可比較的驗證分數。選定成果後，在獨立的 1 GPU job 執行 `scripts/run_final_test.py`，固定 10 局、白黑各 5 局，對手為 DeepSeek Flash non-thinking；所有原始走棋與回覆存於 `var/runs/<實驗ID>/final-test/`。`run_deepseek_loose.py` 是 DeepSeek 對 Fairy 的參考流程，不是 Qwen 對 DeepSeek 的最終測試。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`，只對 DeepSeek API 使用內部白名單代理。
+Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時提交 L2/L3。只有 L2 和 L3 兩檔齊備時才更新可比較的驗證分數。選定成果後，在獨立的 1 GPU job 執行 `scripts/run_final_test.py`，預設 10 局、白黑各 5 局，對手為 DeepSeek Flash non-thinking；所有原始走棋與回覆存於 `var/runs/<實驗ID>/final-test/`。`run_deepseek_loose.py` 是 DeepSeek 對 Fairy 的參考流程，不是 Qwen 對 DeepSeek 的最終測試。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`，只對 DeepSeek API 使用內部白名單代理。
+
+最終測試預設十局；`--games 20 --parallel-games 20` 可在單卡並行二十局、白黑各十局。使用同步排程和 PIECEWISE CUDA Graph，正式棋局前先完成獨立的學生生成自檢。任何基礎設施失敗保留原始記錄，不發布完整成績或算作棋局敗局。API provider 與模型名稱須先核實，詳見 [RSI 操作](docs/rsi-operations.md)。
 
 ## 研究起點
 

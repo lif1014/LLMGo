@@ -56,7 +56,7 @@ def _pick_ports(preferred: int, count: int) -> list[int]:
     return chosen
 
 class VllmServer:
-    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8) -> None:
+    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None) -> None:
         self.model_path = model_path
         self.protocol = protocol
         self.log_path = log_path
@@ -66,6 +66,10 @@ class VllmServer:
         if type(max_num_seqs) is not int or not 1<=max_num_seqs<=40:
             raise ValueError('vLLM max_num_seqs must be an integer from 1 to 40')
         self.max_num_seqs=max_num_seqs
+        if async_scheduling is not None and type(async_scheduling) is not bool:
+            raise ValueError('async_scheduling must be a boolean or None')
+        self.async_scheduling=async_scheduling
+        self.compilation_config=dict(compilation_config) if compilation_config is not None else None
         self.proc: subprocess.Popen | None = None
         self.log = None
 
@@ -97,6 +101,10 @@ class VllmServer:
             "--gpu-memory-utilization",
             os.environ.get("CHESS_PTB_GPU_MEMORY_UTILIZATION", "0.90"),
         ]
+        if self.async_scheduling is not None:
+            cmd.append('--async-scheduling' if self.async_scheduling else '--no-async-scheduling')
+        if self.compilation_config is not None:
+            cmd.extend(['--compilation-config',json.dumps(self.compilation_config)])
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log = self.log_path.open("w", encoding="utf-8")
         env = os.environ.copy()

@@ -84,7 +84,7 @@ def checked_game(path, payload, index):
     return row
 
 
-def request_completion(url, protocol, prompt):
+def request_completion(url, protocol, prompt, *, timeout=600):
     body = {"model":protocol["model_name"], "messages":prompt,
             "temperature":protocol["temperature"], "top_p":protocol["top_p"],
             "top_k":protocol["top_k"], "presence_penalty":protocol["presence_penalty"],
@@ -95,7 +95,7 @@ def request_completion(url, protocol, prompt):
     request = urllib.request.Request(url+"/chat/completions",data=json.dumps(body).encode(),
                                      headers={"Content-Type":"application/json"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(request,timeout=600) as response:
+    with opener.open(request,timeout=timeout) as response:
         return json.load(response)
 
 

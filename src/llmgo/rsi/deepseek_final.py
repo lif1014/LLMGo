@@ -29,6 +29,27 @@ PROTOCOL = {'model_name': 'Qwen3.5-4B', 'max_tokens': 16384,
 START_FEN = chess.STARTING_FEN
 
 
+def probe_student(url, output):
+    """GET /models is insufficient: prove the local replica can generate first.
+
+    This bounded startup request is not a scored game and does not change the
+    frozen per-move protocol used by the twenty games.
+    """
+    started=time.monotonic()
+    probe_protocol={**PROTOCOL,'max_tokens':128}
+    response=request_completion(url,probe_protocol,messages(START_FEN,enable_thinking=False),timeout=120)
+    choice=response['choices'][0]
+    if (choice['message'].get('reasoning_content') or '').strip():
+        raise ValueError('Student returned reasoning despite non-thinking startup request')
+    if not (choice['message'].get('content') or '').strip():
+        raise RuntimeError('Student startup request returned no content')
+    receipt={'status':'passed','response_model':response.get('model'),'seconds':time.monotonic()-started,
+        'max_tokens':128,'response_tokens':(response.get('usage') or {}).get('completion_tokens'),
+        'finish_reason':choice.get('finish_reason'),'thinking':'disabled','scored_game':False,'updated':utc()}
+    atomic_json(output/'student-preflight.json',receipt)
+    return receipt
+
+
 class DeepSeekPlayer:
     def __init__(self, side, game_id, seed):
         self.side, self.game_id = side, game_id
@@ -133,18 +154,23 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
         'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': games,
         'white': games//2, 'black': games//2, 'seed_pairs': [417000+i for i in range(games//2)],
         'parallel_games': concurrency,
+        'student_async_scheduling': False,
+        'student_compilation_config': {'cudagraph_mode': 'PIECEWISE'},
         'max_plies': 200, 'invalid_move_policy': 'random_legal',
         'student_model_identity': identity, 'candidate': str(candidate),
         'candidate_source_hashes': source_hashes, 'started': utc()})
     port = _pick_ports(8000, 1)[0]
     service = VllmServer(model, PROTOCOL, output/'vllm.log', port, gpu_ids[0],
-                         python=inference_python, max_num_seqs=max(8, concurrency))
+                         python=inference_python, max_num_seqs=max(8, concurrency), async_scheduling=False,
+                         compilation_config={'cudagraph_mode':'PIECEWISE'})
     rows = []
     try:
         service.start()
         error = _wait_servers([service], 900)
         if error:
             raise RuntimeError(error)
+        atomic_json(output/'progress.json', {'stage': 'student_preflight', 'completed': 0, 'total': games, 'updated': utc()})
+        probe_student(service.base_url,output)
         atomic_json(output/'progress.json', {'stage': 'playing', 'completed': 0, 'total': games,
                                             'parallel_games': concurrency, 'updated': utc()})
         # Each game owns its board, RNG and event files. Only this coordinator

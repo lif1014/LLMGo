@@ -66,6 +66,7 @@ def final_fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(module,'visible_gpu_ids',lambda:['0'])
     monkeypatch.setattr(module,'_pick_ports',lambda *args:[8000])
     monkeypatch.setattr(module,'_wait_servers',lambda *args:None)
+    monkeypatch.setattr(module,'probe_student',lambda *args:{'status':'passed'})
     return module,model,candidate,tmp_path/'run/final-test',servers
 
 
@@ -93,6 +94,8 @@ def test_final_test_balances_twenty_games_and_uses_actual_denominator(final_fixt
     assert len(list((output/'game_results').glob('*.json')))==games
     assert json.loads((output/'progress.json').read_text())['completed']==games
     assert servers[0].stopped and servers[0].options['max_num_seqs']>=parallel
+    assert servers[0].options['async_scheduling'] is False
+    assert servers[0].options['compilation_config']=={'cudagraph_mode':'PIECEWISE'}
 
 
 def test_final_games_run_concurrently_and_keep_ordered_receipts(final_fixture,monkeypatch):
@@ -124,3 +127,43 @@ def test_failed_game_does_not_publish_a_complete_score(final_fixture,monkeypatch
     assert not (output/'result.json').exists()
     assert json.loads((output/'progress.json').read_text())['stage']=='failed'
     assert servers[0].stopped
+
+
+def test_failed_student_preflight_starts_no_scored_games(final_fixture,monkeypatch):
+    module,model,candidate,output,servers=final_fixture
+    calls=[]
+    def probe(*args):raise TimeoutError('local generation unresponsive')
+    monkeypatch.setattr(module,'probe_student',probe)
+    monkeypatch.setattr(module,'play_game',lambda *args:calls.append(args))
+    with pytest.raises(TimeoutError,match='unresponsive'):
+        module.run(model,candidate,output,games=20,parallel_games=20)
+    assert calls==[] and not (output/'result.json').exists() and servers[0].stopped
+
+
+def test_student_preflight_is_bounded_and_does_not_change_scored_protocol(tmp_path,monkeypatch):
+    from llmgo.rsi import deepseek_final as module
+    calls=[]
+    def response(url,protocol,prompt,**kwargs):
+        calls.append((protocol,prompt,kwargs))
+        return {'model':'Qwen3.5-4B','choices':[{'message':{'content':r'\boxed{e4}'},'finish_reason':'stop'}],
+                'usage':{'completion_tokens':7}}
+    monkeypatch.setattr(module,'request_completion',response)
+    receipt=module.probe_student('http://fixture/v1',tmp_path)
+    assert receipt['status']=='passed' and receipt['scored_game'] is False
+    assert calls[0][0]['max_tokens']==128 and calls[0][2]['timeout']==120
+    assert calls[0][0]['enable_thinking'] is False
+    assert module.PROTOCOL['max_tokens']==16384
+
+
+def test_final_replica_explicitly_disables_async_scheduler(tmp_path,monkeypatch):
+    from llmgo.rsi.service import VllmServer
+    from llmgo.rsi.deepseek_final import PROTOCOL
+    calls=[]
+    monkeypatch.setattr('llmgo.rsi.service.subprocess.Popen',lambda argv,**kw:calls.append(argv))
+    server=VllmServer(tmp_path/'model',PROTOCOL,tmp_path/'vllm.log',8000,'0',
+                      python='fixture-python',max_num_seqs=20,async_scheduling=False,
+                      compilation_config={'cudagraph_mode':'PIECEWISE'})
+    server.start()
+    assert '--no-async-scheduling' in calls[0]
+    assert json.loads(calls[0][calls[0].index('--compilation-config')+1])=={'cudagraph_mode':'PIECEWISE'}
+    server.stop()

@@ -22,6 +22,8 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 
 2026-11-04 使用者另行授權對第六輪 step 5／10 各做二十局獨立最終測試；兩個 1 GPU 任務用 NORMAL，保留主研究的 HIGH 名額。結果只作使用者最終測試，不寫入 Meta-Agent 的開發驗證分數或調參回饋。這是本次額外測試的排程選擇，不修改研究任務的 HIGH 預設。
 
+首批任務 1460436／1460438 在本地學生首步請求 600 秒逾時，各 0/20 局完成；DeepSeek 首步回覆正常。保留失敗輸出，不計為棋局敗局。修復版最終測試使用與已跑通 GRPO 一致的同步排程及 PIECEWISE CUDA Graph，並在二十局前先以 128-token／120 秒的非計分生成請求核對學生服務；只有 GET /models 成功不足以證明服務可生成。每手正式協議仍為 16384 tokens，學生權重、prompt、non-thinking 與對手設定不變。這是針對首步卡住的穩定性處理，具體排程／圖捕獲根因仍需實際 GPU 生成驗證，不能以 CPU 測試宣稱已排除所有逾時。
+
 最終測試 CLI 預設請求 `deepseek-v4.1-flash` 並禁止 thinking；可用 `--opponent-base-url` 指定支援此名稱的 provider、`DEEPSEEK_KEY_FILE` 指定該 provider 的密鑰。不能假設官方 DeepSeek endpoint 接受自訂 provider 的同名別名，執行前先確認模型可用性。protocol 記錄請求模型／base URL，逐手事件另記 response_model；不把別名當作已核實的模型版本。舊參考 pipeline 的預設 `deepseek-flash` 保留，可透過 DEEPSEEK_MODEL、DEEPSEEK_BASE_URL 明確指定。
 
 網頁 `/rsi` 的「Chess-R1 · verl GRPO」讀取 `var/runs` 的當前實驗和原始日誌，棋局頁按每一步回放模型、引擎、forced move 和 fallback。Meta-Agent 應讀輸棋的 `games/<id>/events.jsonl` 全部步驟與 `summary.json`，再提出下一輪假設。Phase 1 的提示文字和 Phase 2 開放方案見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。`training` 逐檔保留與搬移理由見 [訓練目錄審核](training-module-audit.md)。

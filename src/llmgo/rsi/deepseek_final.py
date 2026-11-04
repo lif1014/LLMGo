@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import random
@@ -105,7 +106,12 @@ def play_game(index, output, url, payload):
         episode.close()
 
 
-def run(model, candidate, output, *, inference_python=None):
+def run(model, candidate, output, *, inference_python=None, games=10, parallel_games=1):
+    if type(games) is not int or games < 2 or games % 2:
+        raise ValueError('Final test games must be a positive even number, at least 2')
+    if type(parallel_games) is not int or not 1 <= parallel_games <= 40:
+        raise ValueError('parallel_games must be an integer between 1 and 40')
+    concurrency = min(games, parallel_games)
     output = Path(output).resolve()
     if output.exists():
         raise FileExistsError(f'Final test output already exists: {output}')
@@ -121,41 +127,63 @@ def run(model, candidate, output, *, inference_python=None):
     if len(gpu_ids) != 1:
         raise RuntimeError('Held-out test requires exactly one allocated GPU')
     payload = {'candidate_id': candidate.name, 'candidate_source': {'root': str(candidate)},
+               'research_scope': 'phase1_rl_only',
                'skills_path': str(skills) if skills.is_file() else None}
     atomic_json(output/'protocol.json', {'role': 'held_out_final_test',
-        'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': 10,
-        'white': 5, 'black': 5, 'seed_pairs': [417000+i for i in range(5)],
+        'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': games,
+        'white': games//2, 'black': games//2, 'seed_pairs': [417000+i for i in range(games//2)],
+        'parallel_games': concurrency,
         'max_plies': 200, 'invalid_move_policy': 'random_legal',
         'student_model_identity': identity, 'candidate': str(candidate),
         'candidate_source_hashes': source_hashes, 'started': utc()})
     port = _pick_ports(8000, 1)[0]
     service = VllmServer(model, PROTOCOL, output/'vllm.log', port, gpu_ids[0],
-                         python=inference_python)
+                         python=inference_python, max_num_seqs=max(8, concurrency))
     rows = []
     try:
         service.start()
         error = _wait_servers([service], 900)
         if error:
             raise RuntimeError(error)
-        for index in range(10):
-            row = play_game(index, output, service.base_url, payload)
-            rows.append(row)
-            atomic_json(output/'game_results'/f'{index:02d}.json', row)
-            atomic_json(output/'progress.json', {'completed': len(rows), 'total': 10, 'updated': utc()})
+        atomic_json(output/'progress.json', {'stage': 'playing', 'completed': 0, 'total': games,
+                                            'parallel_games': concurrency, 'updated': utc()})
+        # Each game owns its board, RNG and event files. Only this coordinator
+        # writes progress and result receipts, so parallel games cannot race on
+        # an atomic JSON temporary file.
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            pending = {pool.submit(play_game, index, output, service.base_url, payload): index
+                       for index in range(games)}
+            for future in as_completed(pending):
+                index = pending[future]
+                row = future.result()
+                if row.get('index') != index:
+                    raise ValueError('Final-test game receipt has the wrong index')
+                rows.append(row)
+                atomic_json(output/'game_results'/f'{index:02d}.json', row)
+                atomic_json(output/'progress.json', {'stage': 'playing', 'completed': len(rows),
+                            'total': games, 'parallel_games': concurrency, 'updated': utc()})
+    except Exception as error:
+        atomic_json(output/'failure.json', {'type': type(error).__name__, 'error': str(error), 'updated': utc()})
+        atomic_json(output/'progress.json', {'stage': 'failed', 'completed': len(rows), 'total': games, 'updated': utc()})
+        raise
     finally:
         service.stop()
     if model_identity(model)['sha256'] != identity['sha256']:
         raise ValueError('Student model changed during final test')
     if {p.name: file_hash(p) for p in (skills, harness) if p.is_file()} != source_hashes:
         raise ValueError('Candidate prompt or skills changed during final test')
-    score = sum((row['result'] + 1)/2 for row in rows)/10
+    rows.sort(key=lambda row: row['index'])
+    score = sum((row['result'] + 1)/2 for row in rows)/games
     result = {'status': 'completed', 'role': 'held_out_final_test',
               'opponent': opponent_identity(), 'thinking': 'disabled',
-              'games': 10, 'wins': sum(x['result'] == 1 for x in rows),
+              'games': games, 'white': games//2, 'black': games//2,
+              'wins': sum(x['result'] == 1 for x in rows),
               'draws': sum(x['result'] == 0 for x in rows),
               'losses': sum(x['result'] == -1 for x in rows),
+              'win_rate': sum(x['result'] == 1 for x in rows)/games,
               'score_rate': score, 'rows': rows, 'completed': utc()}
     atomic_json(output/'result.json', result)
+    atomic_json(output/'progress.json', {'stage': 'completed', 'completed': games, 'total': games, 'updated': utc()})
     return result
 
 
@@ -165,6 +193,8 @@ def main(argv=None):
     parser.add_argument('--candidate', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--inference-python')
+    parser.add_argument('--games', type=int, default=10, help='Even total; half white and half black (default: 10)')
+    parser.add_argument('--parallel-games', type=int, default=1, help='Concurrent games on the single vLLM replica (1–40)')
     parser.add_argument('--opponent-model',default=os.environ.get('DEEPSEEK_MODEL','deepseek-v4.1-flash'))
     parser.add_argument('--opponent-base-url',default=os.environ.get('DEEPSEEK_BASE_URL','https://api.deepseek.com'))
     args = parser.parse_args(argv)
@@ -177,6 +207,6 @@ def main(argv=None):
     if args.output.resolve().parent.parent != (repo/'var/runs').resolve():
         raise ValueError('Final test output must be LLMGo!/var/runs/<run-id>/final-test')
     result = run(args.model, args.candidate, args.output,
-                 inference_python=args.inference_python)
+                 inference_python=args.inference_python, games=args.games, parallel_games=args.parallel_games)
     print(json.dumps({k:v for k,v in result.items() if k != 'rows'}, ensure_ascii=False))
     return 0

@@ -73,3 +73,5 @@ L2/L3 基線和驗證共用 40 局佇列，每卡一個 TP=1 vLLM 副本，所�
 「GRPO · 訓練指標」為獨立區塊，可選每次 RL 實驗，查看 Reward、270M Q、Reference KL、entropy、合法／格式比例、回答長度、梯度、policy loss 與零優勢組比例。每 15 秒從遠端指標檔增量讀取，支援任意標量曲線與逐步表格；沒有完成更新時顯示等待，不把採樣或準備階段的目標 step 當成已完成訓練。此顯示只讀檔案，不呼叫模型或查詢排程器。
 
 審查沒有固定的 15 分鐘期限；每次 L2/L3 完整驗證後，Worker 在安全 checkpoint 等待 Meta-Agent 的有效決策。歷史過期交接可經 operator 驗證後恢復，詳見 [分段訓練說明](docs/training-reviews.md)。
+
+DeepSeek 最終測試在 vLLM 服務就緒後直接開始正式對局，不額外執行 128-token／120 秒啟動生成檢查。

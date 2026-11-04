@@ -20,6 +20,7 @@ from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 from .vllm_compat import install_rope_compat
 from .verl_memory import install_wake_cache_flush
 from .chess_r1_attention import install_3d_position_compat
+from .chess_r1_resample import bounded_replacement_groups
 
 install_rope_compat()
 install_wake_cache_flush()
@@ -418,6 +419,7 @@ class ChessR1Trainer(RayPPOTrainer):
             last_meta = {}
             inputs = data
             group_size = int(self.config.actor_rollout_ref.rollout.n)
+            max_response = int(self.config.data.max_response_length)
             for attempt in range(10):
                 generated = original_generate(inputs)
                 last_meta = dict(generated.meta_info)
@@ -434,7 +436,7 @@ class ChessR1Trainer(RayPPOTrainer):
                 for indices in groups.values():
                     if len(indices) != group_size:
                         raise ValueError('Incomplete repeated prompt group before filtering')
-                    if any(lengths[j] >= 16384 for j in indices) or len(accepted) >= target_groups:
+                    if any(lengths[j] >= max_response for j in indices) or len(accepted) >= target_groups:
                         discarded.extend(indices)
                         rejected_lengths.extend(lengths[j] for j in indices)
                     else:
@@ -450,7 +452,8 @@ class ChessR1Trainer(RayPPOTrainer):
                 attempt_metrics = {
                     'step': self.global_steps, 'attempt': attempt+1,
                     'generated_responses': len(lengths),
-                    'capped_responses': sum(length >= 16384 for length in lengths),
+                    'capped_responses': sum(length >= max_response for length in lengths),
+                    'max_response_tokens': max_response,
                     'response_tokens_mean': float(np.mean(lengths)),
                     'response_tokens_max': max(lengths),
                     'retained_groups_so_far': len(accepted),
@@ -473,6 +476,7 @@ class ChessR1Trainer(RayPPOTrainer):
                                                'sampling/source_epoch': self.train_dataloader.source_epoch})
                     return result
                 replacement = DataProto.from_single_dict(next(self.train_dataloader))
+                replacement = replacement[:bounded_replacement_groups(pending_groups, len(replacement))]
                 replacement.meta_info.update(temperature=1., global_steps=self.global_steps)
                 replacement.non_tensor_batch['uid'] = np.array(
                     [str(uuid.uuid4()) for _ in range(len(replacement))], dtype=object)

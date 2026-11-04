@@ -57,6 +57,12 @@ def main():
                     '--use_cpu_initialization'],check=True)
     base = Path(recipe['model_path'])
     for file in base.iterdir():
+        # Shard indexes describe the merged weights, not the base checkpoint.
+        # Copying one can hide a valid single shard or overwrite a new index.
+        if file.name.endswith(('.safetensors.index.json', '.bin.index.json')):
+            continue
+        if file.name in {'export-receipt.json', 'repair-receipt.json'}:
+            continue
         if file.is_file() and file.suffix in ('.json','.jinja','.txt','.model') and file.name!='config.json':
             shutil.copy2(file,temp/file.name)
     normalization = normalize_export_weights(temp,base)

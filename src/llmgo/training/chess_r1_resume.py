@@ -37,13 +37,19 @@ def latest_complete_checkpoint(output, gpus):
     return max(valid, default=(0, None), key=lambda item: item[0])
 
 
+# The supervisor writes progress before the first training process starts.
+# These files contain no model, optimizer, dataloader or generated samples.
+FRESH_OUTPUT_FILES = {'run.lock', 'recipe.json', 'logs', 'progress.json'}
+
+
 def resume_plan(output, recipe, source_release):
     """Caller holds a run lock. Never load weights from an uncommitted save."""
     output = Path(output)
     identity = output/'identity.json'
     if not identity.exists():
-        if any(p.name not in {'run.lock', 'recipe.json', 'logs'} for p in output.iterdir()):
-            raise ValueError('Existing output has no experiment identity')
+        unexpected = sorted(p.name for p in output.iterdir() if p.name not in FRESH_OUTPUT_FILES)
+        if unexpected:
+            raise ValueError('Existing output has no experiment identity: '+', '.join(unexpected))
         return {'step': 0, 'checkpoint': None, 'attempt': 0}
     if not recipe.get('resume_on_restart'):
         raise ValueError('This recipe does not allow reusing an output directory')

@@ -9,4 +9,6 @@ description: 在 LLMGo! 的 Chess-R1 GRPO 研究中凍結配方、執行與核�
 
 提交給 Executor；只用 beijing/model-autosft，預設 HIGH（同時最多一個活動或提交不確定的 HIGH 任務），每項最多 8 GPU，devspace 0 GPU，只寫 /user/lyh4170。所有日誌和 JSON 寫在 `LLMGo!/var/runs/<實驗ID>`。棋力用固定 Fairy 多難度完整棋局評測，不以訓練 reward 代替。
 
-標準訓練每 5 個 optimizer step 做 L2/L3 各 20 局驗證，再由 Meta 依 rsi-training-review 技能決定 continue / replan / finish。continue 保留全部原生狀態；改 reward、超參、資料或程式須 replan 新實驗。詳讀 docs/training-reviews.md。
+標準訓練每 5 個 GRPO step（verl global_step；內部可含多次 optimizer minibatch 更新）做 L2/L3 各 20 局驗證，再由 Meta 依 rsi-training-review 技能決定 continue / replan / finish。continue 保留全部原生狀態；改 reward、超參、資料或程式須 replan 新實驗。詳讀 docs/training-reviews.md。
+
+新配方可用 512–16384 的整數 max_response_tokens，預設仍是 16384。入口和 verl 共用長度驗證，整組截斷拒收按此上限執行；補採樣只取尚缺組數加 8 組備用，最多 10 次。首次執行允許 supervisor 的 progress.json，但無 identity 的既有訓練產物仍須保留並拒收。匯出使用候選凍結程式，不能把 base 的舊權重索引複製到新模型。採用 live 修復前閱讀 docs/grpo-maintenance-20261104.md；既有 campaign 的受保護快照須經正常 operator upgrade，不能直接修改凍結 source、manifest 或過去結果。

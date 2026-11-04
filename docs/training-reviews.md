@@ -1,6 +1,6 @@
 # 分段訓練與持續驗證
 
-預設每 5 個 **optimizer update** 保存原生 checkpoint，退出訓練子程序並匯出 HF 模型，再完成 Fairy L2 / L3 各 20 局（各 10 個黑白配對）。初始 step 0 也用同樣協議。Lichess dev 不再是此流程每 5 step 的決策訊號；資料隔離照舊。初始 Qwen3.5-4B、Chess-R1 prompt 和 non-thinking 不變，預設仍用篩選資料，可選完整 Lichess 訓練池。
+預設每 5 個 **GRPO step（verl `global_step`）** 保存原生 checkpoint，退出訓練子程序並匯出 HF 模型，再完成 Fairy L2 / L3 各 20 局（各 10 個黑白配對）。每個 GRPO step 包含一批 rollout，內部可能有多次 optimizer minibatch 更新，不能把兩者混算。初始 step 0 也用同樣協議。Lichess dev 不再是此流程每 5 step 的決策訊號；資料隔離照舊。初始 Qwen3.5-4B、Chess-R1 prompt 和 non-thinking 不變，預設仍用篩選資料，可選完整 Lichess 訓練池。
 
 L2/L3 共用同一個 40 局佇列和 vLLM 副本池，每卡一個 TP=1 副本。先等所有副本就緒，再一起派發 40 局；預設 8 GPU 為每卡約 5 局，1 GPU 也可排入 40 局。每卡的 max_num_seqs=40，整個池的評測並發上限同樣為 40。回覆推理與棋類引擎交替進行，因此並發 40 局不等於始終有 40 個 GPU 推理請求或滿載利用率。L2、L3 的協議、seed 配對、20 局計分和逐手證據保持分離。完整 40 局及身份校驗完成後才叫醒 Agent。
 

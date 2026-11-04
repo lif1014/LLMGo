@@ -12,6 +12,8 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 
+from llmgo.training.chess_r1_config import validate_recipe
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -19,12 +21,7 @@ def main():
     p.add_argument('--output', required=True, type=Path)
     a = p.parse_args()
     r = json.loads(a.recipe.read_text())
-    assert r['framework'] == 'verl' and r['algorithm'] == 'grpo'
-    assert not any(r[k] for k in ('sft', 'harness', 'skills'))
-    assert r['answer_protocol'] == 'chess-r1-boxed-san-v2'
-    assert r.get('enable_thinking', False) is False
-    assert r['temperature'] == 1 and r['max_response_tokens'] == 16384
-    assert type(r['checkpoint_every']) is int and r['checkpoint_every'] > 0
+    validate_recipe(r)
     a.output.mkdir(parents=True, exist_ok=True)
     run_lock = (a.output/'run.lock').open('a')
     fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

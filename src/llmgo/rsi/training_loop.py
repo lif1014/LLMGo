@@ -14,6 +14,7 @@ from .evaluator import engine_identity, evaluate, evaluate_many
 from .ladder import batch_stats, opponent
 from .training_review import publish, decision, expire
 from .research_control import require_research
+from llmgo.training.chess_r1_config import token_budgets
 
 
 def freeze_recipe(payload, output):
@@ -24,6 +25,8 @@ def freeze_recipe(payload, output):
         template = candidate/template
     template = inside(candidate,template)
     recipe = read_json(template)
+    # Reject invalid token budgets before allocating time to the step-0 panel.
+    token_budgets(recipe)
     recipe.update(model_path=payload['model_path'], run_id=output.name, run_directory=output.name,
                   attempt=output.name, allocated_gpus=payload.get('resources',{}).get('gpu_count',payload['site']['gpu_count']),
                   training_review=True)
@@ -94,7 +97,9 @@ class TrainingLoop:
     def export(self,step):
         target=self.root/'models'/f'step-{step:08d}'
         python=str(Path(self.site['verl_venv'])/'bin/python')
-        seconds=self.command([python,'-B',str(Path(self.p['source']['root'])/'scripts/export_grpo.py'),
+        # Export is editable training code. Use the candidate's frozen exporter
+        # so its fixes apply; chess evaluation still uses the protected source.
+        seconds=self.command([python,'-B',str(Path(self.p['candidate_source']['root'])/'scripts/export_grpo.py'),
             '--output',str(self.output/'grpo'),'--step',str(step),'--target',str(target)],'exporting',step)
         self.cost['export_seconds']=self.cost.get('export_seconds',0.)+seconds
         atomic_json(self.root/'cost.json',self.cost)

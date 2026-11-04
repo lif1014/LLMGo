@@ -30,6 +30,8 @@
 
 GRPO 預設 KL loss 係數為 `0.05`，entropy coefficient 為 `0`；實際 verl 設定由 `src/llmgo/training/chess_r1_config.py` 產生。Entropy 診斷仍保留。
 
+訓練回答上限預設 16,384 tokens，可在新配方設定為 512–16,384 的整數；生成長度、上下文與整組截斷過濾共用相同設定。共用程式已整合研究中發現的首次啟動、權重索引與補採樣修復，採用方式及驗證見 [維護紀錄](docs/grpo-maintenance-20261104.md)。既有 campaign／任務使用原先凍結版本，發布 live 檔案不會自動替換其快照。
+
 ## 執行
 
 在遠端 **0 GPU devspace** 啟動研究（沿用現有網頁）：
@@ -60,7 +62,7 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 
 新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 20 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
 
-預設每 5 個 optimizer step 完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。
+預設每 5 個 GRPO step（verl `global_step`，每步含多次 optimizer minibatch 更新）完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。
 
 L2/L3 基線和驗證共用 40 局佇列，每卡一個 TP=1 vLLM 副本，所有副本就緒後開始派發。預設 8 卡時共 40 局同時進行，平均每卡 5 局；每副本 max_num_seqs=40，整個評測最多並行 40 局。兩個難度仍各自保存 20 局指標和完整棋譜。這是併發上限，不代表 GPU 計算利用率必定 100%。
 

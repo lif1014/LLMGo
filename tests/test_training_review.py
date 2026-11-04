@@ -43,12 +43,16 @@ def test_expired_review_rejects_a_late_meta_answer(tmp_path):
     assert decision(path) is None
 
 
-def test_export_intermediate_checkpoint_without_final_result(tmp_path,monkeypatch):
+@pytest.mark.parametrize('merged_index', [False, True])
+def test_export_intermediate_checkpoint_without_final_result(tmp_path,monkeypatch,merged_index):
     import importlib.util
     spec=importlib.util.spec_from_file_location('review_export',Path(__file__).resolve().parents[1]/'scripts/export_grpo.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     output=tmp_path/'experiment/grpo';base=tmp_path/'base';base.mkdir()
     atomic_json(base/'config.json',{});atomic_json(base/'tokenizer_config.json',{'fixture':True})
+    stale_index={'weight_map':{'weight':'old-base-shard.safetensors'}}
+    atomic_json(base/'model.safetensors.index.json',stale_index)
+    atomic_json(base/'pytorch_model.bin.index.json',{'weight_map':{'weight':'old-base-shard.bin'}})
     atomic_json(output/'recipe.json',{'steps':10,'model_path':str(base)})
     checkpoint=output/'native-checkpoints/global_step_5';(checkpoint/'actor').mkdir(parents=True)
     (checkpoint/'actor/shard.pt').write_bytes(b'weights')
@@ -57,6 +61,8 @@ def test_export_intermediate_checkpoint_without_final_result(tmp_path,monkeypatc
     def merge(argv,**kw):
         calls.append(argv);dest=Path(argv[argv.index('--target_dir')+1]);atomic_json(dest/'config.json',{})
         (dest/'model.safetensors').write_bytes(b'fixture')
+        if merged_index:
+            atomic_json(dest/'model.safetensors.index.json',{'weight_map':{'weight':'model.safetensors'}})
     monkeypatch.setattr(module.subprocess,'run',merge)
     monkeypatch.setattr(module,'normalize_export_weights',lambda a,b:{'fixture':True})
     monkeypatch.setattr(module.sys,'argv',['export','--output',str(output),'--step','5','--target',str(target)])
@@ -65,6 +71,12 @@ def test_export_intermediate_checkpoint_without_final_result(tmp_path,monkeypatc
     receipt=read_json(target.with_name(target.name+'.submission.json'))
     assert receipt['model_identity']==model_identity(target)
     assert (target/'tokenizer_config.json').is_file()
+    assert (target/'model.safetensors').read_bytes()==b'fixture'
+    assert not (target/'pytorch_model.bin.index.json').exists()
+    index=target/'model.safetensors.index.json'
+    assert index.exists()==merged_index
+    if merged_index:
+        assert read_json(index)['weight_map']=={'weight':'model.safetensors'}
     monkeypatch.setattr(module.sys,'argv',['export','--output',str(output),'--step','10','--target',str(target)])
     with pytest.raises(RuntimeError,match='identity changed'):module.main()
 
@@ -164,6 +176,29 @@ def test_training_validation_submits_both_levels_to_one_pool(loop_fixture):
         assert len({p['panel_output'] for p in batch})==1
         assert len({p['games_output'] for p in batch})==1
         assert batch[0]['game_id_prefix']!=batch[1]['game_id_prefix']
+
+
+def test_invalid_budget_fails_before_step_zero_evaluation(loop_fixture):
+    p,kwargs,calls=loop_fixture
+    template=Path(p['candidate_source']['root'])/'configs/grpo/default.json'
+    atomic_json(template,{**read_json(template),'max_response_tokens':20000})
+    with pytest.raises(ValueError,match='max_response_tokens'):
+        TrainingLoop(p,**kwargs)
+    assert calls==[]
+
+
+def test_export_uses_frozen_candidate_training_code(loop_fixture):
+    p,kwargs,calls=loop_fixture
+    p['source']={**p['source'],'root':str(Path(p['source']['root'])/'protected')}
+    commands=[]
+    runner=kwargs['runner']
+    def record(argv,**kw):
+        commands.append(argv)
+        return runner(argv,**kw)
+    loop=TrainingLoop(p,**{**kwargs,'runner':record})
+    loop.export(5)
+    assert commands[0][2]==str(Path(p['candidate_source']['root'])/'scripts/export_grpo.py')
+    assert p['source']['root']!=p['candidate_source']['root']
 
 
 def test_review_timeout_retains_model_and_native_receipt(loop_fixture):

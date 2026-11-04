@@ -3,6 +3,40 @@ import json
 from pathlib import Path
 
 
+def token_budgets(recipe):
+    """Use the same limits before submission, at launch and in native verl."""
+    result = []
+    for key, default, lower, upper in (('max_prompt_tokens', 1024, 256, 4096),
+                                       ('max_response_tokens', 16384, 512, 16384)):
+        value = recipe.get(key, default)
+        if type(value) is not int or not lower <= value <= upper:
+            raise ValueError(f'{key} must be an integer between {lower} and {upper}')
+        result.append(value)
+    return tuple(result)
+
+
+def validate_recipe(recipe):
+    """Validate the launch contract without importing Ray, torch or verl.
+
+    These checks must also run under python -O; configuration errors are not
+    assertions. The response budget is a recipe setting, not a fixed constant.
+    """
+    if recipe.get('framework') != 'verl' or recipe.get('algorithm') != 'grpo':
+        raise ValueError('Expected a native verl GRPO recipe')
+    if any(recipe.get(key) is not False for key in ('sft', 'harness', 'skills')):
+        raise ValueError('Training requires sft=false, harness=false and skills=false')
+    if recipe.get('answer_protocol') != 'chess-r1-boxed-san-v2':
+        raise ValueError('Training requires the fixed Chess-R1 answer protocol')
+    if recipe.get('enable_thinking', False) is not False:
+        raise ValueError('Training requires non-thinking mode')
+    if recipe.get('temperature') != 1:
+        raise ValueError('Training requires the user-selected temperature of 1')
+    token_budgets(recipe)
+    interval = recipe.get('checkpoint_every')
+    if type(interval) is not int or interval <= 0:
+        raise ValueError('checkpoint_every must be a positive integer')
+
+
 def overrides(recipe, output):
     r, o = recipe, Path(output)
     sampling = {key: r[key] for key in
@@ -10,6 +44,7 @@ def overrides(recipe, output):
     if sampling != dict(temperature=1, top_p=.95, top_k=20,
                         presence_penalty=1.5, repetition_penalty=1):
         raise ValueError('This recipe must use the user-selected Qwen sampling settings')
+    prompt_tokens, response_tokens = token_budgets(r)
     values = {
         'actor_rollout_ref.model.path': r['model_path'],
         'actor_rollout_ref.model.external_lib': 'llmgo.training.chess_r1_compat',
@@ -49,7 +84,7 @@ def overrides(recipe, output):
         'actor_rollout_ref.rollout.calculate_log_probs': True,
         'actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu': r.get('forward_micro_batch_size', 2),
         'actor_rollout_ref.rollout.tensor_model_parallel_size': 1,
-        'actor_rollout_ref.rollout.max_model_len': 17408,
+        'actor_rollout_ref.rollout.max_model_len': prompt_tokens+response_tokens,
         'actor_rollout_ref.rollout.gpu_memory_utilization': .4,
         'actor_rollout_ref.rollout.max_num_seqs': r.get('rollout_max_num_seqs', 128),
         'actor_rollout_ref.rollout.max_num_batched_tokens': 8192,
@@ -70,8 +105,8 @@ def overrides(recipe, output):
         'data.val_files': [r['validation_file']],
         'data.train_batch_size': r['prompt_batch_size'],
         'data.val_batch_size': r.get('allocated_gpus',8)*r.get('rollout_max_num_seqs',128),
-        'data.max_prompt_length': 1024,
-        'data.max_response_length': 16384,
+        'data.max_prompt_length': prompt_tokens,
+        'data.max_response_length': response_tokens,
         'data.filter_overlong_prompts': False,
         'data.truncation': 'error',
         'data.dataloader_num_workers': 0,

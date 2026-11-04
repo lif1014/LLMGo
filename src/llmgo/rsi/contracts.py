@@ -150,8 +150,14 @@ def worker_environment(site: dict) -> dict:
     return env
 
 
-def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False) -> dict:
-    games = 10 if baseline else 20
+VALIDATION_GAMES = 40
+VALIDATION_VLLM_MAX_NUM_SEQS = 20
+
+
+def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False, games=None) -> dict:
+    games = (10 if baseline else 20) if games is None else games
+    if type(games) is not int or games not in (10, 20, 40) or (games == 10 and not baseline):
+        raise ValueError("Unsupported validation batch size")
     result = {
         "game": "chess", "framework": "chess-r1", "answer_protocol":"chess-r1-boxed-san-v2",
         "enable_thinking": False,
@@ -167,7 +173,9 @@ def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False) -> d
 
 
 def validate_protocol(p: dict, *, baseline=False) -> None:
-    games = 10 if baseline else 20
+    games = p.get("games")
+    if type(games) is not int or games not in ((10,20,40) if baseline else (20,40)):
+        raise ValueError("Unsupported validation batch size")
     required = {"game": "chess", "framework": "chess-r1",
                 "answer_protocol":"chess-r1-boxed-san-v2", "enable_thinking": False,
                 "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 16384}
@@ -176,7 +184,7 @@ def validate_protocol(p: dict, *, baseline=False) -> None:
             raise ValueError(f"Official RSI protocol requires {key}={value!r}")
     # Candidate settings are editable. These external resource ceilings are not.
     from .ladder import opponent
-    expected = protocol(opponent(p["opponent"]["level"]), p["engine"], baseline=baseline)
+    expected = protocol(opponent(p["opponent"]["level"]), p["engine"], baseline=baseline, games=games)
     if p != expected:
         raise ValueError("Official evaluation protocol or opponent was changed")
 

@@ -1,4 +1,4 @@
-"""Frozen Fairy-Stockfish referee: 10-game baseline, 20-game candidate evaluation."""
+"""Frozen Fairy-Stockfish referee with legacy and forty-game validation batches."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +16,7 @@ from pathlib import Path
 from llmgo.training.chess_r1 import messages, extract_answer, ANSWER_PROTOCOL
 from llmgo.rsi.game import ChessEpisode
 from llmgo.runtime.uci_player import UciPlayer
-from .contracts import atomic_json, digest, file_hash, model_identity, read_json, validate_protocol, utc, inside
+from .contracts import VALIDATION_VLLM_MAX_NUM_SEQS, atomic_json, digest, file_hash, model_identity, read_json, validate_protocol, utc, inside
 from .ladder import batch_stats
 from .evaluation_pool import EvaluationReplica
 from .artifacts import verify_source
@@ -334,10 +334,12 @@ async def parallel_panel(payloads,helpers,gpus):
     completed=[prepared_games(p,out) for p,out in zip(payloads,outputs,strict=True)]
     total=sum(p['protocol']['games'] for p in payloads)
     first=payloads[0];site=first['site']
-    lanes=first.get('evaluation_games_per_gpu',site.get('eval_games_per_gpu',2))
-    cap=site.get('eval_max_parallel_games',40)
-    if type(lanes) is not int or not 1<=lanes<=40 or type(cap) is not int or not 1<=cap<=40:
-        raise ValueError('Evaluation concurrency must be an integer from 1 to 40')
+    modern=any(p['protocol']['games']==40 for p in payloads)
+    lanes=VALIDATION_VLLM_MAX_NUM_SEQS if modern else first.get('evaluation_games_per_gpu',site.get('eval_games_per_gpu',2))
+    cap=80 if modern else site.get('eval_max_parallel_games',40)
+    lanes=min(lanes,VALIDATION_VLLM_MAX_NUM_SEQS)
+    if type(lanes) is not int or not 1<=lanes<=40 or type(cap) is not int or not 1<=cap<=80:
+        raise ValueError('Evaluation per-replica concurrency must be 1..40 and pool concurrency 1..80')
     parallelism=min(total,lanes*len(gpus),cap)
     # Forty blocking HTTP requests must not be throttled by asyncio's default
     # 32-thread executor while chess engines are also using to_thread.
@@ -370,8 +372,7 @@ async def parallel_panel(payloads,helpers,gpus):
     def factory(replica):
         def create(index,attempt):
             options={'python':site.get('inference_python')}
-            if site.get('eval_vllm_max_num_seqs') is not None:
-                options['max_num_seqs']=site['eval_vllm_max_num_seqs']
+            options['max_num_seqs']=VALIDATION_VLLM_MAX_NUM_SEQS
             return helpers.VllmServer(Path(first['model_path']),first['protocol'],
                 logs/f'gpu-{replica}'/f'vllm-{index:02d}-{attempt}.log',ports[replica],gpus[replica],**options)
         return create

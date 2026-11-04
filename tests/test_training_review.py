@@ -117,7 +117,7 @@ def loop_fixture(tmp_path):
         calls.append(('eval',step,payload['protocol']['opponent']['level']))
         # Include a decline, proving best-envelope != raw curve.
         games=[{'game_id':f'{i}-{side}','pair_id':i,'model_seat':side,
-                'result':'draw' if step!=5 else f'{side}_win'} for i in range(10) for side in ('white','black')]
+                'result':'draw' if step!=5 else f'{side}_win'} for i in range(payload['protocol']['games']//2) for side in ('white','black')]
         path=Path(payload['output'])/'metrics.json'
         atomic_json(path,{'games':games,'model_identity':model_identity(payload['model_path']),
             'source_identity':payload['source']['sha256'],'protocol_identity':digest(payload['protocol'])})

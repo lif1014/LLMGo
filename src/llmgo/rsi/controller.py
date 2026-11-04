@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from llmgo.remote.lifecycle import JobExecutor
 from .artifacts import source_snapshot, verify_source, write_manifest
-from .contracts import SCHEMA, atomic_json, digest, file_hash, identifier, inside, model_identity, protocol, read_json, utc
+from .contracts import SCHEMA, VALIDATION_GAMES, atomic_json, digest, file_hash, identifier, inside, model_identity, protocol, read_json, utc
 from .evaluator import engine_identity
 from .ladder import evaluation_plan, panel_summary, opponent
 from .memory import CampaignLocked, MemoryStore
@@ -55,7 +55,7 @@ class Controller:
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
                  "research_scope": PHASE1_SCOPE,
                  "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
-                 "phase": "BASELINE", "baseline_games_per_level": 20, "baseline_levels": [2,3],
+                 "phase": "BASELINE", "baseline_games_per_level": VALIDATION_GAMES, "baseline_levels": [2,3],
                  "round": 0, "active_job": None, "jobs": {},
                  "candidate": None, "workspace": None, "attempts": [], "meta_stalls": 0,
                  "initial": initial, "incumbent": initial.copy(), "working": initial.copy(),
@@ -102,7 +102,7 @@ class Controller:
             "source":snapshot,"previous_site":self.site,"site":site})
         self.state.update(site=site,source=snapshot,working=working)
         if not self.state['jobs'] and site.get('training_review'):
-            self.state['baseline_games_per_level'] = 20
+            self.state['baseline_games_per_level'] = VALIDATION_GAMES
         self.site = site
         self.lifecycle = JobExecutor(self.root,site)
         self.memory.append("pipeline_upgraded", {"source":snapshot["sha256"],"gpu_count":site["gpu_count"],
@@ -111,6 +111,37 @@ class Controller:
         if active:
             self.resume_failed()
         return {"upgraded":True,"source":snapshot["sha256"],"active_job":self.state.get("active_job")}
+
+    def upgrade_validation(self, repo=None):
+        """Migrate the protected referee while preserving paused RL research."""
+        if (not read_control(self.root)['paused'] or self.state['phase']!='PLANNING'
+                or self.state.get('active_job') or self.state.get('candidate') or self.state.get('training_review')):
+            raise ValueError('Validation migration requires paused idle PLANNING')
+        session=read_json(self.root/'meta-session.json') if (self.root/'meta-session.json').exists() else {}
+        if session.get('process') or session.get('status') not in {None,'paused','completed'}:
+            raise ValueError('Meta must be stopped before validation migration')
+        workspace=Path(self.state['workspace']) if self.state.get('workspace') else None
+        if workspace and session.get('request_key'):
+            result=self.root/'meta-requests'/session['request_key']/'result.json'
+            if result.exists():raise ValueError('Resolve completed handoff before migrating its context')
+        folder=self.root/'upgrades'/f"v{len(self.state.get('upgrades',[]))+1:04d}"
+        atomic_json(folder/'previous-state.json',self.state)
+        if workspace: shutil.copy2(workspace/'context.json',folder/'previous-context.json')
+        snapshot=source_snapshot(Path(repo or self.site['repo']),folder/'source')
+        policy={'games_per_level':VALIDATION_GAMES,'white_per_level':20,'black_per_level':20,
+                'vllm_max_num_seqs':20,'max_parallel_games':80}
+        self.state.setdefault('upgrades',[]).append({'utc':utc(),'kind':'validation_policy',
+            'previous_source':self.state['source'],'source':snapshot,'site':self.site,
+            'workspace_preserved':str(workspace) if workspace else None})
+        self.state.update(source=snapshot,validation_policy=policy,
+            meta_request_revision=self.state.get('meta_request_revision',0)+1)
+        self.memory.append('validation_policy_upgraded',{'policy':policy,'source_sha256':snapshot['sha256'],
+            'previous_state':str(folder/'previous-state.json'),'research_paused':True,
+            'historical_results_unchanged':True,'executor_site_unchanged':True})
+        self.save()
+        if workspace:atomic_json(workspace/'context.json',self.memory.context())
+        return {'policy':policy,'source_sha256':snapshot['sha256'],'research_paused':True,
+                'workspace':str(workspace) if workspace else None}
 
     def metrics(self, ref):
         if file_hash(ref["path"]) != ref["sha256"]:
@@ -142,7 +173,8 @@ class Controller:
             for selected in levels:
                 spec=opponent(selected)
                 short_baseline=role=='baseline' and self.state.get('baseline_games_per_level',20)==10
-                batch_protocol=protocol(spec,self.site['engine'],baseline=short_baseline)
+                games=self.state.get('baseline_games_per_level',VALIDATION_GAMES) if role=='baseline' else VALIDATION_GAMES
+                batch_protocol=protocol(spec,self.site['engine'],baseline=short_baseline,games=games)
                 actual_engine=self.engine_probe(self.site['engine'],spec)
                 pin={k:v for k,v in actual_engine.items() if k!='spec'}
                 if self.state.get('engine_pin') is not None and self.state['engine_pin']!=pin:
@@ -150,7 +182,7 @@ class Controller:
                 self.state['engine_pin']=pin
                 batches.append({'protocol':batch_protocol,'engine_identity':actual_engine,
                     'seed_schedule':[10000*int(selected*10)+100*batch_index+i for i in range(batch_protocol['games']//2)],
-                    'comparison_id':f"{'baseline10' if short_baseline else 'validation20'}:L{selected}:b{batch_index}"})
+                    'comparison_id':f"{'baseline10' if short_baseline else 'validation'+str(games)}:L{selected}:b{batch_index}"})
             payload.update(**batches[0],track=track,
                 resources={'gpu_count':candidate.get('proposal',{}).get('evaluation_gpus',self.site['gpu_count'])},
                 reference_source=self.state['initial']['source'])
@@ -824,7 +856,7 @@ class Controller:
                         "完整池位于 assets/datasets/lichess/20261103/boxed-nonthinking-v2，先检查verification.json。详见docs/lichess-data.md。"
                         "允许修改超参和reward等；无需random seed或算力预算比较。每轮交付选样程序/查询、ID清单、分类统计、基于败局的选样假设；沿用默认数据也记录选择。"
                         "先做有证据的假设与资源计划，再提出训练或 L2/L2.5/L3 Fairy-Stockfish 开发验证。"
-                        "L2/L3 基线和验证每档20局、白黑各10局。默认每5个optimizer step保存完整checkpoint并验证，验证后你决定continue、replan或finish；读取rsi-training-review技能。"
+                        "L2/L3 后续基线和验证每档40局、白黑各20局，共80局共享队列；每个评测vLLM副本max_num_seqs=20。旧20局结果保留并标注样本数，不混为同规模实验。默认每5个optimizer step保存完整checkpoint并验证，验证后你决定continue、replan或finish；读取rsi-training-review技能。"
                         "保留全部中间checkpoint、原始得分与observed-best曲线；不把观测最优包络当作实际能力单调增长。DeepSeek non-thinking只留给用户做最终测试。每任务最多8 GPU，默认HIGH，同时最多一个HIGH任务。"
                         "按 docs/grpo-pipeline.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
                         "完成 proposal.json 与必要验证后调用 finish_research.py 交接；确有障碍时返回 needs_input。"

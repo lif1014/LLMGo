@@ -62,11 +62,11 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 
 ## 研究起點
 
-新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 20 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
+新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 40 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
 
-預設每 5 個 GRPO step（verl `global_step`，每步含多次 optimizer minibatch 更新）完成 L2/L3 各 20 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。
+預設每 5 個 GRPO step（verl `global_step`，每步含多次 optimizer minibatch 更新）完成 L2/L3 各 40 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。
 
-L2/L3 基線和驗證共用 40 局佇列，每卡一個 TP=1 vLLM 副本，所有副本就緒後開始派發。預設 8 卡時共 40 局同時進行，平均每卡 5 局；每副本 max_num_seqs=40，整個評測最多並行 40 局。兩個難度仍各自保存 20 局指標和完整棋譜。這是併發上限，不代表 GPU 計算利用率必定 100%。
+L2/L3 基線和驗證共用 80 局佇列，每檔 40 局、白黑各 20 局。每卡一個 TP=1 vLLM，max_num_seqs=20，每副本最多 20 局並行；8 卡可同時進行 80 局（每卡約 10 局），1 卡時最多並行 20 局，其餘排隊。兩檔各自保存指標和完整棋譜。新受保護驗證版本固定此政策，覆蓋相容 site 中的舊併發值；GRPO 訓練 rollout 384 seqs 和獨立 DeepSeek 測試不受此更改影響。
 
 網頁評測表按 L2、L3 分行顯示勝／和／負、勝率與得分率；GRPO 的每個 checkpoint 表也分別列出兩檔成績。勝率為勝局／有效完成局，得分率為（勝局＋半數和局）／有效完成局。
 

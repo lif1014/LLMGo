@@ -1,10 +1,10 @@
 # 分段訓練與持續驗證
 
-預設每 5 個 **GRPO step（verl `global_step`）** 保存原生 checkpoint，退出訓練子程序並匯出 HF 模型，再完成 Fairy L2 / L3 各 20 局（各 10 個黑白配對）。每個 GRPO step 包含一批 rollout，內部可能有多次 optimizer minibatch 更新，不能把兩者混算。初始 step 0 也用同樣協議。Lichess dev 不再是此流程每 5 step 的決策訊號；資料隔離照舊。初始 Qwen3.5-4B、Chess-R1 prompt 和 non-thinking 不變，預設仍用篩選資料，可選完整 Lichess 訓練池。
+預設每 5 個 **GRPO step（verl `global_step`）** 保存原生 checkpoint，退出訓練子程序並匯出 HF 模型，再完成 Fairy L2 / L3 各 40 局（各 20 個黑白配對）。每個 GRPO step 包含一批 rollout，內部可能有多次 optimizer minibatch 更新，不能把兩者混算。初始 step 0 也用同樣協議。Lichess dev 不再是此流程每 5 step 的決策訊號；資料隔離照舊。初始 Qwen3.5-4B、Chess-R1 prompt 和 non-thinking 不變，預設仍用篩選資料，可選完整 Lichess 訓練池。
 
-L2/L3 共用同一個 40 局佇列和 vLLM 副本池，每卡一個 TP=1 副本。先等所有副本就緒，再一起派發 40 局；預設 8 GPU 為每卡約 5 局，1 GPU 也可排入 40 局。每卡的 max_num_seqs=40，整個池的評測並發上限同樣為 40。回覆推理與棋類引擎交替進行，因此並發 40 局不等於始終有 40 個 GPU 推理請求或滿載利用率。L2、L3 的協議、seed 配對、20 局計分和逐手證據保持分離。完整 40 局及身份校驗完成後才叫醒 Agent。
+L2/L3 共用同一個 80 局佇列和 vLLM 副本池，每卡一個 TP=1 副本，max_num_seqs=20，每卡最多 20 局並行。8 卡時每卡約 10 局，1 卡最多並行 20 局；全部副本就緒後派發。兩檔各 40 局、白黑各 20 局，指標與逐手證據分開保存。完整 80 局及身份校驗完成後才叫醒 Agent。舊 10／20 局報告仍按原樣本數解析，不改寫舊成績；比較曲線須標示局數改變，不能把新舊面板當成等樣本測量。
 
-首次基線也合併為一個 evaluate_panel 任務；單獨提交某一難度仍是 20 局。僅改評測排程與副本容量，沒有修改學生 prompt、reward 或對手強度。既有凍結任務沿用原版本；新版只對升級後建立的 manifest 生效。
+首次基線也合併為一個 evaluate_panel 任務；單獨提交某一難度為 40 局。僅改評測排程與副本容量，沒有修改學生 prompt、reward 或對手強度。既有凍結任務沿用原版本；新版只對升級後建立的 manifest 生效。
 
 一個 HIGH job 保留 allocation，按「訓練 → 導出 → 驗證 → Meta 審查」循環，階段間釋放子程序。Controller 與外部 Executor 分開，Meta 思考時 Executor 仍能運作。排程器 GPU 查詢間隔 600 秒；審查請求經共享磁碟讀取，不受慢輪詢影響。同時最多一個活動或提交不確定的 HIGH job；遇到其他自己的 HIGH job 就等待，不停止任何其他任務。
 
@@ -40,7 +40,7 @@ Meta 使用該輪 `finish_research.py` 交接，Controller 校驗才提交不可
 
 網頁 GRPO 區顯示曲線與 checkpoint 表，可讀完整棋局事件。曲線允許下降；observed-best 只是開發驗證最高觀測值，不是能力單調提升的證明。重複自適應評測有選擇偏差，區間只作描述。改方案後繼承父模型的 lineage step 與 GPU 時數；時數只包含記錄的訓練、匯出、評測及審查階段，不含排隊、啟動與失敗階段耗時。
 
-評測任務表中 L2／L3 各佔一行，分別顯示有效完成局、勝／和／負、勝率與得分率；每個 checkpoint 的表格也列出兩檔各自的勝／和／負、勝率和得分率。共享 40 局排程不合併兩檔勝率。未完成整批校驗時，逐局統計標為暫時統計；完整 L2／L3 收集後才標為正式成績。
+評測任務表中 L2／L3 各佔一行，分別顯示有效完成局、勝／和／負、勝率與得分率；每個 checkpoint 的表格也列出兩檔各自的勝／和／負、勝率和得分率。共享 80 局排程不合併兩檔勝率。未完成整批校驗時，逐局統計標為暫時統計；完整 L2／L3 收集後才標為正式成績。
 
 獨立的「GRPO · 訓練指標」區塊以 `grpo/metrics.jsonl`、`latest.json` 和已驗證更新收據顯示每項 RL 實驗。曲線每15秒增量讀取，支援 Reward/Q、Reference KL、entropy、合法／格式比例、回答 tokens、梯度范數、policy loss、零優勢組比例及任意額外標量；逐步表格每頁25步。完成步數依 `update/mean_abs_logprob_change` 或完整更新收據判斷，`progress.step` 僅為當前階段標記。Entropy coefficient=0 仍可量測策略 entropy。續訓時同一步採最新記錄，回退到 checkpoint 後不將舊分支的未保留更新冒充新分支。網頁透過既有 artifact API 讀取，舊 Web 行程無須重啟，訓練任務與凍結源碼不變。
 

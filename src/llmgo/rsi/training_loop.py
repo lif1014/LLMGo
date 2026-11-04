@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 
-from .contracts import atomic_json, digest, file_hash, inside, model_identity, protocol, read_json, utc
+from .contracts import VALIDATION_GAMES, atomic_json, digest, file_hash, inside, model_identity, protocol, read_json, utc
 from .evaluator import engine_identity, evaluate, evaluate_many
 from .ladder import batch_stats, opponent
 from .training_review import publish, decision
@@ -129,9 +129,9 @@ class TrainingLoop:
             out.mkdir(parents=True,exist_ok=True)
             payload={**self.p,'kind':'evaluate','role':'training_validation','output':str(out),
                 'candidate_id':self.p['candidate_id'], 'track':'player','model_path':model,
-                'expected_model_sha256':identity['sha256'],'protocol':protocol(spec,self.site['engine']),
-                'engine_identity':engine,'seed_schedule':[10000*int(level*10)+i for i in range(10)],
-                'comparison_id':f'validation20:L{level}:b0', 'reference_source':self.p['candidate_source']}
+                'expected_model_sha256':identity['sha256'],'protocol':protocol(spec,self.site['engine'],games=VALIDATION_GAMES),
+                'engine_identity':engine,'seed_schedule':[10000*int(level*10)+i for i in range(VALIDATION_GAMES//2)],
+                'comparison_id':f'validation{VALIDATION_GAMES}:L{level}:b0', 'reference_source':self.p['candidate_source']}
             if self.site.get('eval_shared_levels'):
                 payload.update(panel_output=str(out.parent),games_output=str(self.output),
                     game_id_prefix=f"{self.p['job_id']}-s{step:08d}-L{level}")
@@ -148,7 +148,7 @@ class TrainingLoop:
                     or metrics['protocol_identity']!=digest(payload['protocol'])
                     or metrics['source_identity']!=self.p['source']['sha256']):
                 raise ValueError('Validation returned the wrong model/protocol/source')
-            stats=batch_stats(metrics,expected_games=20)
+            stats=batch_stats(metrics,expected_games=payload['protocol']['games'])
             rows.append({'level':level,'track':'player','statistics':stats,
                          'ref':{'path':str(path),'sha256':file_hash(path)}})
         self.cost['evaluation_seconds']+=self.clock()-before

@@ -35,8 +35,8 @@ def evaluation_plan(data=None):
 
 
 def batch_stats(metrics, *, expected_games=20):
-    if type(expected_games) is not int or expected_games not in (10, 20):
-        raise ValueError("Supported batches contain 10 baseline or 20 evaluation games")
+    if type(expected_games) is not int or expected_games not in (10, 20, 40):
+        raise ValueError("Supported batches contain 10, 20 or 40 games")
     pair_count = expected_games//2
     games = metrics.get("games", [])
     if len(games) != expected_games:

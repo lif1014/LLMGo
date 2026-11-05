@@ -37,3 +37,7 @@ DeepSeek 棋局可直接在網頁「DeepSeek · 最終測試」查看。選擇�
 前端回歸測試：`node tests/test_final_replay_ui.js`、`node tests/test_evaluation_counts_ui.js`。前者驗證暫時／正式統計、異常局排除、中文長回答分段、共用棋盤與原始事件引用；後者驗證20／40局歷史混合顯示。
 
 復盤右側的「DeepSeek · 對手輸出」直接讀 `opponent_move` 的 diagnostics，保留模型原始回答及解析／fallback 診斷。選擇對手落子時顯示該手回答；選擇隨後的學生落子時仍標示最近對手步的半步編號，避免誤認為新的回答。「讀取本手對手原始事件」開啟相同 JSONL 行的完整位元組紀錄。這些資料原本已由評測保存，此顯示更新不需要重新評測。
+
+2026-11-05 更新：Qwen 與 DeepSeek 共用「最後一個 boxed SAN」解析器 `last-box-san-v1`，接受盒子前後文字和不同的早期盒子。Prompt 保持原文；最後一盒仍需是合法標準 SAN，截斷、未閉合或非法最後答案仍觸發隨機後備。新 protocol 記錄解析器版本；已提交的凍結任務不會熱換解析器，不能把舊棋局當作新規則測試。
+
+「DeepSeek · 最終測試」每局新增學生／DeepSeek 隨機後備次數，復盤「本局診斷」也顯示雙方累計及原因。這是實際走出的隨機後備步數，不是用新解析器重判舊回答，也不包含 forced move。歷史索引可用 `scripts/report_random_moves.py <runs-root> [--run RUN_ID]` 產生；只有衍生 `final-test/random-moves.json` 會寫入，原始 summary、game_results、protocol、events 與勝負不變。缺索引時瀏覽器按字節游標增量讀取原始事件並快取計數，已完成棋譜不會在每次刷新重掃。

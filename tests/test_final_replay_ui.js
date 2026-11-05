@@ -1,13 +1,14 @@
 /* Run with: node tests/test_final_replay_ui.js */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-const {mapSummary,mapEvent,readEventPage,statistics}=require('../src/llmgo/server/static/rsi-final.js');
+const {mapSummary,mapEvent,readEventPage,statistics,emptyRandomMoves,tallyRandomMove}=require('../src/llmgo/server/static/rsi-final.js');
 const initial='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const after='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
 const records=[{type:'episode_started',fen:initial,student_color:'white'},
   {type:'model_request_started',request_id:'turn-1',messages:[{role:'user',content:'检查局面'}]},
   {type:'model_response',response:'棋'.repeat(50000)+' \\boxed{e4}',reasoning:'',finish_reason:'stop'},
-  {type:'student_move',fen:after,uci:'e2e4'},
+  {type:'fallback',reason:'missing_box'},
+  {type:'student_move',fen:after,uci:'e2e4',source:'random',fallback_reason:'missing_box'},
   {type:'opponent_move',ply:2,fen:'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',uci:'e7e5',
     diagnostics:{model:'deepseek-v4.1-flash',response_model:'deepseek-v4.1-flash',raw_output:'\\boxed{e5}',parsed_san:'e5',parsed_uci:'e7e5',fallback_reason:null,finish_reason:'stop',response_tokens:8}},
   {type:'student_move',ply:3,fen:'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',uci:'g1f3'},
@@ -23,6 +24,10 @@ class Element{
   add(item){this.append(item);}scrollIntoView(){}get options(){return this.children;}
 }
 (async()=>{
+  const random=emptyRandomMoves();for(const event of records)tallyRandomMove(random,event);
+  assert.equal(random.student_random_moves,1);assert.equal(random.opponent_random_moves,1);
+  assert.deepEqual(random.student_fallback_reasons,{missing_box:1});
+  assert.deepEqual(random.opponent_fallback_reasons,{missing_box:1});
   const summary={completed:true,aborted:false,result:1,student_color:'white',reason:'checkmate',plies:1};
   let cursor=0,rows=[];
   do{const p=await readEventPage(page(bytes),cursor,'white',summary);assert.ok(p.cursor>cursor);cursor=p.cursor;rows.push(...p.events);}while(cursor<bytes.length);
@@ -48,7 +53,7 @@ class Element{
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/llmgo/server/static/rsi.js'),'utf8'),context);
   let reads=0;
   const game={id:'deepseek-final-00',folder:'final/run/deepseek-final-00',rawFolder:'final-test/games/deepseek-final-00',
-    apiBase:'api/grpo/runs/run',model_seat:'white',task_label:'1473058',opponent_text:'DeepSeek non-thinking',summary:mapSummary(summary,'white'),
+    apiBase:'api/grpo/runs/run',model_seat:'white',task_label:'1473058',opponent_text:'DeepSeek non-thinking',summary:mapSummary(summary,'white'),randomMoves:random,
     readEvents:async offset=>{reads++;return readEventPage(page(bytes),offset,'white',summary);}};
   await context.llmgoReplay.openFinalGame([game],game.folder);
   assert.ok(reads>=2);assert.equal(ids.get('game-scope').value,'final');
@@ -57,6 +62,7 @@ class Element{
   assert.match(ids.get('student-prompt').textContent,/检查局面/);
   assert.match(ids.get('student-output').textContent,/boxed\{e4\}/);
   assert.match(ids.get('game-summary').textContent,/学生胜/);
+  assert.match(ids.get('game-summary').textContent,/学生 1 \/ DeepSeek 1/);
   assert.equal(ids.get('game').options[0].value,game.folder);
   const before=reads;context.llmgoReplay.setFinalGames([game]);
   await new Promise(resolve=>setImmediate(resolve));

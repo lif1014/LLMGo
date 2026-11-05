@@ -156,11 +156,12 @@ VALIDATION_VLLM_MAX_NUM_SEQS = 20
 
 
 def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False, games=None) -> dict:
+    from llmgo.training.chess_r1 import ANSWER_PARSER
     games = (10 if baseline else 20) if games is None else games
     if type(games) is not int or games not in (10, 20, 40) or (games == 10 and not baseline):
         raise ValueError("Unsupported validation batch size")
     result = {
-        "game": "chess", "framework": "chess-r1", "answer_protocol":"chess-r1-boxed-san-v2",
+        "game": "chess", "framework": "chess-r1", "answer_protocol":"chess-r1-boxed-san-v2", "answer_parser":ANSWER_PARSER,
         "enable_thinking": False,
         "games": games, "white": games//2, "black": games//2, "max_plies": MAX_GAME_PLIES, "fivefold_repetition": True, "max_tokens": 16384,
         "model_name": "Qwen3.5-4B", "temperature": 1.0, "top_p": 0.95, "top_k": 20,

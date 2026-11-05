@@ -11,7 +11,7 @@ from pathlib import Path
 
 import chess
 
-from llmgo.training.chess_r1 import extract_answer, messages
+from llmgo.training.chess_r1 import ANSWER_PARSER, extract_answer, messages
 from llmgo.rsi.game import ChessEpisode
 from .contracts import MAX_GAME_PLIES, atomic_json, file_hash, inside, model_identity, read_json, utc
 from .deepseek_client import extract_loose_answer, opponent_identity, request as deepseek_request
@@ -19,7 +19,7 @@ from .evaluator import candidate_messages, request_completion
 from .service import VllmServer, _pick_ports, _wait_servers, visible_gpu_ids
 
 OPPONENT = {'level': 'deepseek-flash', 'level_id': 'DeepSeek Flash',
-            'version': 'non-thinking-loose-boxed-san-v1', 'skill': None,
+            'version': 'non-thinking-last-box-san-v2', 'skill': None,
             'depth': None, 'movetime_sec': None, 'nodes': None,
             'threads': 1, 'hash_mb': 0, 'thinking': 'disabled'}
 PROTOCOL = {'model_name': 'Qwen3.5-4B', 'max_tokens': 16384,
@@ -130,7 +130,8 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
                'research_scope': 'phase1_rl_only',
                'skills_path': str(skills) if skills.is_file() else None}
     atomic_json(output/'protocol.json', {'role': 'held_out_final_test',
-        'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': games,
+        'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL,
+        'answer_parser':ANSWER_PARSER, 'opponent_answer_parser':ANSWER_PARSER, 'games': games,
         'white': games//2, 'black': games//2, 'seed_pairs': [417000+i for i in range(games//2)],
         'parallel_games': concurrency,
         'student_request_timeout_seconds': None,

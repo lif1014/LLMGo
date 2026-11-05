@@ -13,6 +13,7 @@ import chess
 
 MAX_RESPONSE_TOKENS = 16384
 ANSWER_PROTOCOL = 'chess-r1-boxed-san-v2'
+ANSWER_PARSER = 'last-box-san-v1'
 SYSTEM_PROMPT = r"""You are a helpful assistant who plays chess professionally.
 The assistant first thinks through the reasoning process internally and then provides the user with the best move.
 The reasoning process should be enclosed within <think> </think> tags. After thinking, put the final SAN move in \boxed{...}.
@@ -68,44 +69,21 @@ class Answer:
 
 
 def extract_answer(response, fen, *, reasoning='', finish_reason=None):
-    """Read only the final answer; never rescue it from a thought or earlier box.
-
-    The generation adapter passes raw generated assistant text (not its prompt).
-    Qwen may emit only </think> after an open thinking prefill; API-separated
-    reasoning is also supported. The reasoning argument is never searched.
-    """
+    """Extract the last boxed SAN from assistant content; allow surrounding prose."""
     del reasoning
     if finish_reason in ('length', 'max_tokens'):
         return Answer(error='truncated')
-    text = response.strip()
-    for suffix in ('<|im_end|>', '<|endoftext|>'):
-        text = text.removesuffix(suffix).strip()
-    closed_thinking = '</think>' in text
-    if closed_thinking:
-        text = text.rsplit('</think>', 1)[1].strip()
-    if '<think>' in text or '</think>' in text:
-        return Answer(error='incomplete_thinking')
-    if '<answer>' in text or '</answer>' in text:
-        return Answer(error='legacy_answer_tags')
-    body = text.strip()
-    if len(re.findall(r'\\boxed\s*\{', body)) != 1:
-        return Answer(error='missing_or_multiple_boxes')
-    start = re.match(r'\\boxed\s*\{', body)
-    if not start:
-        # The prompt requires a boxed SAN on the last line. A short conclusion
-        # after </think> must not hide that answer. Without a closing thinking
-        # boundary we cannot distinguish this prefix from unfinished thoughts.
-        last_line = body.rsplit('\n', 1)[-1].strip()
-        if not closed_thinking or not re.match(r'\\boxed\s*\{', last_line):
-            return Answer(error='box_must_be_entire_answer')
-        body = last_line
-        start = re.match(r'\\boxed\s*\{', body)
+    body = response.strip()
+    starts = list(re.finditer(r'\\boxed\s*\{', body))
+    if not starts:
+        return Answer(error='missing_box')
+    start = starts[-1]
     depth, end = 1, start.end()
     while end < len(body) and depth:
         depth += (body[end] == '{') - (body[end] == '}')
         end += 1
-    if depth or body[end:].strip():
-        return Answer(error='unclosed_box_or_extra_text')
+    if depth:
+        return Answer(error='unclosed_box')
     san = body[start.end():end - 1].strip()
     # Harmless math-font wrappers are allowed, but not arbitrary nested content.
     wrapped = re.fullmatch(r'\\(?:text|mathrm)\s*\{\s*([^{}]+?)\s*\}', san)

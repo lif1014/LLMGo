@@ -328,13 +328,14 @@ function resetGame(){
   stopPlayback();state.viewer=null;state.game="";
   for(const id of ["board","thinking","student-output","student-prompt","moves"])el(id).replaceChildren();
   clearFeed("student-events");el("student-seat").textContent="学生";el("game-summary").textContent="尚未选择对局";
+  el("opponent-panel").hidden=true;el("opponent-output").textContent="";el("opponent-diagnostics").textContent="";el("opponent-ply").textContent="";el("opponent-raw").disabled=true;el("opponent-raw").onclick=null;
   el("game-state").textContent="此范围尚无对局，可选择历史任务查看";el("game-loading").textContent="";
   playbackControls();
 }
 function openGame(game){
   resetGame();state.game=game.folder;
   const r={folder:game.folder,generation:state.generation,info:game,frames:[],index:0,follow:true,timer:null,
-    cursor:0,source:"compact",rawCursor:0,reading:false,loading:true,latest:blankTurn(),pending:null,summary:game.summary};
+    cursor:0,source:"compact",rawCursor:0,reading:false,loading:true,opponent:null,latest:blankTurn(),pending:null,summary:game.summary};
   state.viewer=r;el("game-loading").textContent="正在载入对局…";return r;
 }
 function excerpt(value){
@@ -353,9 +354,10 @@ function keepTrace(turn,row){
 }
 function ingestGame(r,row,source){
   const e=row.event,type=e.type,student=e.seat==null||e.seat===r.info.model_seat;
+  if(type==="opponent_response"){r.opponent={...e,raw:traceRow(r,row,source)};return;}
   if(type==="position"){
     if(!e.fen)return;
-    const frame={position:e,view:r.pending||r.latest,label:e.last_move?seatName(e.last_move.seat)+" "+e.last_move.uci:"开局"};
+    const frame={position:e,view:r.pending||r.latest,opponent:r.opponent,label:e.last_move?seatName(e.last_move.seat)+" "+e.last_move.uci:"开局"};
     // Freeze the student's turn at its resulting position; engine moves reuse it.
     r.latest=frame.view;r.pending=null;r.frames.push(frame);
     const button=document.createElement("button"),index=r.frames.length-1;
@@ -416,6 +418,18 @@ function renderGame(r){
   const signature=JSON.stringify(view.events.map(row=>[row.path,row.offset,row.length,row.event.status]));
   if(r.traceSignature!==signature){r.traceSignature=signature;clearFeed("student-events");
     for(const row of view.events){const e=row.event;detail("student-events",e.type+" "+(e.status||"")+" "+(e.tool||e.reason||e.finish_reason||""),e,row);}}
+  const opponent=r.follow?r.opponent:frame?.opponent;
+  el("opponent-panel").hidden=!r.info.readEvents;
+  if(r.info.readEvents){
+    const d=opponent?.diagnostics||{},output=d.raw_output;
+    el("opponent-ply").textContent=opponent?"最近对手步：第"+opponent.ply+"半步 · 执"+seatName(opponent.seat):"此局面之前尚无已记录的对手回答";
+    el("opponent-output").textContent=output==null?"尚无已记录的对手输出":output.length>20000?output.slice(0,6000)+"\n[…显示已截断，完整回答见原始事件…]\n"+output.slice(-14000):output;
+    el("opponent-diagnostics").textContent=opponent?"请求模型："+show(d.model)+"\n返回模型："+show(d.response_model)+
+      "\n解析 SAN / UCI："+show(d.parsed_san)+" / "+show(d.parsed_uci)+"\n实际落子："+show(opponent.played_uci)+
+      "\n随机后备原因："+(d.fallback_reason||"无")+"\n结束原因："+show(d.finish_reason)+" · 回答 tokens："+show(d.response_tokens):"";
+    el("opponent-raw").disabled=!opponent?.raw;
+    el("opponent-raw").onclick=opponent?.raw?()=>openRaw(opponent.raw):null;
+  }
   const s=r.summary;
   el("game-summary").textContent="对局："+r.info.id+"\n任务："+(r.info.task_label||gameJob(r.info))+" · "+(r.info.opponent_text||opponentText(gameJob(r.info)))+"\n学生执"+seatName(r.info.model_seat)+" · "+studentResult(r.info)+"\n"+(s?
     "结果："+show(s.result)+" / "+show(s.result_reason)+"\n模型选步："+show(s.model_decisions)+" · 强制步："+show(s.forced_moves)+

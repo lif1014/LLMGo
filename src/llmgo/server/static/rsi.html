@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=final-replay-1";
+      stylesheet.href = "static/rsi.css?v=opponent-output-1";
       document.head.append(stylesheet);
     })();
   </script>
@@ -74,7 +74,13 @@
           <label class="replay-progress">手数 <input id="replay-range" type="range" min="0" max="0" value="0" disabled aria-label="选择复盘手数"></label>
           <p id="replay-label" class="muted">尚无可回放的走子</p><div id="moves" class="moves" aria-label="走子列表"></div>
         </div>
-        <aside class="game-seat"><h3>本局诊断</h3><pre id="game-summary" class="stream short">尚未选择对局</pre>
+        <aside class="game-seat">
+          <details id="opponent-panel" open hidden><summary>DeepSeek · 对手输出</summary>
+            <p id="opponent-ply" class="muted"></p>
+            <pre id="opponent-output" class="stream short"></pre>
+            <pre id="opponent-diagnostics" class="stream short"></pre>
+            <button id="opponent-raw" disabled>读取本手对手原始事件</button>
+          </details><h3>本局诊断</h3><pre id="game-summary" class="stream short">尚未选择对局</pre>
           <details open><summary>本手工具、请求与后备诊断</summary><div id="student-events" class="feed"></div></details>
           <p class="muted">点击走子或拖动手数查看对应局面。复盘时保留当前手，点击“跟随最新对局”返回直播。长输出显示有界窗口，可按需读取原文。</p>
         </aside>
@@ -104,9 +110,9 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=final-replay-1", "connection");
+    loadDashboardScript("static/rsi.js?v=opponent-output-1", "connection");
   </script>
-<script src="static/rsi-final.js?v=final-replay-1"></script>
+<script src="static/rsi-final.js?v=opponent-output-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
 </body></html>

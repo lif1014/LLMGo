@@ -135,6 +135,7 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
         'answer_parser':ANSWER_PARSER, 'opponent_answer_parser':ANSWER_PARSER, 'games': games,
         'white': games//2, 'black': games//2, 'seed_pairs': [417000+i for i in range(games//2)],
         'parallel_games': concurrency,
+        'student_vllm_max_num_seqs':max(8,concurrency),
         'student_request_timeout_seconds': None,
         'opponent_request_timeout_seconds': None,
         'student_async_scheduling': False,

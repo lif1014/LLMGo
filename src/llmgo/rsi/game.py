@@ -8,7 +8,7 @@ from pathlib import Path
 import chess
 
 from llmgo.env.rules import chess_outcome
-from llmgo.rsi.contracts import atomic_json, utc
+from llmgo.rsi.contracts import MAX_GAME_PLIES, atomic_json, utc
 from llmgo.rsi.ladder import opponent
 from llmgo.runtime.uci_player import UciPlayer
 
@@ -73,7 +73,7 @@ class ChessEpisode:
         if outcome is not None:
             self.finish(0 if outcome.winner is None else 1 if outcome.winner == self.actor else -1,
                         outcome.termination.name.lower())
-        elif len(self.board.move_stack) >= 200:
+        elif len(self.board.move_stack) >= MAX_GAME_PLIES:
             self.finish(0,"protocol_cap_draw")
         return self.done
 

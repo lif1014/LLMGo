@@ -150,6 +150,7 @@ def worker_environment(site: dict) -> dict:
     return env
 
 
+MAX_GAME_PLIES = 300
 VALIDATION_GAMES = 40
 VALIDATION_VLLM_MAX_NUM_SEQS = 20
 
@@ -161,7 +162,7 @@ def protocol(opponent: dict, engine: str, seed: int = 0, *, baseline=False, game
     result = {
         "game": "chess", "framework": "chess-r1", "answer_protocol":"chess-r1-boxed-san-v2",
         "enable_thinking": False,
-        "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 16384,
+        "games": games, "white": games//2, "black": games//2, "max_plies": MAX_GAME_PLIES, "fivefold_repetition": True, "max_tokens": 16384,
         "model_name": "Qwen3.5-4B", "temperature": 1.0, "top_p": 0.95, "top_k": 20,
         "presence_penalty": 1.5, "repetition_penalty": 1.0, "seed": seed, "engine": engine,
         "opponent": opponent, "skill": opponent["skill"], "depth": opponent.get("depth"),
@@ -178,7 +179,7 @@ def validate_protocol(p: dict, *, baseline=False) -> None:
         raise ValueError("Unsupported validation batch size")
     required = {"game": "chess", "framework": "chess-r1",
                 "answer_protocol":"chess-r1-boxed-san-v2", "enable_thinking": False,
-                "games": games, "white": games//2, "black": games//2, "max_plies": 200, "max_tokens": 16384}
+                "games": games, "white": games//2, "black": games//2, "max_plies": MAX_GAME_PLIES, "max_tokens": 16384}
     for key, value in required.items():
         if p.get(key) != value or type(p.get(key)) is not type(value):
             raise ValueError(f"Official RSI protocol requires {key}={value!r}")

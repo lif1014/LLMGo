@@ -11,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from .contracts import VALIDATION_GAMES, atomic_json, canonical, utc
+from .contracts import MAX_GAME_PLIES, VALIDATION_GAMES, atomic_json, canonical, utc
 from llmgo.store.activity import project
 
 _SECRET = re.compile(r"(?i)(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)")
@@ -168,8 +168,8 @@ class MemoryStore:
             item = state.get(key) or {}
             summary[key] = {k:item.get(k) for k in ("id", "model_path", "model_sha256", "hypothesis")}
         summary["protected_source"] = {k:state["source"][k] for k in ("root", "sha256")}
-        summary["validation_policy"] = state.get("validation_policy", {"games_per_level":VALIDATION_GAMES,"vllm_max_num_seqs":20,"max_parallel_games":80})
-        summary["evaluation_objective"] = "Future L2/L3 validation: 40 balanced games each; vLLM max_num_seqs=20; historical batch sizes retained; L2.5 diagnostic; DeepSeek Flash non-thinking held out"
+        summary["validation_policy"] = state.get("validation_policy", {"games_per_level":VALIDATION_GAMES,"vllm_max_num_seqs":20,"max_parallel_games":80,"max_plies":MAX_GAME_PLIES,"fivefold_repetition":True})
+        summary["evaluation_objective"] = "Future L2/L3 validation: 40 balanced games each; vLLM max_num_seqs=20; fivefold repetition enabled; 300-ply cap; historical protocols retained; L2.5 diagnostic; DeepSeek Flash non-thinking held out"
         summary["active_job"] = state["jobs"].get(state.get("active_job"))
         summary["recent_attempts"] = state["attempts"][-3:]
         summary["attempt_count"] = len(state["attempts"])

@@ -49,3 +49,5 @@ Meta 使用該輪 `finish_research.py` 交接，Controller 校驗才提交不可
 ## 歷史審查過期的恢復
 
 只有已結束且收集完成的舊 Worker、NEEDS_INPUT 審查邊界、匹配原 request_id 的 Agent 完成交接、未改動的提案／源碼哈希、有效 checkpoint 和評測身份全部成立，operator 才能用 `scripts/rsi.py recover-training-review <campaign> --job <job-id>` 接回已完成的 replan。此操作保留 expired.json、舊任務和成績，另存恢復回執與研究源碼，讓下一輪正常提交新實驗；不偽造舊 Worker 的 decision／ack，也不重做已完成研究。操作需先取得 Controller lock，原 Controller 已退出時可在另一個自己的 0 GPU 容器接管，保留現有 Executor 與網頁。
+
+棋局規則更新：後續 L2/L3 驗證與 DeepSeek 獨立測試啟用五次重複局面自動和棋，上限為 300 個半步（150 回合）。逼和、常見子力不足、五十步自動申請判和的原設定保留；三次重複局面仍不啟用。達步數上限前先判定將死等正常終局，舊凍結任務及歷史結果保留原規則。

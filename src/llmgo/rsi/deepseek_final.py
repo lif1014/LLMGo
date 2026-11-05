@@ -13,7 +13,7 @@ import chess
 
 from llmgo.training.chess_r1 import extract_answer, messages
 from llmgo.rsi.game import ChessEpisode
-from .contracts import atomic_json, file_hash, inside, model_identity, read_json, utc
+from .contracts import MAX_GAME_PLIES, atomic_json, file_hash, inside, model_identity, read_json, utc
 from .deepseek_client import extract_loose_answer, opponent_identity, request as deepseek_request
 from .evaluator import candidate_messages, request_completion
 from .service import VllmServer, _pick_ports, _wait_servers, visible_gpu_ids
@@ -137,7 +137,7 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
         'opponent_request_timeout_seconds': None,
         'student_async_scheduling': False,
         'student_compilation_config': {'cudagraph_mode': 'PIECEWISE'},
-        'max_plies': 200, 'invalid_move_policy': 'random_legal',
+        'max_plies': MAX_GAME_PLIES, 'fivefold_repetition': True, 'invalid_move_policy': 'random_legal',
         'student_model_identity': identity, 'candidate': str(candidate),
         'candidate_source_hashes': source_hashes, 'started': utc()})
     port = _pick_ports(8000, 1)[0]

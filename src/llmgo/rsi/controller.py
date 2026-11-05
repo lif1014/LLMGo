@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from llmgo.remote.lifecycle import JobExecutor
 from .artifacts import source_snapshot, verify_source, write_manifest
-from .contracts import SCHEMA, VALIDATION_GAMES, atomic_json, digest, file_hash, identifier, inside, model_identity, protocol, read_json, utc
+from .contracts import SCHEMA, MAX_GAME_PLIES, VALIDATION_GAMES, atomic_json, digest, file_hash, identifier, inside, model_identity, protocol, read_json, utc
 from .evaluator import engine_identity
 from .ladder import evaluation_plan, panel_summary, opponent
 from .memory import CampaignLocked, MemoryStore
@@ -129,7 +129,8 @@ class Controller:
         if workspace: shutil.copy2(workspace/'context.json',folder/'previous-context.json')
         snapshot=source_snapshot(Path(repo or self.site['repo']),folder/'source')
         policy={'games_per_level':VALIDATION_GAMES,'white_per_level':20,'black_per_level':20,
-                'vllm_max_num_seqs':20,'max_parallel_games':80}
+                'vllm_max_num_seqs':20,'max_parallel_games':80,
+                'max_plies':MAX_GAME_PLIES,'fivefold_repetition':True}
         self.state.setdefault('upgrades',[]).append({'utc':utc(),'kind':'validation_policy',
             'previous_source':self.state['source'],'source':snapshot,'site':self.site,
             'workspace_preserved':str(workspace) if workspace else None})
@@ -856,7 +857,7 @@ class Controller:
                         "完整池位于 assets/datasets/lichess/20261103/boxed-nonthinking-v2，先检查verification.json。详见docs/lichess-data.md。"
                         "允许修改超参和reward等；无需random seed或算力预算比较。每轮交付选样程序/查询、ID清单、分类统计、基于败局的选样假设；沿用默认数据也记录选择。"
                         "先做有证据的假设与资源计划，再提出训练或 L2/L2.5/L3 Fairy-Stockfish 开发验证。"
-                        "L2/L3 后续基线和验证每档40局、白黑各20局，共80局共享队列；每个评测vLLM副本max_num_seqs=20。旧20局结果保留并标注样本数，不混为同规模实验。默认每5个optimizer step保存完整checkpoint并验证，验证后你决定continue、replan或finish；读取rsi-training-review技能。"
+                        "L2/L3 后续基线和验证每档40局、白黑各20局，共80局共享队列；每个评测vLLM副本max_num_seqs=20。五次重复局面自动和棋，棋步上限300半步（150回合）。旧规则与旧局数的结果保留，不混为相同协议。默认每5个optimizer step保存完整checkpoint并验证，验证后你决定continue、replan或finish；读取rsi-training-review技能。"
                         "保留全部中间checkpoint、原始得分与observed-best曲线；不把观测最优包络当作实际能力单调增长。DeepSeek non-thinking只留给用户做最终测试。每任务最多8 GPU，默认HIGH，同时最多一个HIGH任务。"
                         "按 docs/grpo-pipeline.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
                         "完成 proposal.json 与必要验证后调用 finish_research.py 交接；确有障碍时返回 needs_input。"

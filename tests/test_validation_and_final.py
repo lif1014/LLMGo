@@ -89,6 +89,7 @@ def test_final_test_balances_twenty_games_and_uses_actual_denominator(final_fixt
     assert protocol['seed_pairs']==[417000+i for i in range(games//2)]
     assert protocol['student_request_timeout_seconds'] is None
     assert protocol['opponent_request_timeout_seconds'] is None
+    assert protocol['max_plies']==300 and protocol['fivefold_repetition'] is True
     assert protocol['parallel_games']==parallel
     assert [row['index'] for row in result['rows']]==list(range(games))
     assert sum(row['student_color']=='white' for row in result['rows'])==games//2

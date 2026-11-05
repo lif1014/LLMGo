@@ -29,3 +29,5 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 網頁 `/rsi` 的「Chess-R1 · verl GRPO」讀取 `var/runs` 的當前實驗和原始日誌，棋局頁按每一步回放模型、引擎、forced move 和 fallback。Meta-Agent 應讀輸棋的 `games/<id>/events.jsonl` 全部步驟與 `summary.json`，再提出下一輪假設。Phase 1 的提示文字和 Phase 2 開放方案見 [Meta-Agent 研究範圍](phase1-rl-scope.md)。`training` 逐檔保留與搬移理由見 [訓練目錄審核](training-module-audit.md)。
 
 預設每 5 個 optimizer step 完成 L2/L3 各 40 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](training-reviews.md)。
+
+棋局規則更新：後續 L2/L3 驗證與 DeepSeek 獨立測試啟用五次重複局面自動和棋，上限為 300 個半步（150 回合）。逼和、常見子力不足、五十步自動申請判和的原設定保留；三次重複局面仍不啟用。達步數上限前先判定將死等正常終局，舊凍結任務及歷史結果保留原規則。

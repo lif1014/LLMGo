@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shlex
-import socket
 import subprocess
 import sys
 import time
@@ -116,6 +115,19 @@ def prepare(repo, config_path):
     config['opponent']['version'] = 'non-thinking-last-box-san-v2'
     source = source_snapshot(repo,batch/'source')
     config['source'] = source
+    # site.python can be the bare 'python3' of a fresh GPU image. Use the
+    # explicit interpreter from the successful final-test jobs, and exercise
+    # its real imports without the CPU test dependency overlay before submit.
+    env = {k:v for k,v in os.environ.items() if not k.startswith('LLMGO_BENCH_PAYLOAD_')}
+    env.update(PYTHONPATH=str(batch/'source/src'),PYTHONDONTWRITEBYTECODE='1')
+    probe = subprocess.run([config['worker_python'],'-B','-c',
+        'import json,sys,chess; import llmgo.rsi.deepseek_final; '
+        'print(json.dumps({"python":sys.executable,"chess":chess.__version__,"final_test_imported":True}))'],
+        env=env,cwd=batch,capture_output=True,text=True,timeout=60)
+    (batch/'worker-import-check.log').write_text(probe.stdout+probe.stderr)
+    if probe.returncode:
+        raise RuntimeError('Benchmark worker interpreter failed its import check; no GPU jobs submitted')
+    config['worker_import_check'] = json.loads(probe.stdout)
     candidate = repo/config['candidate']
     if (candidate/'harness.py').exists() or read_json(candidate/'skills.json') != []:
         raise ValueError('Benchmark uses the unchanged Phase1 prompt without harness or skills')
@@ -130,14 +142,14 @@ def prepare(repo, config_path):
         atomic_json(run/'plan.json',{'source':source,'model_path':str(model),'model_identity':identity,
                     'candidate':str(candidate),'entry':entry,'games':config['games'],
                     'parallel_games':config['parallel_games'],'opponent':config['opponent'],
-                    'runtime_root':str(repo/'var/runtime'/f'e6-1106-{index}'),
+                    'runtime_root':str(repo/'var/runtime'/('e6-'+hashlib.sha256(config['batch_id'].encode()).hexdigest()[:8]+f'-{index}')),
                     'teacher_rating':config['teacher_rating']})
     atomic_json(batch/'benchmark-plan.json',config)
     catalog(batch)
     return batch
 
 
-def request(config, entry, python):
+def request(config, entry):
     batch = Path(config['repo'])/'var/benchmarks'/config['batch_id']
     return {'kind':'BATCH','project':'rsi','cluster':'beijing',
             'resourcePool':config['resource_pool'],'priority':config['priority'],
@@ -145,7 +157,7 @@ def request(config, entry, python):
             'image':'share-dev/ngc-docker/ptdbench-verl-vllm017:dev-957fee7-cb-bf632efb',
             'resources':{'gpuCount':1,'cpu':8,'memory':'64Gi'},
             'description':config['batch_id']+'-'+entry['id']+'-40games-40parallel',
-            'entry':shlex.join([python,'-B',str(batch/'source/scripts/run_checkpoint_benchmark.py'),
+            'entry':shlex.join([config['worker_python'],'-B',str(batch/'source/scripts/run_checkpoint_benchmark.py'),
                                'worker','--batch',str(batch),'--entry',entry['id']]),
             'envVars':[{'name':'HF_HUB_OFFLINE','value':'1'},{'name':'TRANSFORMERS_OFFLINE','value':'1'},
                        {'name':'MAX_JOBS','value':'4'},
@@ -180,7 +192,7 @@ def submit(batch):
             continue
         if (folder/'intent.json').exists():
             raise RuntimeError('Uncertain submission requires reconciliation: '+entry['id'])
-        job = request(config,entry,site['python'])
+        job = request(config,entry)
         atomic_json(folder/'request.json',job)
         preview = cctl(site,['job','create','-f',str(folder/'request.json'),'--dry-run'])
         task = preview['request']['task']

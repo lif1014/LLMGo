@@ -16,4 +16,6 @@
 
 入口 `scripts/run_checkpoint_benchmark.py launch --config ...` 準備六份模型身份、建立共用快照、逐項提交並持久化 receipt；只在明確 launch 時提交。`watch --batch ...` 只接管已提交項目，每 600 秒查一次平台；期間每 30 秒讀共享盤結果、更新網頁目錄。提交結果不確定時保留 intent，停止自動重提。`collect --batch ...` 只從現有結果更新對照表。GPU worker 使用同一快照的 `worker --batch ... --entry ...`。
 
+GPU 主程序使用配置中的絕對 `worker_python`（與此前成功 DeepSeek 評測相同的 control venv），不用 site 中可能只是 `python3` 的通用值。提交前以該解譯器、實際凍結 source、無 CPU 測試依賴 overlay 的環境，驗證 `chess` 及完整最終測試模組可匯入，保存 `worker-import-check.log`。首批 `chess-elo-20261106T014000` 因裸 `python3` 缺 chess、在對局前失敗；保留所有舊任務與產物，新批次使用獨立 source、run 與 runtime 路徑。
+
 網頁保留六項進度、勝和負、得分率、Teacher=1800 的表現分及逐局復盤入口。現有 DeepSeek 表格與「學生 · 對局與復盤」照常可看原始回答及雙方隨機後備走子。沒有新增曲線。

@@ -52,10 +52,13 @@ def test_six_jobs_use_the_requested_pool_priority_and_concurrency():
     assert len(config['entries'])==6 and config['parallel_games']==config['games']==40
     config['repo']='/user/lyh4170/LLMGo!'
     for entry in config['entries']:
-        job=request(config,entry,'python')
+        job=request(config,entry)
         assert job['resourcePool']=='model-new' and job['priority']=='PREEMPTABLE'
         assert job['gpuModel']=='H800' and job['resources']['gpuCount']==1
         assert 'worker' in job['entry'] and '--entry '+entry['id'] in job['entry']
+        import shlex
+        assert shlex.split(job['entry'])[0]==config['worker_python']
+        assert '/llmgo-rsi-control-20261022/bin/python' in shlex.split(job['entry'])[0]
 
 
 def test_replay_index_keeps_all_forty_games_for_older_web_servers(tmp_path):

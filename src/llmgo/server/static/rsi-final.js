@@ -23,7 +23,9 @@
       finish_reason:event.finish_reason,failure_reason:event.failure_reason,response_tokens:event.response_tokens}];
     if(['student_move','opponent_move','forced_move'].includes(event.type)){
       const next=event.fen.split(' ')[1]==='w'?'white':'black';
-      return [{type:'position',fen:event.fen,side:next,last_move:{uci:event.uci,seat:next==='white'?'black':'white'}}];
+      const position={type:'position',fen:event.fen,side:next,last_move:{uci:event.uci,seat:next==='white'?'black':'white'}};
+      return event.type==='opponent_move'?[{type:'opponent_response',seat:position.last_move.seat,ply:event.ply,
+        played_uci:event.uci,diagnostics:event.diagnostics||{}},position]:[position];
     }
     if(event.type==='fallback')return [{...event,seat:side}];
     if(event.type==='episode_finished')return [{type:'game_finished',summary:mapSummary(summary||{...event,completed:true},side)}];

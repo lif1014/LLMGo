@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from llmgo.rsi.checkpoint_elo import POSITIVE_DP, performance
-from llmgo.rsi.checkpoint_benchmark import collect_entry, request
+from llmgo.rsi.checkpoint_benchmark import collect_entry, request, replay_index
 from llmgo.rsi.contracts import atomic_json
 
 
@@ -56,3 +56,14 @@ def test_six_jobs_use_the_requested_pool_priority_and_concurrency():
         assert job['resourcePool']=='model-new' and job['priority']=='PREEMPTABLE'
         assert job['gpuModel']=='H800' and job['resources']['gpuCount']==1
         assert 'worker' in job['entry'] and '--entry '+entry['id'] in job['entry']
+
+
+def test_replay_index_keeps_all_forty_games_for_older_web_servers(tmp_path):
+    for i in range(40):
+        path=tmp_path/f'final-test/games/deepseek-final-{i:02d}/events.jsonl'
+        path.parent.mkdir(parents=True);path.write_text('{}\n')
+    replay_index(tmp_path)
+    index=json.loads((tmp_path/'final-test/replay-index.json').read_text())
+    assert len(index['files'])==40
+    assert index['files'][0]['path'].endswith('deepseek-final-00/events.jsonl')
+    assert index['files'][-1]['path'].endswith('deepseek-final-39/events.jsonl')

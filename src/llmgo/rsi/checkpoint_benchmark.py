@@ -26,8 +26,22 @@ def optional(path):
     return read_json(path) if path.is_file() else None
 
 
+def replay_index(run):
+    files = []
+    for pattern in ('final-test/games/*/events.jsonl','final-test/games/*/summary.json'):
+        for path in sorted(run.glob(pattern)):
+            stat = path.stat()
+            files.append({'path':path.relative_to(run).as_posix(),'bytes':stat.st_size,'modified':stat.st_mtime})
+    if files:
+        index = run/'final-test/replay-index.json'
+        value = {'files':files}
+        if optional(index) != value:
+            atomic_json(index,value)
+
+
 def collect_entry(entry, runs, config):
     run = runs/entry['run_id']
+    replay_index(run)
     submission = optional(run/'submission.json') or {}
     progress = optional(run/'final-test/progress.json') or optional(run/'progress.json') or {}
     result = optional(run/'final-test/result.json')
@@ -238,6 +252,7 @@ def worker(batch, entry_id):
         atomic_json(run/'performance.json',performance(result['wins'],result['draws'],result['losses'],config['teacher_rating']))
         from .random_moves import write_report
         write_report(run/'final-test')
+        replay_index(run)
         atomic_json(run/'progress.json',{'stage':'completed','updated':utc()})
     except BaseException as error:
         atomic_json(run/'failure.json',{'type':type(error).__name__,'error':str(error),'updated':utc()})

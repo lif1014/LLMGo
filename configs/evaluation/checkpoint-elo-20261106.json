@@ -1,5 +1,6 @@
 {
-  "batch_id": "chess-elo-20261106T014000",
+  "batch_id": "chess-elo-20261106T020000-retry1",
+  "worker_python": "/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python",
   "catalog_run": "chess-checkpoint-benchmark",
   "teacher_rating": 1800,
   "games": 40,

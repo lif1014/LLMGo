@@ -64,7 +64,7 @@
   }
   function renderCurve(points){
     scaling.replaceChildren();if(!points.length)return;
-    const note=document.createElement('p');note.textContent='L2 / L3 开发验证 · 原始分数与观测最优（不表示能力单调提升）';scaling.append(note);
+    const note=document.createElement('p');note.textContent='L2 / L3 开发验证 · 按各档实际局数计算，保留历史批次 · 原始分数与观测最优（不表示能力单调提升）';scaling.append(note);
     const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
     svg.setAttribute('viewBox','0 0 680 220');svg.setAttribute('role','img');svg.setAttribute('aria-label','各checkpoint的L2、L3和平均得分，横轴为累计optimizer step');svg.style.width='100%';svg.style.maxWidth='850px';
     const max=Math.max(1,...points.map(p=>p.lineage_step));
@@ -79,12 +79,12 @@
     }
     scaling.append(svg);
     const table=document.createElement('table'),head=document.createElement('tr');
-    for(const name of ['累计 step','L2 胜/和/负','L2 胜率','L2 得分率','L3 胜/和/负','L3 胜率','L3 得分率','平均得分率','观测最优','阶段 GPU h','checkpoint / 对局']){const th=document.createElement('th');th.textContent=name;head.append(th);}table.append(head);
+    for(const name of ['累计 step','L2 局数','L2 胜/和/负','L2 胜率','L2 得分率','L3 局数','L3 胜/和/负','L3 胜率','L3 得分率','平均得分率','观测最优','阶段 GPU h','checkpoint / 对局']){const th=document.createElement('th');th.textContent=name;head.append(th);}table.append(head);
     for(const p of points){
       const row=document.createElement('tr');
       const levelValues=[2,3].flatMap(level=>{
         const s=p.levels.find(r=>r.level===level)?.statistics;
-        return s?[`${s.wins} / ${s.draws} / ${s.losses}`,s.games>0?(100*s.wins/s.games).toFixed(1)+'%':'—',(100*s.score).toFixed(1)+'%']:['—','—','—'];
+        return s?[s.games,`${s.wins} / ${s.draws} / ${s.losses}`,s.games>0?(100*s.wins/s.games).toFixed(1)+'%':'—',(100*s.score).toFixed(1)+'%']:['—','—','—','—'];
       });
       for(const v of [p.lineage_step,...levelValues,(100*p.score).toFixed(1)+'%',(100*p.best_observed).toFixed(1)+'%',Number(p.lineage_gpu_hours||0).toFixed(2)]){const td=document.createElement('td');td.textContent=String(v);row.append(td);}
       const td=document.createElement('td');const model=document.createElement('code');model.textContent=p.model_path;td.append(model);

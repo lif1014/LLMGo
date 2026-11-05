@@ -102,11 +102,11 @@ function matrix(rows){
   const groups=new Map();
   for(const e of rows){const key=e.candidate_id+":"+(e.track||"player");if(!groups.has(key))groups.set(key,{id:e.candidate_id,track:e.track||"player",levels:{}});groups.get(key).levels[e.level]=e;}
   const table=document.createElement("table"),head=document.createElement("tr");
-  for(const title of ["候选 / 验证","L2 胜率","L2 得分率","L2.5 得分率","L3 胜率","L3 得分率","L2/L3 均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
+  for(const title of ["候选 / 验证","L2 局数","L2 胜率","L2 得分率","L2.5 得分率","L3 局数","L3 胜率","L3 得分率","L2/L3 均分"]){const th=document.createElement("th");th.textContent=title;head.append(th);}table.append(head);
   for(const group of [...groups.values()].slice(-20)){
     const row=document.createElement("tr"),name=document.createElement("td");name.textContent=group.id+" / "+(group.track==="model"?"模型对照":"完整玩家");row.append(name);
-    for(const [level,metric] of [[2,"win"],[2,"score"],[2.5,"score"],[3,"win"],[3,"score"]]){const cell=document.createElement("td"),s=group.levels[level]?.statistics;
-      cell.textContent=percent(metric==="win"?(s?.games>0?s.wins/s.games:null):s?.score);
+    for(const [level,metric] of [[2,"games"],[2,"win"],[2,"score"],[2.5,"score"],[3,"games"],[3,"win"],[3,"score"]]){const cell=document.createElement("td"),s=group.levels[level]?.statistics;
+      cell.textContent=metric==="games"?(s?.games??"—"):percent(metric==="win"?(s?.games>0?s.wins/s.games:null):s?.score);
       if(s)cell.title="胜/和/负 "+[s.wins,s.draws,s.losses].map(show).join("/")+" · "+show(s.games)+"局";row.append(cell);}
     const score=document.createElement("td"),l2=group.levels[2]?.statistics?.score,l3=group.levels[3]?.statistics?.score;
     score.textContent=typeof l2==="number"&&typeof l3==="number"?((l2+l3)/2*100).toFixed(1)+"%":"待 L2/L3 齐备";row.append(score);table.append(row);

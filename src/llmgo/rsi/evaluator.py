@@ -84,7 +84,8 @@ def checked_game(path, payload, index):
     return row
 
 
-def request_completion(url, protocol, prompt, *, timeout=600):
+def request_completion(url, protocol, prompt, *, timeout=None):
+    """Wait for the full inference reply without a default socket deadline."""
     body = {"model":protocol["model_name"], "messages":prompt,
             "temperature":protocol["temperature"], "top_p":protocol["top_p"],
             "top_k":protocol["top_k"], "presence_penalty":protocol["presence_penalty"],

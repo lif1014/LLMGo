@@ -85,3 +85,5 @@ DeepSeek 的回答原本已保存在各局 `events.jsonl` 的 `opponent_move.dia
 答案解析現統一為 `last-box-san-v1`：Qwen 與 DeepSeek 都取回答中最後一個 `\boxed{...}`，接受前後解釋文字，只驗證最後一盒的合法標準 SAN。先前盒子可不同或非法；最後一盒非法、未閉合或回答被截斷時仍拒絕。原始 prompt、non-thinking、模型與取樣超參不因本次更新變更。這也適用於使用同一函式的 RL reward；新的驗證／最終測試 protocol 記錄 `answer_parser`。舊凍結任務繼續其原解析器，歷史棋局與分數不改寫。
 
 DeepSeek 逐局表格和復盤診斷新增學生／DeepSeek 各自的「隨機後備」次數與原因。統計來自已執行的 `student_move.source=random` 和 `opponent_move.diagnostics.fallback_reason`，不把模型正常的隨機採樣或 forced move 算進去，也不重複計數 `fallback` 診斷事件。`python scripts/report_random_moves.py /user/lyh4170/LLMGo!/var/runs` 可為現有棋譜寫入衍生的 `final-test/random-moves.json`；原始事件不修改。網頁讀取這份索引，並可在缺少索引或有新增事件時增量統計，保持歷史記錄按當時實際執行計數。
+
+L2/L3 正式學生推論請求預設不設客戶端時間期限（`timeout=None`），等待完整回覆或實際連線錯誤；移除舊 600 秒限制。GPU 排程輪詢仍每 600 秒一次，兩者獨立。既有凍結任務保持原設定，後續需以含此修復的新受保護快照建立任務。

@@ -22,7 +22,7 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 
 2026-11-04 使用者另行授權對第六輪 step 5／10 各做二十局獨立最終測試；兩個 1 GPU 任務用 NORMAL，保留主研究的 HIGH 名額。結果只作使用者最終測試，不寫入 Meta-Agent 的開發驗證分數或調參回饋。這是本次額外測試的排程選擇，不修改研究任務的 HIGH 預設。
 
-首批任務 1460436／1460438 在本地學生首步請求 600 秒逾時，各 0/20 局完成；DeepSeek 首步回覆正常。保留失敗輸出，不計為棋局敗局。最終測試使用同步排程及 PIECEWISE CUDA Graph。依使用者要求，已移除額外的 128-token／120 秒啟動生成檢查；服務就緒後直接開始正式對局。正式每手仍為最多 16384 tokens，正式學生與 DeepSeek 對手請求均不設客戶端時間期限（timeout=None）；這只作用於獨立最終測試，L2/L3 請求設定不變；學生權重、prompt、non-thinking 與對手設定不變。GET /models 就緒不保證生成成功，若正式對局發生推論故障，保留錯誤與未完成紀錄，不計為敗局。同步排程及 PIECEWISE 尚未證實解決首步卡住，根因仍待診斷。
+首批任務 1460436／1460438 在本地學生首步請求 600 秒逾時，各 0/20 局完成；DeepSeek 首步回覆正常。保留失敗輸出，不計為棋局敗局。最終測試使用同步排程及 PIECEWISE CUDA Graph。依使用者要求，已移除額外的 128-token／120 秒啟動生成檢查；服務就緒後直接開始正式對局。正式每手仍為最多 16384 tokens，正式學生與 DeepSeek 對手請求均不設客戶端時間期限（timeout=None）；L2/L3 正式學生推論請求現亦預設 `timeout=None`；學生權重、prompt、non-thinking 與對手設定不變。GET /models 就緒不保證生成成功，若正式對局發生推論故障，保留錯誤與未完成紀錄，不計為敗局。同步排程及 PIECEWISE 尚未證實解決首步卡住，根因仍待診斷。
 
 最終測試 CLI 預設請求 `deepseek-v4.1-flash` 並禁止 thinking；可用 `--opponent-base-url` 指定支援此名稱的 provider、`DEEPSEEK_KEY_FILE` 指定該 provider 的密鑰。不能假設官方 DeepSeek endpoint 接受自訂 provider 的同名別名，執行前先確認模型可用性。protocol 記錄請求模型／base URL，逐手事件另記 response_model；不把別名當作已核實的模型版本。舊參考 pipeline 的預設 `deepseek-flash` 保留，可透過 DEEPSEEK_MODEL、DEEPSEEK_BASE_URL 明確指定。
 
@@ -41,3 +41,6 @@ DeepSeek 棋局可直接在網頁「DeepSeek · 最終測試」查看。選擇�
 2026-11-05 更新：Qwen 與 DeepSeek 共用「最後一個 boxed SAN」解析器 `last-box-san-v1`，接受盒子前後文字和不同的早期盒子。Prompt 保持原文；最後一盒仍需是合法標準 SAN，截斷、未閉合或非法最後答案仍觸發隨機後備。新 protocol 記錄解析器版本；已提交的凍結任務不會熱換解析器，不能把舊棋局當作新規則測試。
 
 「DeepSeek · 最終測試」每局新增學生／DeepSeek 隨機後備次數，復盤「本局診斷」也顯示雙方累計及原因。這是實際走出的隨機後備步數，不是用新解析器重判舊回答，也不包含 forced move。歷史索引可用 `scripts/report_random_moves.py <runs-root> [--run RUN_ID]` 產生；只有衍生 `final-test/random-moves.json` 會寫入，原始 summary、game_results、protocol、events 與勝負不變。缺索引時瀏覽器按字節游標增量讀取原始事件並快取計數，已完成棋譜不會在每次刷新重掃。
+
+
+2026-11-05：1472149／j000010 完成 5 step 及模型匯出後，L2/L3 驗證因學生 HTTP 請求的舊 600 秒期限失敗，保留 75/80 局。已移除 `evaluator.request_completion` 的預設 socket 期限；後續包含新版 evaluator 的受保護快照才生效。GPU 排程輪詢仍為 600 秒。舊任務、凍結源碼與已完成棋局不重寫；live 更新不等於正在執行的 Controller 或其舊受保護快照已採用。

@@ -73,3 +73,44 @@ def test_doctor_cli_exit_status_does_not_report_failed_readiness_as_success(monk
     monkeypatch.setattr(cli, "doctor", lambda *a, **k: {"ok": True, "checks": []})
     assert cli.main(["doctor"]) == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_validation_completion_socket_has_no_default_deadline(monkeypatch):
+    import http.client
+    import json
+    import chess
+    from llmgo.rsi.contracts import protocol
+    from llmgo.rsi.evaluator import request_completion
+    from llmgo.rsi.ladder import opponent
+    from llmgo.training.chess_r1 import messages
+    bodies, socket_timeouts = [], []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            assert self.path == '/v1/chat/completions'
+            bodies.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'choices':[{'message':{'content':r'\boxed{e4}'},'finish_reason':'stop'}]}).encode())
+        def log_message(self, *args):pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connect = http.client.HTTPConnection.connect
+    def observe(connection):
+        connect(connection)
+        socket_timeouts.append(connection.sock.gettimeout())
+    monkeypatch.setattr(http.client.HTTPConnection, 'connect', observe)
+    p = protocol(opponent(2), 'fixture', games=40)
+    prompt = messages(chess.STARTING_FEN, enable_thinking=False)
+    try:
+        answer = request_completion(f'http://127.0.0.1:{server.server_port}/v1', p, prompt)
+        assert answer['choices'][0]['message']['content'] == r'\boxed{e4}'
+        assert socket_timeouts == [None]
+        assert bodies[0]['messages'] == prompt
+        assert bodies[0]['max_tokens'] == p['max_tokens']
+        assert bodies[0]['chat_template_kwargs']['enable_thinking'] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

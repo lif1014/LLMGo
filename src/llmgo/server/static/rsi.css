@@ -81,3 +81,8 @@ svg { width:100%; background:#fafcf9; } dialog { max-width:90vw; width:1000px; }
 #phase2-curve { display:block; max-height:360px; margin:16px 0; border-radius:8px; }
 #phase2-curve text { font:11px system-ui,sans-serif; fill:#65766c; }
 #phase2-candidates td:last-child { text-align:left; min-width:240px; }
+
+.final-dashboard { padding:24px; background:linear-gradient(135deg,#fff 65%,#eef5f2); }
+.final-dashboard #final-kpis { margin-top:18px; }.final-dashboard #final-protocol { overflow-wrap:anywhere; font-size:12px; white-space:pre-line; }
+.final-dashboard #final-progress { width:0; }.final-dashboard #final-games button { font-size:12px; }
+.final-dashboard .grpo-kpi strong { font-size:24px; }.final-dashboard select { max-width:480px; }

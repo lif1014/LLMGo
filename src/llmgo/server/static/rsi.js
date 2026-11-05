@@ -2,7 +2,7 @@
 const el=id=>document.getElementById(id), freshStream=()=>({cursor:null,before:null,follow:true,request:0,recent:[]});
 const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set(),cards:new Map(),streams:{research:freshStream(),executor:freshStream()},
   evaluations:[],totalHours:0,evaluationRefresh:0,maintenanceRefresh:0,job:"",autoJob:true,game:"",autoGame:true,viewer:null,raw:null,
-  jobs:[],manifests:new Map(),fileData:null,fileError:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
+  finalGames:[],jobs:[],manifests:new Map(),fileData:null,fileError:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
 const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
   EVALUATING:"固定评测",COMPLETE:"研究已交付",NEEDS_INPUT:"等待缺失项处理"};
@@ -343,7 +343,7 @@ function excerpt(value){
 }
 function traceRow(r,row,source){
   const ref=row.event.raw_ref;
-  return {...row,apiBase:r.info.apiBase,path:r.folder+"/"+(ref?"events.jsonl":source),offset:ref?.offset??row.offset,length:ref?.length??row.length};
+  return {...row,apiBase:r.info.apiBase,path:(r.info.rawFolder||r.folder)+"/"+(ref?"events.jsonl":source),offset:ref?.offset??row.offset,length:ref?.length??row.length};
 }
 function keepTrace(turn,row){
   if(turn.events.some(old=>old.path===row.path&&old.offset===row.offset))return;
@@ -440,7 +440,7 @@ async function readGame(r){
     for(let i=0;i<8;i++){
       const cursor=r.cursor,view=r.source==="compact"?"compact":"full";
       const suffix="/game-events?folder="+encodeURIComponent(r.folder)+"&view="+view+"&cursor="+cursor+"&limit=200";
-      const data=await json(r.info.apiBase?r.info.apiBase+suffix:api(suffix));
+      const data=r.info.readEvents?await r.info.readEvents(cursor):await json(r.info.apiBase?r.info.apiBase+suffix:api(suffix));
       if(state.viewer!==r||r.generation!==state.generation)return;
       const source=data.source||"events.jsonl";
       for(const row of data.events)ingestGame(r,row,source);
@@ -466,17 +466,17 @@ async function readGame(r){
 }
 async function student(generation){
   const job=state.job,scope=el("game-scope").value||"campaign";
-  const games=await json(api("/games?limit=1000"+(scope==="job"&&job?"&job_id="+encodeURIComponent(job):"")));
+  const games=scope==="final"?state.finalGames:await json(api("/games?limit=1000"+(scope==="job"&&job?"&job_id="+encodeURIComponent(job):"")));
   if(generation!==state.generation||job!==state.job||scope!==(el("game-scope").value||"campaign"))return;
-  const latest=games.filter(g=>g.folder.startsWith("jobs/"+job+"/")).at(-1)||games.at(-1);
+  const latest=scope==="final"?(games.find(g=>!g.summary)||games.at(-1)):games.filter(g=>g.folder.startsWith("jobs/"+job+"/")).at(-1)||games.at(-1);
   state.games=games;
-  state.gamesScope=scope==="job"?job:"campaign";
+  state.gamesScope=scope==="final"?"final":scope==="job"?job:"campaign";
   renderEvaluationJobs();
   if(state.autoGame&&latest&&state.game!==latest.folder||!state.viewer&&latest)openGame(latest);
-  options("game",games,state.game,g=>(gameLevel(g)==null?difficulty(gameJob(g)):"L"+gameLevel(g))+" · "+seatName(g.model_seat)+" · "+studentResult(g)+" · "+g.id,g=>g.folder);
+  options("game",games,state.game,g=>(g.opponent_text||(gameLevel(g)==null?difficulty(gameJob(g)):"L"+gameLevel(g)))+" · "+seatName(g.model_seat)+" · "+studentResult(g)+" · "+g.id,g=>g.folder);
   const r=state.viewer;if(!r)return;const info=games.find(g=>g.folder===r.folder);
   if(info){r.info=info;r.summary=info.summary||r.summary;}
-  await loadJobManifest(gameJob(r.info));if(generation!==state.generation||state.viewer!==r)return;
+  if(!r.info.readEvents)await loadJobManifest(gameJob(r.info));if(generation!==state.generation||state.viewer!==r)return;
   await readGame(r);
 }
 const panelReads=new Map();let refreshSequence=0;
@@ -586,4 +586,17 @@ async function list(){
     if(!state.campaign&&rows.length){el("campaign").value=rows.at(-1).campaign_id;selectCampaign();}else if(!rows.length)el("connection").textContent="尚无campaign";
   }catch(e){if(e.name!=="AbortError")el("connection").textContent=e.message;}
 }
+globalThis.llmgoReplay={
+  isPaused:()=>state.paused,
+  setFinalGames(games){
+    state.finalGames=games;
+    if(el("game-scope").value==="final")student(state.generation).catch(e=>el("game-loading").textContent=e.message);
+  },
+  async openFinalGame(games,folder){
+    state.finalGames=games;state.autoJob=false;state.autoGame=false;el("game-scope").value="final";
+    const game=games.find(g=>g.folder===folder);if(!game)return;
+    openGame(game);await student(state.generation);
+    document.querySelector(".game-view")?.scrollIntoView({behavior:"smooth",block:"start"});
+  }
+};
 list();setInterval(refresh,3000);setInterval(()=>{if(!document.hidden&&!state.paused)list();},30000);

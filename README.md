@@ -85,3 +85,5 @@ DeepSeek 最終測試在 vLLM 服務就緒後直接開始正式對局，不額�
 Meta-Agent 的完整 Phase 2 prompt 在 [phase2-meta-prompt.md](docs/phase2-meta-prompt.md)，專用技能在 [.agents/skills/rsi-phase2/SKILL.md](.agents/skills/rsi-phase2/SKILL.md)。禁止訓練、保持指定 checkpoint／non-thinking 等研究限制只寫在 prompt，不增加訓練行為偵測或命令攔截。harness 可自行載入任意 skills、輔助程式與資源，並取得完整走棋歷史。
 
 網頁新增 Phase 2 候選區塊，分別呈現各版本 L2、L3 的勝／和／負與得分率，以及實際成績、觀測最佳曲線。最終 `final-candidate.json` 指向原 checkpoint 和完整凍結 harness／skills；DeepSeek 最終測試可用 `--final-candidate` 載入此組合。初始化、介面、停止與測試命令見 [Phase 2 操作](docs/phase2-prompt-research.md)。本分支只完成本機開發與測試，未部署遠端、未提交 GPU 任務。
+
+網頁新增「DeepSeek · 最終測試」獨立專欄，每15秒從遠端 `var/runs` 讀取進度、逐局紀錄與正式結果，顯示學生勝／和／負、勝率與得分率，各次重試分開。沒有完整 `final-test/result.json` 時標為暫時統計；中斷留下的 `playing` 僅是磁碟紀錄，頁面列出最後落盤時間，不自行查詢平台。點各局「復盤」會載入同一頁的「學生 · 對局與復盤」棋盤，也可在其範圍選擇「DeepSeek 最終測試」。保留完整走棋、學生提示／回答、fallback 與原始事件的位元組引用；更新不會把測試分數寫入 Meta-Agent 的開發驗證或 Memory。

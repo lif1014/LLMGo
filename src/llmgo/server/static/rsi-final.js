@@ -145,7 +145,14 @@
   const seat=side=>side==='white'?'白':'黑';
   const outcome=s=>!s?'进行中':s.result==='aborted'?'程序异常，不计胜负':s.result==='draw'?'和棋':s.student_win?'学生胜':'学生负';
   async function loadRun(run,version){
-    const files=await get(endpoint(run)+'/files');
+    let files=await get(endpoint(run)+'/files');
+    // Older running Web servers list only 30 games per artifact pattern.
+    // A disk-derived index exposes all 40 without restarting that service.
+    const replayPage=await get(endpoint(run)+'/artifact?'+new URLSearchParams({path:'final-test/replay-index.json',length:524288}),true);
+    if(replayPage){
+      if(!replayPage.eof)throw Error('棋局索引未完整返回');
+      files=Array.from(new Map([...files,...JSON.parse(replayPage.text).files].map(f=>[f.path,f])).values());
+    }
     const paths=['final-test/protocol.json','final-test/progress.json','final-test/result.json','submission.json','progress.json','failure.json'];
     const [protocol,progress,formal,submission,outerProgress,failure]=await Promise.all(paths.map(p=>object(run,files,p)));
     const derivedPage=await get(endpoint(run)+'/artifact?'+new URLSearchParams({path:'final-test/random-moves.json',length:524288}),true);

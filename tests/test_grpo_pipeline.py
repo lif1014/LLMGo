@@ -26,7 +26,9 @@ def test_nonthinking_prompt_and_reward_are_canonical():
     ground = {'board_fen':fen, 'id':'fixture', 'next_move_san':'e4'}
     row = score_answer(r'\boxed{e4}', ground, {'e2e4':.7}, lambda _:True)
     assert abs(row['score']-.9)<1e-9 and row['solution_correct'] == 1
-    bad = score_answer(r'\boxed{e4} extra', ground, {}, lambda _:True)
+    with_prose = score_answer(r'I choose \boxed{e4}.', ground, {'e2e4':.7}, lambda _:True)
+    assert with_prose['score'] == row['score']
+    bad = score_answer(r'\boxed{e4} then \boxed{e4 d4}', ground, {}, lambda _:True)
     assert bad['score'] == 0 and bad['format'] == 0
     assert extract_answer(r'\boxed{e4}', fen, finish_reason='length').error == 'truncated'
 

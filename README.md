@@ -89,3 +89,7 @@ Meta-Agent 的完整 Phase 2 prompt 在 [phase2-meta-prompt.md](docs/phase2-meta
 網頁新增「DeepSeek · 最終測試」獨立專欄，每15秒從遠端 `var/runs` 讀取進度、逐局紀錄與正式結果，顯示學生勝／和／負、勝率與得分率，各次重試分開。沒有完整 `final-test/result.json` 時標為暫時統計；中斷留下的 `playing` 僅是磁碟紀錄，頁面列出最後落盤時間，不自行查詢平台。點各局「復盤」會載入同一頁的「學生 · 對局與復盤」棋盤，也可在其範圍選擇「DeepSeek 最終測試」。保留完整走棋、學生提示／回答、fallback 與原始事件的位元組引用；更新不會把測試分數寫入 Meta-Agent 的開發驗證或 Memory。
 
 DeepSeek 的回答原本已保存在各局 `events.jsonl` 的 `opponent_move.diagnostics.raw_output`。復盤右側新增「DeepSeek · 對手輸出」，依棋盤所選半步顯示最近一手對手的原始回答、請求／返回模型、解析 SAN／UCI、實際落子、fallback 原因、finish reason 與 token 數；可讀取該筆原始事件。學生提示和回答維持獨立，不會混入對手文字。尚未記錄的回答不會從較晚棋步帶回較早局面。
+
+答案解析現統一為 `last-box-san-v1`：Qwen 與 DeepSeek 都取回答中最後一個 `\boxed{...}`，接受前後解釋文字，只驗證最後一盒的合法標準 SAN。先前盒子可不同或非法；最後一盒非法、未閉合或回答被截斷時仍拒絕。原始 prompt、non-thinking、模型與取樣超參不因本次更新變更。這也適用於使用同一函式的 RL reward；新的驗證／最終測試 protocol 記錄 `answer_parser`。舊凍結任務繼續其原解析器，歷史棋局與分數不改寫。
+
+DeepSeek 逐局表格和復盤診斷新增學生／DeepSeek 各自的「隨機後備」次數與原因。統計來自已執行的 `student_move.source=random` 和 `opponent_move.diagnostics.fallback_reason`，不把模型正常的隨機採樣或 forced move 算進去，也不重複計數 `fallback` 診斷事件。`python scripts/report_random_moves.py /user/lyh4170/LLMGo!/var/runs` 可為現有棋譜寫入衍生的 `final-test/random-moves.json`；原始事件不修改。網頁讀取這份索引，並可在缺少索引或有新增事件時增量統計，保持歷史記錄按當時實際執行計數。

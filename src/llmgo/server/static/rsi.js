@@ -433,7 +433,7 @@ function renderGame(r){
   const s=r.summary;
   el("game-summary").textContent="对局："+r.info.id+"\n任务："+(r.info.task_label||gameJob(r.info))+" · "+(r.info.opponent_text||opponentText(gameJob(r.info)))+"\n学生执"+seatName(r.info.model_seat)+" · "+studentResult(r.info)+"\n"+(s?
     "结果："+show(s.result)+" / "+show(s.result_reason)+"\n模型选步："+show(s.model_decisions)+" · 强制步："+show(s.forced_moves)+
-    "\n随机后备："+show(s.random_moves)+" · 请求："+show(s.request_count)+"\n生成："+show(s.completion_tokens)+" tokens"+"\n后备原因："+JSON.stringify(s.fallback_reasons||{}):"尚无最终结果；显示已记录的局面与请求");
+    "\n随机后备（本局累计）："+(r.info.randomMoves?"学生 "+r.info.randomMoves.student_random_moves+" / DeepSeek "+r.info.randomMoves.opponent_random_moves:show(s.random_moves))+" · 请求："+show(s.request_count)+"\n生成："+show(s.completion_tokens)+" tokens"+"\n学生后备原因："+JSON.stringify(s.fallback_reasons||{})+(r.info.randomMoves?"\nDeepSeek后备原因："+JSON.stringify(r.info.randomMoves.opponent_fallback_reasons):""):"尚无最终结果；显示已记录的局面与请求"+(r.info.randomMoves?"\n随机后备（已记录）：学生 "+r.info.randomMoves.student_random_moves+" / DeepSeek "+r.info.randomMoves.opponent_random_moves:""));
   playbackControls();
 }
 function showFrame(index){

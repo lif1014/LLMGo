@@ -69,7 +69,7 @@ def final_fixture(tmp_path, monkeypatch):
     return module,model,candidate,tmp_path/'run/final-test',servers
 
 
-@pytest.mark.parametrize('games,parallel',[(10,1),(20,4)])
+@pytest.mark.parametrize('games,parallel',[(10,1),(20,4),(40,40)])
 def test_final_test_balances_twenty_games_and_uses_actual_denominator(final_fixture,monkeypatch,games,parallel):
     module,model,candidate,output,servers=final_fixture
     lock=threading.Lock();seen=[]
@@ -91,6 +91,7 @@ def test_final_test_balances_twenty_games_and_uses_actual_denominator(final_fixt
     assert protocol['opponent_request_timeout_seconds'] is None
     assert protocol['max_plies']==300 and protocol['fivefold_repetition'] is True
     assert protocol['parallel_games']==parallel
+    assert protocol['student_vllm_max_num_seqs']==max(8,parallel)
     assert [row['index'] for row in result['rows']]==list(range(games))
     assert sum(row['student_color']=='white' for row in result['rows'])==games//2
     assert sum(row['student_color']=='black' for row in result['rows'])==games//2

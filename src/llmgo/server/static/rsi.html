@@ -26,6 +26,14 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
+  <section id="elo-panel" class="evaluation-panel final-dashboard" aria-label="Checkpoint Elo比较">
+    <div class="grpo-heading"><div><p class="grpo-eyebrow">CHECKPOINT ARENA</p><h2>Checkpoint · Elo 对战</h2>
+      <p class="grpo-subtitle">六个模型状态 · DeepSeek＝1800 · FIDE 表現分 · 保留训练分支</p></div></div>
+    <p id="elo-status" class="grpo-message" role="status">正在读取六项评测…</p>
+    <p id="elo-protocol" class="grpo-progress-note"></p>
+    <p class="muted">胜=1、和=0.5、负=0；得分率四舍五入到整数百分比后查 FIDE 8.1.1 表，加上 Teacher 1800。* 表示表格的 0%／100% 名义端点（−800／＋800）。这是实验内表現分，非官方 FIDE 等级分。整批完成才发布分数；累计步数沿权重继承链重建，不等于研究轮数。</p>
+    <div id="elo-table" class="matrix"></div>
+  </section>
   <section id="deepseek-panel" class="evaluation-panel final-dashboard" aria-label="DeepSeek最终测试">
     <div class="grpo-heading"><div><p class="grpo-eyebrow">HELD-OUT MATCHES</p><h2>DeepSeek · 最终测试</h2>
       <p class="grpo-subtitle">学生对 DeepSeek non-thinking · 独立测试，分开显示每次重试</p></div>
@@ -113,6 +121,7 @@
     loadDashboardScript("static/rsi.js?v=last-box-random-moves-1", "connection");
   </script>
 <script src="static/rsi-final.js?v=last-box-random-moves-1"></script>
+<script src="static/rsi-elo.js?v=checkpoint-elo-40parallel-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
 </body></html>

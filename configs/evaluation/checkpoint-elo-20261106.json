@@ -1,0 +1,25 @@
+{
+  "batch_id": "chess-elo-20261106T014000",
+  "catalog_run": "chess-checkpoint-benchmark",
+  "teacher_rating": 1800,
+  "games": 40,
+  "parallel_games": 40,
+  "resource_pool": "model-new",
+  "priority": "PREEMPTABLE",
+  "reference_run": "chess-grpo-v1-j000007-s00005-deepseek-final20-20261105T100000Z-model-new-lastbox",
+  "candidate": "var/campaigns/chess-grpo-v1/candidates/r000006/source",
+  "entries": [
+    {"id":"base", "label":"Qwen3.5-4B base", "local_step":0, "cumulative_steps":0, "parent":null,
+     "model":"assets/models/Qwen3.5-4B", "expected_sha256":"0c3129c0a669beca441f07bfa7bb9e11c7d9ee626419e40195a95de7461feee7"},
+    {"id":"j3-s5", "label":"j000003 · step-5", "local_step":5, "cumulative_steps":5, "parent":"base",
+     "model":"var/runs/chess-grpo-v1-j000003/scaling/models/step-00000005-servable-v1", "expected_sha256":"7178fbc7de1c2b9ef84f91981200a9a8cc17e4b35558881b24b6e7b473441e90"},
+    {"id":"j7-s5", "label":"j000007 · step-5", "local_step":5, "cumulative_steps":10, "parent":"j3-s5",
+     "model":"var/runs/chess-grpo-v1-j000007/scaling/models/step-00000005", "expected_sha256":"b172484b92c6b6e04d622d47b267f3b25161fa837971549965a9a431eb624178"},
+    {"id":"j7-s10", "label":"j000007 · step-10（分支）", "local_step":10, "cumulative_steps":15, "parent":"j7-s5",
+     "model":"var/runs/chess-grpo-v1-j000007/scaling/models/step-00000010", "expected_sha256":"f35c215217beb7048ba4a7c9dfb9ddeb5d126c7440b42e870d066a918aee3f8e"},
+    {"id":"j8-s5", "label":"j000008 · step-5", "local_step":5, "cumulative_steps":15, "parent":"j7-s5",
+     "model":"var/runs/chess-grpo-v1-j000008/scaling/models/step-00000005", "expected_sha256":"0b6c00ed85d443a0932c2a00690401a0416bb2d3680c4119b4ff6e8059a63cec"},
+    {"id":"j10-s5", "label":"j000010 · step-5", "local_step":5, "cumulative_steps":20, "parent":"j8-s5",
+     "model":"var/runs/chess-grpo-v1-j000010/scaling/models/step-00000005", "expected_sha256":"538b9b66bb6a26c8ed0589e5521f1474df114334a287fe8bb2a1b15f65ed16d1"}
+  ]
+}

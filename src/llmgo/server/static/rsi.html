@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=grpo-metrics-1";
+      stylesheet.href = "static/rsi.css?v=final-replay-1";
       document.head.append(stylesheet);
     })();
   </script>
@@ -26,6 +26,17 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
+  <section id="deepseek-panel" class="evaluation-panel final-dashboard" aria-label="DeepSeek最终测试">
+    <div class="grpo-heading"><div><p class="grpo-eyebrow">HELD-OUT MATCHES</p><h2>DeepSeek · 最终测试</h2>
+      <p class="grpo-subtitle">学生对 DeepSeek non-thinking · 独立测试，分开显示每次重试</p></div>
+      <div class="grpo-controls"><label>实验 <select id="final-run"></select></label>
+        <label><input id="final-latest" type="checkbox" checked> 跟随最新测试</label></div></div>
+    <p id="final-status" class="grpo-message" role="status">正在查找测试记录…</p>
+    <div class="grpo-progress-track"><div id="final-progress" class="grpo-progress-fill"></div></div>
+    <p id="final-detail" class="grpo-progress-note"></p><div id="final-kpis" class="grpo-kpis"></div>
+    <details><summary>模型与测试协议</summary><p id="final-protocol"></p></details>
+    <div id="final-games" class="matrix"></div>
+  </section>
   <section class="evaluation-panel" aria-label="评测难度与胜负统计">
     <h2>评测难度与胜负统计</h2>
     <label><input id="show-archived-jobs" type="checkbox"> 显示已归档任务</label><span id="archived-job-count" class="muted"></span>
@@ -43,7 +54,7 @@
   </section>
   <main>
     <section class="game-view" aria-label="学生对局与复盘"><div class="game-heading"><h2>学生 · 对局与复盘</h2>
-      <label>范围 <select id="game-scope"><option value="campaign">本研究历史（最近1000局）</option><option value="job">选中任务</option></select></label>
+      <label>范围 <select id="game-scope"><option value="campaign">本研究历史（最近1000局）</option><option value="job">选中任务</option><option value="final">DeepSeek 最终测试（上方所选实验）</option></select></label>
       <label>对局 <select id="game"><option value="">选择对局</option></select></label>
       <button id="follow-game">跟随最新对局</button><span id="game-loading" role="status"></span></div>
       <div class="game-layout">
@@ -93,8 +104,9 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=grpo-1", "connection");
+    loadDashboardScript("static/rsi.js?v=final-replay-1", "connection");
   </script>
+<script src="static/rsi-final.js?v=final-replay-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
 </body></html>

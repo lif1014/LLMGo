@@ -31,3 +31,7 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 預設每 5 個 optimizer step 完成 L2/L3 各 40 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](training-reviews.md)。
 
 棋局規則更新：後續 L2/L3 驗證與 DeepSeek 獨立測試啟用五次重複局面自動和棋，上限為 300 個半步（150 回合）。逼和、常見子力不足、五十步自動申請判和的原設定保留；三次重複局面仍不啟用。達步數上限前先判定將死等正常終局，舊凍結任務及歷史結果保留原規則。
+
+DeepSeek 棋局可直接在網頁「DeepSeek · 最終測試」查看。選擇實驗後，專欄顯示完成局數、勝和負、勝率、得分率、對手與規則、最後落盤時間；每次重試各自統計。未發布完整結果時只顯示已完成局的暫時統計，程式異常不計為棋局敗局。選某局「復盤」即可在「學生 · 對局與復盤」查看棋盤、逐手提示、回答與 fallback，支援進行中的棋局與已完成歷史。範圍選單的「DeepSeek 最終測試」對應上方選中的實驗。瀏覽器透過既有只讀 `/api/grpo/runs` 與 artifact API 分段讀原始 JSONL，保留 UTF-8 位元組游標，不需要重啟 Python 網頁程序，不會啟動 Meta／GPU 或查詢 cctl。
+
+前端回歸測試：`node tests/test_final_replay_ui.js`、`node tests/test_evaluation_counts_ui.js`。前者驗證暫時／正式統計、異常局排除、中文長回答分段、共用棋盤與原始事件引用；後者驗證20／40局歷史混合顯示。

@@ -58,7 +58,7 @@ def evaluation_key(payload):
     """Exclude scheduling and output paths; include every chess-affecting identity."""
     return digest({k:payload.get(k) for k in (
         "protocol", "seed_schedule", "comparison_id", "track", "skills_sha256",
-        "expected_model_sha256", "engine_identity") } | {
+        "expected_model_sha256", "engine_identity", "research_scope", "inference_max_model_len") } | {
         "candidate_source":payload.get("candidate_source", {}).get("sha256"),
         "reference_source":payload.get("reference_source", {}).get("sha256"),
         "source":payload.get("source", {}).get("sha256"),
@@ -106,16 +106,23 @@ def candidate_messages(payload, fen, board, default):
         if (source/'harness.py').exists() or payload.get('skills_path') and read_json(payload['skills_path']) != []:
             raise ValueError('Phase 1 evaluation requires the frozen Chess-R1 prompt and empty skills')
         return default
+    if payload.get('role')=='baseline' or payload.get('track')=='model':
+        return default
     if not (source/'harness.py').is_file():
         return default
     skills = read_json(payload['skills_path']) if payload.get('skills_path') else []
     request = {'fen':fen, 'legal_san':[board.san(move) for move in board.legal_moves],
-               'skills':skills, 'default_messages':default}
+               'skills':skills, 'default_messages':default,
+               'research_scope':payload.get('research_scope'), 'initial_fen':board.root().fen(),
+               'moves_uci':[move.uci() for move in board.move_stack]}
+    replay=board.root();request['moves_san']=[]
+    for move in board.move_stack:
+        request['moves_san'].append(replay.san(move));replay.push(move)
     env = {key:value for key,value in os.environ.items() if key not in
            {'OPENAI_API_KEY','DEEPSEEK_API_KEY','WANDB_API_KEY','CODEX_API_KEY'}}
     env['CUDA_VISIBLE_DEVICES'] = ''
     proc = subprocess.run([sys.executable,'-I',str(Path(__file__).with_name('prompt_bridge.py')),str(source)],
-                          input=json.dumps(request),text=True,capture_output=True,cwd=source,env=env,timeout=15)
+                          input=json.dumps(request),text=True,capture_output=True,cwd=source,env=env,timeout=None if payload.get('research_scope')=='phase2_prompt_only' else 15)
     if proc.returncode:
         raise RuntimeError('Candidate harness failed: '+proc.stderr[-2000:])
     return json.loads(proc.stdout)
@@ -279,6 +286,8 @@ def evaluate_many(payloads):
             'reference_source_identity':payload.get('reference_source',{}).get('sha256'),
             'source_identity':payload['source']['sha256'],'skills_sha256':payload['skills_sha256'],
             'model_identity':identity,'engine_identity':actual,'protocol':p,'host':platform.node(),'games':rows}
+        metrics['research_scope']=payload.get('research_scope','phase1_rl_only')
+        metrics['inference_max_model_len']=payload.get('inference_max_model_len')
         metrics['statistics']=batch_stats(metrics,expected_games=p['games'])
         metrics['primary_score']=metrics['statistics']['score']
         path=Path(payload['output'])/'metrics.json';atomic_json(path,metrics);paths.append(path)
@@ -373,6 +382,8 @@ async def parallel_panel(payloads,helpers,gpus):
         def create(index,attempt):
             options={'python':site.get('inference_python')}
             options['max_num_seqs']=VALIDATION_VLLM_MAX_NUM_SEQS
+            if first.get('inference_max_model_len') is not None:
+                options['max_model_len']=first['inference_max_model_len']
             return helpers.VllmServer(Path(first['model_path']),first['protocol'],
                 logs/f'gpu-{replica}'/f'vllm-{index:02d}-{attempt}.log',ports[replica],gpus[replica],**options)
         return create

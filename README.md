@@ -1,6 +1,6 @@
 # LLMGo! · Chess-R1 GRPO
 
-遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Phase 1 Meta-Agent 只研究 RL，固定 prompt、空 skills、無 harness，禁止 SFT；Phase 2 才開放 RL 和 harness 共同研究。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。詳見 [研究階段規則](docs/phase1-rl-scope.md) 和 [訓練目錄逐檔審核](docs/training-module-audit.md)。
+遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Phase 1 Meta-Agent 只研究 RL，固定 prompt、空 skills、無 harness，禁止 SFT；Phase 2 是獨立的固定權重研究，可選 base 或 Phase 1 checkpoint，自由修改 harness、追加提示和 skills；禁止訓練的規則只透過 Meta-Agent prompt 約定，違反判 0 分。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。詳見 [研究階段規則](docs/phase1-rl-scope.md) 和 [訓練目錄逐檔審核](docs/training-module-audit.md)。
 
 ## 目錄
 
@@ -58,7 +58,7 @@ bash scripts/start_rsi.sh --campaign chess-grpo-v1
 
 Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時提交 L2/L3。只有 L2 和 L3 兩檔齊備時才更新可比較的驗證分數。選定成果後，在獨立的 1 GPU job 執行 `scripts/run_final_test.py`，預設 10 局、白黑各 5 局，對手為 DeepSeek Flash non-thinking；所有原始走棋與回覆存於 `var/runs/<實驗ID>/final-test/`。`run_deepseek_loose.py` 是 DeepSeek 對 Fairy 的參考流程，不是 Qwen 對 DeepSeek 的最終測試。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`，只對 DeepSeek API 使用內部白名單代理。
 
-最終測試預設十局；`--games 20 --parallel-games 20` 可在單卡並行二十局、白黑各十局。使用同步排程和 PIECEWISE CUDA Graph，正式棋局前先完成獨立的學生生成自檢。任何基礎設施失敗保留原始記錄，不發布完整成績或算作棋局敗局。API provider 與模型名稱須先核實，詳見 [RSI 操作](docs/rsi-operations.md)。
+最終測試預設十局；`--games 20 --parallel-games 20` 可在單卡並行二十局、白黑各十局。使用同步排程和 PIECEWISE CUDA Graph，服務就緒後直接開始正式對局。任何基礎設施失敗保留原始記錄，不發布完整成績或算作棋局敗局。API provider 與模型名稱須先核實，詳見 [RSI 操作](docs/rsi-operations.md)。
 
 ## 研究起點
 
@@ -77,3 +77,11 @@ L2/L3 基線和驗證共用 80 局佇列，每檔 40 局、白黑各 20 局。�
 DeepSeek 最終測試在 vLLM 服務就緒後直接開始正式對局，不額外執行 128-token／120 秒啟動生成檢查；正式學生與對手請求均不設客戶端逾時。既有排隊任務沿用原凍結程式，須新提交才採用更改。
 
 棋局規則更新：後續 L2/L3 驗證與 DeepSeek 獨立測試啟用五次重複局面自動和棋，上限為 300 個半步（150 回合）。逼和、常見子力不足、五十步自動申請判和的原設定保留；三次重複局面仍不啟用。達步數上限前先判定將死等正常終局，舊凍結任務及歷史結果保留原規則。
+
+## Phase 2：固定權重，研究 harness 與 skills
+
+使用獨立的 `phase2_prompt_only` campaign。起點預設為 base Qwen3.5-4B，也可用 `init --checkpoint <Phase1-HF-checkpoint>` 指定 Phase 1 成果。每輪評測完成才喚醒 Agent，Agent 可繼續研究或交付目前／此前最佳候選。Phase 1 的 RL 流程仍為預設。
+
+Meta-Agent 的完整 Phase 2 prompt 在 [phase2-meta-prompt.md](docs/phase2-meta-prompt.md)，專用技能在 [.agents/skills/rsi-phase2/SKILL.md](.agents/skills/rsi-phase2/SKILL.md)。禁止訓練、保持指定 checkpoint／non-thinking 等研究限制只寫在 prompt，不增加訓練行為偵測或命令攔截。harness 可自行載入任意 skills、輔助程式與資源，並取得完整走棋歷史。
+
+網頁新增 Phase 2 候選區塊，分別呈現各版本 L2、L3 的勝／和／負與得分率，以及實際成績、觀測最佳曲線。最終 `final-candidate.json` 指向原 checkpoint 和完整凍結 harness／skills；DeepSeek 最終測試可用 `--final-candidate` 載入此組合。初始化、介面、停止與測試命令見 [Phase 2 操作](docs/phase2-prompt-research.md)。本分支只完成本機開發與測試，未部署遠端、未提交 GPU 任務。

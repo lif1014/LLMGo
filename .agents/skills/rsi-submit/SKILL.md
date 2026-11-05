@@ -1,7 +1,9 @@
 ---
 name: rsi-submit
-description: 登記 Chess-R1 GRPO 訓練和固定多難度評測的研究提案，交 Executor 執行。
+description: 在 Phase 1 登記 Chess-R1 GRPO 訓練和固定多難度評測提案，交 Executor 執行。
 ---
+
+Phase 2 固定權重的 harness／skills 研究請使用 rsi-phase2；以下是 Phase 1 的 RL 流程。
 
 讀 `docs/rsi-operations.md`、`docs/training-reviews.md` 和 `configs/grpo/default.json`。Phase 1 只用 RL 提升 Qwen3.5-4B，禁止 SFT。可改 RL 算法、reward、超參與資料；初始 checkpoint、Chess-R1 prompt、boxed SAN 協議與 non-thinking 固定。不可新增 harness.py，skills.json 必須為 []。Phase 2 才開放 harness。不能修改正式裁判、固定對手或歷史結果。
 

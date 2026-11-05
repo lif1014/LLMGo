@@ -5,7 +5,7 @@ const state={campaign:"",generation:0,busy:false,paused:false,requests:new Set()
   jobs:[],manifests:new Map(),fileData:null,fileError:null,games:[],gamesScope:null,archivedJobs:new Set(),archivesLoaded:false,activeJobId:null};
 const pieces={K:"♔",Q:"♕",R:"♖",B:"♗",N:"♘",P:"♙",k:"♚",q:"♛",r:"♜",b:"♝",n:"♞",p:"♟"};
 const labels={BASELINE:"固定多难度基线",WAITING:"等待计算任务",PLANNING:"强Agent自主研究",EXPERIMENT:"准备研究任务",
-  EVALUATING:"固定评测",NEEDS_INPUT:"等待缺失项处理"};
+  EVALUATING:"固定评测",COMPLETE:"研究已交付",NEEDS_INPUT:"等待缺失项处理"};
 const show=v=>v==null?"未提供":String(v);
 const date=v=>{if(v==null)return "未记录";const d=new Date(typeof v==="number"?v*1000:v);return Number.isNaN(d.getTime())?show(v):d.toLocaleString();};
 const apiRoot=new URL("api/rsi/campaigns",document.baseURI||"http://localhost/").pathname;
@@ -115,7 +115,7 @@ function matrix(rows){
 function renderStatus(s,x){
   const m=s.meta||{},j=s.active_job||{},r=x.report||{},h=x.heartbeat||{},recovery=s.controller_recovery;
   if(m.token_usage)usage(m.token_usage);
-  el("overview").textContent=(labels[s.phase]||s.phase)+" · 工作版本 "+(s.working?.id||s.incumbent?.id||"—")+" · 实测最佳 "+(s.best?.candidate_id||"—")+
+  el("overview").textContent=(s.research_scope==="phase2_prompt_only"?"Phase 2 · Harness / Skills · ":"Phase 1 · RL · ")+(labels[s.phase]||s.phase)+" · 工作版本 "+(s.working?.id||s.incumbent?.id||"—")+" · 实测最佳 "+(s.best?.candidate_id||"—")+
     (s.round===0?" · 初始基线（研究轮次0，不是难度0）":" · 第"+s.round+"轮研究")+(j.level!=null?" · 当前评测 L"+j.level+" / "+j.id:"");
   el("meta-status").textContent="最近记录状态："+show(m.status)+"\n线程："+show(m.thread_id)+"\n轮次："+show(m.turn_id)+"\n工作目录："+show(m.cwd)+
     "\n最近状态时间："+date(m.updated)+"\n记录的进程："+(m.process?m.process.host+" / PID "+m.process.pid:"当前无已记录子进程")+

@@ -161,7 +161,7 @@ class MemoryStore:
 
     def context(self):
         state = self.state()
-        summary = {k: state.get(k) for k in ("campaign_id", "phase", "round", "working", "recommended", "incumbent")}
+        summary = {k: state.get(k) for k in ("campaign_id", "research_scope", "model_origin", "inference_max_model_len", "phase", "round", "working", "recommended", "incumbent")}
         best = state.get("best")
         summary["best"] = {"candidate_id":best["candidate"]["id"], "score":best["score"], "panel":best["panel"]} if best else None
         for key in ("working", "incumbent"):

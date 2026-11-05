@@ -20,6 +20,7 @@ from .codex_sandbox import sandbox_mode, thread_sandbox, turn_sandbox
 from .generation_guard import RepetitiveGeneration, StreamRepetitionGuard
 from .meta_protocol import MetaFailure, ResearchHandshake, service_failure
 from .research_control import ResearchPaused, require_research
+from . import phase2
 
 
 class MetaAgentBackend(Protocol):
@@ -199,7 +200,7 @@ class CodexBackend:
             "每轮交付选样程序或查询、选中的ID清单、分类统计，以及基于学生败局的选样假设；沿用默认数据也用 scripts/report_training_data.py 记录选择。没有败局证据时如实说明是首轮基线假设。无需提交random seed或算力预算比较；允许自主训练、修改RL算法、超参数和reward。"
             "初始checkpoint固定为 assets/models/Qwen3.5-4B，不可换另一初始模型或覆盖原始权重；持续训练可从该模型派生的本研究checkpoint继续。"
             "Phase 1固定Chess-R1非思考prompt、enable_thinking=false和\\boxed{SAN}答案；完整提示见docs/phase1-rl-scope.md和src/llmgo/training/chess_r1.py。训练任务会将recipe、checkpoint、日志和导出模型写入LLMGo!/var/runs/<实验ID>/grpo。"
-            "Phase 1不可改Chess-R1提示或答案协议，不可新增harness.py，skills.json必须保持空数组；不要通过数据字段或训练配置间接更换提示。Phase 2才会开放RL与harness共同研究。"
+            "Phase 1不可改Chess-R1提示或答案协议，不可新增harness.py，skills.json必须保持空数组；不要通过数据字段或训练配置间接更换提示。Phase 2是固定权重、仅研究harness与skills的独立阶段。"
             "请检查每局完整events.jsonl，特别是输棋每一步、模型原文、fallback及终局原因，并据此写假设。"
             "离线教师可用于RL奖励/价值估计和局面分析，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
             "开发验证只允许Fairy-Stockfish L2、L2.5、L3；L2.5固定skill -3/depth5/0.125秒。"
@@ -222,6 +223,10 @@ class CodexBackend:
             "也兼容最后输出JSON对象：status、summary、proposal_path；ready指向实际提案，needs_input时proposal_path=null。"
             "参阅本目录docs/grpo-pipeline.md、docs/rsi-operations.md，以及 .agents/skills 中的提交和Executor说明。"
         ) + completion_prompt
+
+        state=self.memory.state()
+        if state.get("research_scope")==phase2.SCOPE:
+            instructions=phase2.meta_instructions(state)+completion_prompt
 
         command = [self.site["codex_bin"], "app-server"]
         try:

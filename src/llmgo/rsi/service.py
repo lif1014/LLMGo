@@ -56,13 +56,14 @@ def _pick_ports(preferred: int, count: int) -> list[int]:
     return chosen
 
 class VllmServer:
-    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None) -> None:
+    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None, max_model_len: int | None = None) -> None:
         self.model_path = model_path
         self.protocol = protocol
         self.log_path = log_path
         self.port = port
         self.gpu_id = gpu_id
         self.python = python
+        self.max_model_len = max_model_len
         if type(max_num_seqs) is not int or not 1<=max_num_seqs<=40:
             raise ValueError('vLLM max_num_seqs must be an integer from 1 to 40')
         self.max_num_seqs=max_num_seqs
@@ -79,7 +80,7 @@ class VllmServer:
 
     def start(self) -> None:
         max_tokens = int(self.protocol["max_tokens"])
-        max_len = max_tokens + 1024
+        max_len = self.max_model_len or max_tokens + 1024
         cmd = ([self.python, "-I", "-m", "vllm.entrypoints.cli.main"] if self.python else ["vllm"]) + [
             "serve",
             str(self.model_path),

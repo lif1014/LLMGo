@@ -251,7 +251,7 @@ def overview(name: str):
     active = state.get("active_job")
     latest = jobs.get(active) or next(reversed(jobs.values()), None)
     session = limited_json(root/"meta-session.json", 262144) or {}
-    result = {k: state.get(k) for k in ("campaign_id", "phase", "round", "created", "updated", "incumbent", "working", "recommended", "failure", "needs_input", "controller_recovery")}
+    result = {k: state.get(k) for k in ("campaign_id", "research_scope", "model_origin", "final_candidate", "phase", "round", "created", "updated", "incumbent", "working", "recommended", "failure", "needs_input", "controller_recovery")}
     for key in ("working", "incumbent"):
         item = state.get(key) or {}
         result[key] = {k:item.get(k) for k in ("id", "model_path", "model_sha256", "hypothesis")}

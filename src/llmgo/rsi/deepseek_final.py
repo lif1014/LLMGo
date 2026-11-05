@@ -106,7 +106,7 @@ def play_game(index, output, url, payload):
         episode.close()
 
 
-def run(model, candidate, output, *, inference_python=None, games=10, parallel_games=1):
+def run(model, candidate, output, *, inference_python=None, games=10, parallel_games=1, research_scope="phase1_rl_only", max_model_len=None, candidate_id=None):
     if type(games) is not int or games < 2 or games % 2:
         raise ValueError('Final test games must be a positive even number, at least 2')
     if type(parallel_games) is not int or not 1 <= parallel_games <= 40:
@@ -126,10 +126,11 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
     gpu_ids = visible_gpu_ids()
     if len(gpu_ids) != 1:
         raise RuntimeError('Held-out test requires exactly one allocated GPU')
-    payload = {'candidate_id': candidate.name, 'candidate_source': {'root': str(candidate)},
-               'research_scope': 'phase1_rl_only',
+    payload = {'candidate_id': candidate_id or candidate.name, 'candidate_source': {'root': str(candidate)},
+               'research_scope': research_scope,
                'skills_path': str(skills) if skills.is_file() else None}
     atomic_json(output/'protocol.json', {'role': 'held_out_final_test',
+        'research_scope':research_scope, 'max_model_len':max_model_len, 'candidate_id':payload['candidate_id'],
         'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL, 'games': games,
         'white': games//2, 'black': games//2, 'seed_pairs': [417000+i for i in range(games//2)],
         'parallel_games': concurrency,
@@ -143,7 +144,8 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
     port = _pick_ports(8000, 1)[0]
     service = VllmServer(model, PROTOCOL, output/'vllm.log', port, gpu_ids[0],
                          python=inference_python, max_num_seqs=max(8, concurrency), async_scheduling=False,
-                         compilation_config={'cudagraph_mode':'PIECEWISE'})
+                         compilation_config={'cudagraph_mode':'PIECEWISE'},
+                         **({'max_model_len':max_model_len} if max_model_len is not None else {}))
     rows = []
     try:
         service.start()
@@ -194,8 +196,11 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--model', required=True, type=Path)
-    parser.add_argument('--candidate', required=True, type=Path)
+    parser.add_argument('--model', type=Path)
+    parser.add_argument('--candidate', type=Path)
+    parser.add_argument('--final-candidate',type=Path,help='Phase 2 final-candidate.json delivery')
+    parser.add_argument('--scope',choices=['phase1_rl_only','phase2_prompt_only'],default='phase1_rl_only')
+    parser.add_argument('--max-model-len',type=int)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--inference-python')
     parser.add_argument('--games', type=int, default=10, help='Even total; half white and half black (default: 10)')
@@ -203,6 +208,14 @@ def main(argv=None):
     parser.add_argument('--opponent-model',default=os.environ.get('DEEPSEEK_MODEL','deepseek-v4.1-flash'))
     parser.add_argument('--opponent-base-url',default=os.environ.get('DEEPSEEK_BASE_URL','https://api.deepseek.com'))
     args = parser.parse_args(argv)
+    if args.final_candidate:
+        bundle=read_json(args.final_candidate)
+        args.model=Path(bundle['model_path']);args.candidate=Path(bundle['source']['root'])
+        args.scope=bundle['research_scope']
+        args.max_model_len=args.max_model_len or bundle.get('max_model_len')
+    if args.model is None or args.candidate is None:
+        parser.error('Pass --model and --candidate, or --final-candidate')
+    if args.scope=='phase2_prompt_only' and args.max_model_len is None:args.max_model_len=32768
     os.environ['DEEPSEEK_MODEL']=args.opponent_model
     os.environ['DEEPSEEK_BASE_URL']=args.opponent_base_url.rstrip('/')
     root = Path('/user/lyh4170')
@@ -212,6 +225,8 @@ def main(argv=None):
     if args.output.resolve().parent.parent != (repo/'var/runs').resolve():
         raise ValueError('Final test output must be LLMGo!/var/runs/<run-id>/final-test')
     result = run(args.model, args.candidate, args.output,
-                 inference_python=args.inference_python, games=args.games, parallel_games=args.parallel_games)
+                 inference_python=args.inference_python, games=args.games, parallel_games=args.parallel_games,
+                 research_scope=args.scope,max_model_len=args.max_model_len,
+                 candidate_id=bundle['candidate_id'] if args.final_candidate else None)
     print(json.dumps({k:v for k,v in result.items() if k != 'rows'}, ensure_ascii=False))
     return 0

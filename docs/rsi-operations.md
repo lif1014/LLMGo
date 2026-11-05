@@ -6,7 +6,7 @@ Executor 使用專案自有的 `/user/lyh4170/tools/bin/cctl`。無人值守的 
 
 遠端 0 GPU devspace 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web` 建新 campaign。`configs/rsi/site.beijing.json` 固定 `beijing / model-autosft，預設 HIGH（同時最多一個活動或提交不確定的 HIGH 任務）`，每項最多 8 GPU。Controller 把 Meta-Agent 每輪副本放在 `var/workspaces`；Worker 與 Executor 把任務結果放在 `var/runs/<campaign>-<job>`。每項 job 有源碼快照與配方身份。舊 campaign 的凍結源碼不會被 live 倉庫更新。
 
-現有網頁可直接讀共享結果，沿用它時省略 `--web` 即可；README 有完整啟動命令。預設 L2/L3 合併為一個 40 局共享佇列，每卡一個 vLLM，8 卡時每卡約 5 局；單副本容量和整體並發上限均為 40。所有副本先就緒，L2/L3 各 40 局完成並驗證後才呼叫 Agent。Controller 仍是普通 Python，未新增 Agent Runner 服務。
+現有網頁可直接讀共享結果，沿用它時省略 `--web` 即可；README 有完整啟動命令。預設 L2/L3 各40局，合併為80局共享佇列，每卡一個 vLLM、最多20個請求；8卡時每卡約10局，1卡最多同時20局。所有副本先就緒，L2/L3 各 40 局完成並驗證後才呼叫 Agent。Controller 仍是普通 Python，未新增 Agent Runner 服務。
 
 Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt、空 `skills.json`，禁止候選 `harness.py` 和 SFT。默認訓練提案：
 
@@ -31,3 +31,5 @@ Phase 1 Meta-Agent 只透過 RL 提升模型，固定 Chess-R1 非思考 prompt�
 預設每 5 個 optimizer step 完成 L2/L3 各 40 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](training-reviews.md)。
 
 棋局規則更新：後續 L2/L3 驗證與 DeepSeek 獨立測試啟用五次重複局面自動和棋，上限為 300 個半步（150 回合）。逼和、常見子力不足、五十步自動申請判和的原設定保留；三次重複局面仍不啟用。達步數上限前先判定將死等正常終局，舊凍結任務及歷史結果保留原規則。
+
+Phase 2 使用獨立 `phase2_prompt_only` campaign，先以 `rsi.py init --scope phase2_prompt_only` 初始化，再用上述 launcher 啟動；`--checkpoint` 可指定 Phase 1 HF 模型。Agent 只研究 harness／skills，不訓練；規則只透過 prompt 告知，違反判 0 分。操作與交付見 [Phase 2](phase2-prompt-research.md)。本機開發不會自動部署到 devspace。

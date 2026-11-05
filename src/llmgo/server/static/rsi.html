@@ -26,6 +26,12 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
+  <section id="phase2-panel" class="evaluation-panel" hidden>
+    <h2>Phase 2 · Harness / Skills</h2>
+    <p id="phase2-origin"></p><p id="phase2-delivery"></p>
+    <svg id="phase2-curve" viewBox="0 0 640 240" role="img" aria-label="提示候选版本与L2/L3得分"></svg>
+    <div id="phase2-candidates" class="matrix"></div>
+  </section>
   <section class="evaluation-panel" aria-label="评测难度与胜负统计">
     <h2>评测难度与胜负统计</h2>
     <label><input id="show-archived-jobs" type="checkbox"> 显示已归档任务</label><span id="archived-job-count" class="muted"></span>
@@ -74,7 +80,7 @@
         <button id="coach-older">较早事件</button><button id="coach-live-button">返回实时</button></div>
       <p id="coach-window" class="muted"></p><details open><summary>最近可见思考/回答（有界窗口）</summary><pre id="coach-live"></pre></details>
       <div id="coach" class="feed"></div></section>
-    <section><h2>跨难度实测表现</h2><p>开发验证为 L2、L2.5、L3，初始基线與後續驗證均為 L2/L3 各20局，兩檔分別統計勝率與得分率。L2.5作中間診斷；L2與L3齊備才顯示可比較的錨點均分。選定成果後另以 DeepSeek Flash non-thinking 作保留最終測試。</p>
+    <section><h2>跨难度实测表现</h2><p>开发验证为 L2、L2.5、L3，初始基线與後續驗證均為 L2/L3 各40局，兩檔分別統計勝率與得分率。L2.5作中間診斷；L2與L3齊備才顯示可比較的錨點均分。選定成果後另以 DeepSeek Flash non-thinking 作保留最終測試。</p>
       <div id="matrix" class="matrix" aria-label="候选与难度成成绩矩阵"></div><p>最近200条单档评测；纵轴为得分率，颜色区分难度。原始历史完整保留。</p>
       <svg id="curve" viewBox="0 0 640 260" role="img" aria-label="候选表现曲线"></svg>
       <p id="cost"></p><div id="results" class="feed"></div></section>
@@ -97,4 +103,5 @@
   </script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
+<script src="static/rsi-phase2.js?v=phase2-1"></script>
 </body></html>

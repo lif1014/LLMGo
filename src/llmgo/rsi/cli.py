@@ -12,7 +12,8 @@ from pathlib import Path
 
 from .contracts import REPO, inside, load_site, read_json
 from .codex_auth import resolve_auth
-from .controller import Controller
+from .controller import Controller, PHASE1_SCOPE
+from . import phase2
 from .memory import MemoryStore
 from llmgo.remote.cctl_env import cctl_environment, cctl_failure_detail
 from llmgo.remote.pools import own_pool_rows, authorized_pool, pool_summary
@@ -87,6 +88,9 @@ def parser():
     d.add_argument("--codex-auth", action="store_true", help="Check provider credential configuration or CLI login status, without inference")
     init = sub.add_parser("init")
     init.add_argument("campaign")
+    init.add_argument("--scope", choices=(PHASE1_SCOPE,phase2.SCOPE),default=PHASE1_SCOPE)
+    init.add_argument("--checkpoint", help="Initial student HF checkpoint; default is the site base model")
+    init.add_argument("--max-model-len",type=int,default=32768,help="Phase 2 inference context length")
     for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "recover-meta", "recover-training-review", "index-activity", "upgrade"):
         cmd = sub.add_parser(name)
         cmd.add_argument("campaign")
@@ -124,12 +128,14 @@ def main(argv=None):
     from .contracts import identifier
     root = inside(site["user_root"], Path(site["campaign_root"]) / identifier(args.campaign))
     if args.command == "init":
-        controller = Controller.create(site, args.campaign)
+        controller = Controller.create(site, args.campaign, scope=args.scope,checkpoint=args.checkpoint,max_model_len=args.max_model_len)
         result = {"campaign": str(root), "state": controller.state}
     else:
         if not root.is_dir():
             raise FileNotFoundError(f"Unknown campaign: {root}")
         controller = Controller(root)
+        if controller.state.get("research_scope")==phase2.SCOPE:
+            site=phase2.campaign_site(site,args.campaign)
         # Preserve the canonical identity used by a running external Executor.
         # Only the retired deadline is ignored when comparing a legacy profile.
         campaign_site = {k:v for k,v in controller.site.items() if k != 'review_timeout_seconds'}

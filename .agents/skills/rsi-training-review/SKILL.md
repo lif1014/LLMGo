@@ -1,6 +1,6 @@
 ---
 name: rsi-training-review
-description: 在每個已驗證的原生 checkpoint 上決定繼續訓練、改方案或交付模型。
+description: 在 Phase 1 每個已驗證的原生 checkpoint 上決定繼續訓練、改方案或交付模型。
 ---
 
 先讀 context.json 的 training_review、curve 與 docs/training-reviews.md。請求包含 request_id、step、max_steps、可選 steps、checkpoint 收據和 L2/L3 metrics 引用。核對身份，讀每盤輸棋的 raw_events 所指 events.jsonl，逐手查看 FEN、雙方走法、模型原文、fallback 與敗因。訓練 reward 不代表棋力，最高觀測分包絡也不代表實際能力單調增加。

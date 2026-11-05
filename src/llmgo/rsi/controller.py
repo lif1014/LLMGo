@@ -12,6 +12,7 @@ from .ladder import evaluation_plan, panel_summary, opponent
 from .memory import CampaignLocked, MemoryStore
 from .meta_protocol import MetaFailure
 from .research_control import ResearchPaused, read_control, require_research
+from . import phase2
 
 RESEARCH_VERSION = "chess-grpo-validation-v1"
 PHASE1_SCOPE = "phase1_rl_only"
@@ -38,22 +39,28 @@ class Controller:
         self.lifecycle.transport = value
 
     @classmethod
-    def create(cls, site, campaign_id, *, repo=None):
+    def create(cls, site, campaign_id, *, repo=None, scope=PHASE1_SCOPE, checkpoint=None, max_model_len=32768):
         campaign_id = identifier(campaign_id)
+        if scope == PHASE1_SCOPE and checkpoint is not None:
+            raise ValueError("--checkpoint selects a Phase 2 origin; Phase 1 starts from the site base model")
         root = inside(site["user_root"], Path(site["campaign_root"])/campaign_id)
         if root.exists():
             raise FileExistsError("Campaign already exists; use run/status to resume")
         repo = Path(repo or site["repo"])
+        original_site = site
+        if scope == phase2.SCOPE:
+            site = phase2.campaign_site(site, campaign_id)
+            phase2.prepare_meta_home(original_site, site)
         root.mkdir(parents=True)
         source = source_snapshot(repo, root/"source")
         # Freeze the same Chess-R1 baseline for model-only comparisons.
         initial_source = source_snapshot(repo, root/"candidates/initial/source")
         cards = root/"candidates/initial/skills.json"
         atomic_json(cards, [])
-        initial = {"id": "initial", "model_path": site["base_model"], "model_sha256": None,
+        initial = {"id": "initial", "model_path": str(Path(checkpoint).resolve()) if checkpoint else site["base_model"], "model_sha256": None,
                    "source": initial_source, "skills_path": str(cards), "skills_sha256": file_hash(cards)}
         state = {"schema_version": SCHEMA, "research_version": RESEARCH_VERSION,
-                 "research_scope": PHASE1_SCOPE,
+                 "research_scope": scope,
                  "campaign_id": campaign_id, "created": utc(), "site": site, "source": source,
                  "phase": "BASELINE", "baseline_games_per_level": VALIDATION_GAMES, "baseline_levels": [2,3],
                  "round": 0, "active_job": None, "jobs": {},
@@ -61,10 +68,13 @@ class Controller:
                  "initial": initial, "incumbent": initial.copy(), "working": initial.copy(),
                  "best": None, "recommended": None, "candidate_step": 0, "evaluation_cursor": 0,
                  "evaluation_plan": evaluation_plan(), "pending_evaluations": [], "baseline": []}
+        if scope == phase2.SCOPE:
+            state.update(inference_max_model_len=max_model_len, model_origin={
+                "kind":"checkpoint" if checkpoint else "base", "model_path":initial["model_path"]})
         memory = MemoryStore(root)
         memory.save_state(state)
         memory.append("campaign_created", {"campaign_id": campaign_id, "source": source["sha256"],
-            "objective": "GRPO research; L2/L3 development validation, then one held-out DeepSeek Flash non-thinking final test"})
+            "research_scope":scope, "objective": "Harness/skills research" if scope==phase2.SCOPE else "GRPO research; L2/L3 development validation, then one held-out DeepSeek Flash non-thinking final test"})
         return cls(root)
 
     def save(self):
@@ -163,6 +173,9 @@ class Controller:
                    "output": str(run_output), "model_path": candidate["model_path"],
                    "expected_model_sha256": candidate.get("model_sha256"),
                    "skills_path": candidate["skills_path"], "skills_sha256": candidate["skills_sha256"]}
+        if self.state.get('research_scope') == phase2.SCOPE:
+            payload['inference_max_model_len'] = self.state.get('inference_max_model_len',32768)
+            payload['model_origin'] = self.state.get('model_origin')
         payload['lineage_steps'] = candidate.get('lineage_steps',0)
         payload['lineage_gpu_hours'] = candidate.get('lineage_gpu_hours',0.)
         payload['parent_curve'] = candidate.get('curve')
@@ -328,6 +341,9 @@ class Controller:
         # Preserve the parent cards so phase 1 can verify that they stay empty.
         if parent.get("skills_path"):
             shutil.copy2(parent["skills_path"], folder/"skills.json")
+        if self.state.get('research_scope') == phase2.SCOPE and self.state['round']==1 and not (folder/'harness.py').exists():
+            shutil.copy2(folder/'examples/phase2/harness.py',folder/'harness.py')
+            shutil.copytree(folder/'examples/phase2/skills',folder/'skills',dirs_exist_ok=True)
         atomic_json(folder/"context.json", self.memory.context())
         atomic_json(folder/"proposal.json", {"hypothesis": "Describe the next experiment", "evidence_refs": [],
             "jobs": [], "evaluation": evaluation_plan({"levels":[2,3]}), "recommend": False})
@@ -524,11 +540,14 @@ class Controller:
         record = {"candidate_id": candidate["id"], "parent_id": candidate["parent_id"],
                   "hypothesis": candidate["hypothesis"], "fingerprint": candidate["fingerprint"],
                   "panel": panel, "evaluations": rows, "new_best": improved, **(extra or {})}
+        candidate["evaluations"] = rows
+        if self.state.get('research_scope') == phase2.SCOPE:
+            record.update(model_path=candidate['model_path'],model_sha256=candidate.get('model_sha256'),
+                          source_sha256=candidate['source']['sha256'])
         if improved:
             self.state["best"] = {"candidate": candidate.copy(), "score": score, "panel": panel,
                                   "note": "Observed best; confirm with independent repeats before claiming improvement"}
             self.state["incumbent"] = candidate.copy()
-        candidate["evaluations"] = rows
         # Research may branch from failures. A job failure can leave missing model paths;
         # retain its code but keep the last runnable checkpoint for the next turn.
         if record.get("status") == "failed":
@@ -545,6 +564,11 @@ class Controller:
         if candidate.get('training_loop_action')=='finish':
             self.state.update(phase='COMPLETE',final_checkpoint={'model_path':candidate['model_path'],
                 'model_sha256':candidate['model_sha256'],'curve':candidate['curve'],'candidate_id':candidate['id']})
+        if self.state.get('research_scope') == phase2.SCOPE:
+            phase2.publish_curve(self.root,self.state)
+            if candidate['proposal'].get('decision')=='finish':
+                selected=(self.state.get('best') or {}).get('candidate',candidate) if candidate['proposal'].get('final_candidate')=='best' else candidate
+                phase2.deliver(self.root,self.state,selected,candidate['proposal'].get('recommendation',candidate['hypothesis']))
         if persist:
             self.save()
 
@@ -583,6 +607,7 @@ class Controller:
                 self.state["best"] = ({"candidate": self.state["initial"].copy(), "score": panel["player"]["score"], "panel": panel}
                                       if panel["player"]["complete"] else None)
                 self.state.update(phase="PLANNING", pending_evaluations=[], evaluation_cursor=0)
+                if self.state.get("research_scope")==phase2.SCOPE:phase2.publish_curve(self.root,self.state)
                 self.save()
         elif phase == "PLANNING":
             if proposal:
@@ -604,7 +629,7 @@ class Controller:
         elif phase == "NEEDS_INPUT":
             return {"status": "needs_input", "detail": self.state.get("needs_input")}
         elif phase == 'COMPLETE':
-            return {'status':'completed','checkpoint':self.state['final_checkpoint']}
+            return {'status':'completed','checkpoint':self.state['final_checkpoint'],'candidate':self.state.get('final_candidate')}
         else:
             raise ValueError("Unknown controller phase")
         return {"status": "advanced", "phase": self.state["phase"]}
@@ -862,6 +887,8 @@ class Controller:
                         "按 docs/grpo-pipeline.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
                         "完成 proposal.json 与必要验证后调用 finish_research.py 交接；确有障碍时返回 needs_input。"
                         f"操作员恢复版本：{self.state.get('meta_request_revision', 0)}。")
+                    if self.state.get('research_scope') == phase2.SCOPE:
+                        prompt=phase2.turn_prompt(self.root,workspace,self.state.get('meta_request_revision',0))
                     try:
                         require_research(self.root)
                         if backend is None:

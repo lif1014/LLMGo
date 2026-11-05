@@ -76,3 +76,8 @@ svg { width:100%; background:#fafcf9; } dialog { max-width:90vw; width:1000px; }
 .ppo-lc0-values strong { display:block; font-size:20px; }.ppo-lc0-values span { font-size:12px; color:#63736d; }
 #ppo-replay-label { font-size:12px; min-height:1.5em; }
 @media(max-width:650px) { .ppo-episode-layout { grid-template-columns:minmax(0,1fr); }#ppo-board { max-width:360px; }.ppo-games { grid-template-columns:minmax(0,1fr); } }
+
+#phase2-panel p { overflow-wrap:anywhere; }
+#phase2-curve { display:block; max-height:360px; margin:16px 0; border-radius:8px; }
+#phase2-curve text { font:11px system-ui,sans-serif; fill:#65766c; }
+#phase2-candidates td:last-child { text-align:left; min-width:240px; }

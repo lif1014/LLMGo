@@ -7,6 +7,36 @@ from llmgo.rsi.evaluator import runtime_helpers
 from llmgo.rsi.contracts import REPO
 
 
+def test_service_readiness_survives_long_startup_and_reports_process_exit(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from llmgo.rsi import service
+    clock = [0.]
+    monkeypatch.setattr(service.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(service.time,'sleep',lambda _:clock.__setitem__(0,clock[0]+2000))
+    server=SimpleNamespace(proc=SimpleNamespace(poll=lambda:None),log_path=tmp_path/'vllm.log',
+        ready_now=lambda:clock[0]>=4000)
+    assert service._wait_servers([server]) is None
+    assert clock[0]==4000
+    server.proc.poll=lambda:1
+    assert str(server.log_path) in service._wait_servers([server])
+
+
+def test_deepseek_client_default_socket_has_no_deadline(monkeypatch,tmp_path):
+    import io
+    import json
+    from llmgo.rsi import deepseek_client
+    key=tmp_path/'key';key.write_text('fixture-only')
+    monkeypatch.setenv('DEEPSEEK_KEY_FILE',str(key))
+    timeouts=[]
+    class Opener:
+        def open(self,request,*,timeout):
+            timeouts.append(timeout)
+            return io.BytesIO(json.dumps({'choices':[{'message':{'content':r'\boxed{e4}'}}]}).encode())
+    monkeypatch.setattr(deepseek_client.urllib.request,'build_opener',lambda *args:Opener())
+    deepseek_client.request([], 'fixture')
+    assert timeouts==[None]
+
+
 def test_vllm_readiness_bypasses_external_proxy(monkeypatch, tmp_path):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):

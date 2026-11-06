@@ -20,7 +20,7 @@ def opponent_identity():
             'thinking':'disabled'}
 
 
-def request(messages, request_id, timeout=90, max_tokens=16384):
+def request(messages, request_id, timeout=None, max_tokens=16384):
     key = Path(os.environ.get('DEEPSEEK_KEY_FILE', str(DEFAULT_KEY))).read_text().strip()
     identity = opponent_identity()
     body = {'model': identity['model'], 'thinking': {'type': 'disabled'},

@@ -18,7 +18,7 @@ class EvaluationReplica:
                 service = self.factory(game,attempt)
                 try:
                     await asyncio.to_thread(service.start)
-                    error = await asyncio.to_thread(self.wait_ready,[service],1800)
+                    error = await asyncio.to_thread(self.wait_ready,[service],None)
                     if error:raise RuntimeError(error)
                 except BaseException:
                     await asyncio.to_thread(service.stop)

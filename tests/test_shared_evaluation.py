@@ -34,6 +34,7 @@ def fixture(tmp_path,monkeypatch,gpu_count=8,fail=False,games=20):
             assert stats['active_gpu'][self.gpu]==0
             self.stops+=1
     def ready(servers,timeout):
+        assert timeout is None
         stats['ready'].update(s.gpu for s in servers)
         return None
     helpers=SimpleNamespace(VllmServer=Server,_wait_servers=ready,
@@ -171,3 +172,5 @@ def test_validation_upgrade_preserves_paused_workspace_and_legacy_identity(tmp_p
     assert c.state['workspace']==str(ws) and (ws/'research.py').read_text()=='# keep research'
     assert c.state['initial']==initial and c.site==canonical and c.state['active_job'] is None
     assert read_json(ws/'context.json')['state']['validation_policy']['vllm_max_num_seqs']==20
+    assert all(receipt['policy'][key] is None for key in (
+        'request_timeout_seconds','service_ready_timeout_seconds','harness_timeout_seconds','uci_timeout_seconds'))

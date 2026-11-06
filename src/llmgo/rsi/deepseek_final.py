@@ -137,6 +137,7 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
         'student_vllm_max_num_seqs':max(8,concurrency),
         'student_request_timeout_seconds': None,
         'opponent_request_timeout_seconds': None,
+        'service_ready_timeout_seconds': None,
         'student_async_scheduling': False,
         'student_compilation_config': {'cudagraph_mode': 'PIECEWISE'},
         'max_plies': MAX_GAME_PLIES, 'fivefold_repetition': True, 'invalid_move_policy': 'random_legal',
@@ -149,7 +150,7 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
     rows = []
     try:
         service.start()
-        error = _wait_servers([service], 900)
+        error = _wait_servers([service], None)
         if error:
             raise RuntimeError(error)
         atomic_json(output/'progress.json', {'stage': 'playing', 'completed': 0, 'total': games,

@@ -190,7 +190,9 @@
     const last=progress?.updated||formal?.completed||protocol.started;
     const stamp=last?new Date(last).toLocaleString():'未记录';
     const studentRandom=rows.reduce((n,r)=>n+r.random.student_random_moves,0),opponentRandom=rows.reduce((n,r)=>n+r.random.opponent_random_moves,0);
-    el('final-status').textContent=(stats.formal?'完整测试结果':failed?'测试异常，已完成局保留':'暂时统计 · 尚未发布完整结果')+' · '+run+(discoveryWarnings.length?' · '+discoveryWarnings.length+'项历史目录暂不可读':'');
+    const stages={prepared:'已提交，等待任务启动',waiting_model_download:'等待对手模型下载与校验',
+      loading_student:'加载学生模型',loading_opponent:'加载 '+opponent,playing:'对局进行中'};
+    el('final-status').textContent=(stats.formal?'完整测试结果':failed?'测试异常，已完成局保留':local?(stages[progress?.stage||outerProgress?.stage]||'等待对局结果'):'暂时统计 · 尚未发布完整结果')+' · '+run+(discoveryWarnings.length?' · '+discoveryWarnings.length+'项历史目录暂不可读':'');
     el('final-status').className='grpo-message'+(failed?' error':'');
     el('final-progress').style.width=Math.min(100,100*stats.completed/total)+'%';
     el('final-detail').textContent='任务 '+(submission?.id||submission?.task_id||'未记录')+' · '+stats.completed+'/'+total+'局 · 最后落盘 '+stamp+' · 随机后备累计：学生 '+studentRandom+' / '+opponent+' '+opponentRandom+' · 每15秒读磁盘，不查询排程器。';

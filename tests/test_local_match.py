@@ -3,11 +3,34 @@ import importlib.util
 import json
 from pathlib import Path
 import threading
+import tempfile
+import uuid
+
+import pytest
 
 import chess
 
 from llmgo.rsi import local_match as module
 from llmgo.rsi.contracts import atomic_json,model_identity,read_json
+
+
+def test_long_match_id_uses_a_real_short_unix_socket_path():
+    import socket
+    script=Path(__file__).resolve().parents[1]/'scripts/submit_local_chess_match.py'
+    spec=importlib.util.spec_from_file_location('submit_local_match',script)
+    submit=importlib.util.module_from_spec(spec);spec.loader.exec_module(submit)
+    run_id='chess-j10-s5-vs-qwen3-8b-chess-20261106-retry1'
+    with tempfile.TemporaryDirectory(prefix='lc-',dir='/tmp') as directory:
+        root=Path(directory)
+        old=root/'var/runtime'/run_id/'tmp'/str(uuid.uuid4())
+        old.parent.mkdir(parents=True)
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as listener:
+            with pytest.raises(OSError):listener.bind(str(old))
+        runtime=submit.match_runtime(root,run_id)
+        receipt=submit.check_ipc_path(runtime)
+        assert receipt['passed'] and receipt['path_bytes']<=107
+        assert list((runtime/'tmp').iterdir())==[]
+        assert runtime!=submit.match_runtime(root,run_id+'-other')
 
 
 def test_two_models_share_one_gpu_and_play_all_forty_games(tmp_path,monkeypatch):

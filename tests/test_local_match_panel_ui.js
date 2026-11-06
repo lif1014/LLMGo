@@ -30,6 +30,7 @@ vm.runInContext(fs.readFileSync('src/llmgo/server/static/rsi-final.js','utf8'),c
   assert.equal(ids.get('local-final-run').options.length,1);
   assert.equal(ids.get('local-final-run').value,'local');
   assert.match(ids.get('local-final-detail').textContent,/Qwen3-8B-Chess/);
+  assert.match(ids.get('local-final-status').textContent,/等待对局结果/);
   assert.ok(bankCalls.includes('deepseek-panel')&&bankCalls.includes('qwen-chess-panel'));
   console.log('Independent local and DeepSeek panels: filtered runs, isolated selections and replay banks passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

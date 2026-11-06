@@ -91,3 +91,5 @@ L2/L3 正式學生推論請求預設不設客戶端時間期限（`timeout=None`
 驗證與最終測試也不設 vLLM 服務就緒總期限、harness 執行期限或 UCI 通訊期限。引擎程序退出與真實連線錯誤仍記為執行失敗；L2/L3 對手的搜尋深度／思考時間、16384-token 回答上限、300 半步與判和規則保持原評測協議。主研究須在暫停且無活動任務時執行受保護驗證版本遷移，不能只更新 live 就沿用舊快照。
 
 獨立 checkpoint 比較使用 `configs/evaluation/checkpoint-elo-20261106.json`：base 與五份已訓練權重各一個 model-new／PREEMPTABLE／1 H800 任務，每模型 40 局、白黑各 20，每卡 40 局並行且 vLLM max_num_seqs=40。沿用現有 DeepSeek non-thinking、last-box-san-v1、300 半步、五次重複判和及無請求逾時的最終測試協議。網頁「Checkpoint · Elo 對戰」讀取遠端衍生目錄，整批完成才顯示表現分；Teacher 固定 1800，得分率取最近整數百分比（半入）後查 FIDE 8.1.1 表，全勝／全負以名義 ±800 記分，非官方人類 Elo。詳見 [checkpoint 比較](docs/checkpoint-benchmark.md)。
+
+Qwen3-8B-Chess 獨立對戰使用主研究累積 20 步的 j000010 step-5：hf-mirror 下載並固定對手版本，model-new／PREEMPTABLE／1 H800 同卡雙 vLLM，各自 non-thinking、16,384 tokens，40 局／40 並行，白黑各 20。網頁另列 Qwen3-8B-Chess 專欄，並在「學生 · 對局與復盤」保留雙方原始輸出與隨機後備統計。設定與啟動入口見 [本地對手評測](docs/local-chess-match.md)。

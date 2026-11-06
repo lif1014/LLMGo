@@ -56,7 +56,7 @@ def _pick_ports(preferred: int, count: int) -> list[int]:
     return chosen
 
 class VllmServer:
-    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None) -> None:
+    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None, gpu_memory_utilization: float | None = None) -> None:
         self.model_path = model_path
         self.protocol = protocol
         self.log_path = log_path
@@ -70,6 +70,9 @@ class VllmServer:
             raise ValueError('async_scheduling must be a boolean or None')
         self.async_scheduling=async_scheduling
         self.compilation_config=dict(compilation_config) if compilation_config is not None else None
+        if gpu_memory_utilization is not None and not 0 < gpu_memory_utilization < 1:
+            raise ValueError('GPU memory fraction must be between zero and one')
+        self.gpu_memory_utilization=gpu_memory_utilization
         self.proc: subprocess.Popen | None = None
         self.log = None
 
@@ -99,7 +102,7 @@ class VllmServer:
             "--max-model-len",
             str(max_len),
             "--gpu-memory-utilization",
-            os.environ.get("CHESS_PTB_GPU_MEMORY_UTILIZATION", "0.90"),
+            str(self.gpu_memory_utilization) if self.gpu_memory_utilization is not None else os.environ.get("CHESS_PTB_GPU_MEMORY_UTILIZATION", "0.90"),
         ]
         if self.async_scheduling is not None:
             cmd.append('--async-scheduling' if self.async_scheduling else '--no-async-scheduling')

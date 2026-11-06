@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=last-box-random-moves-1";
+      stylesheet.href = "static/rsi.css?v=local-chess-opponent-1";
       document.head.append(stylesheet);
     })();
   </script>
@@ -45,6 +45,17 @@
     <details><summary>模型与测试协议</summary><p id="final-protocol"></p></details>
     <div id="final-games" class="matrix"></div>
   </section>
+  <section id="qwen-chess-panel" class="evaluation-panel final-dashboard" aria-label="Qwen3-8B-Chess独立对战">
+    <div class="grpo-heading"><div><p class="grpo-eyebrow">LOCAL MODEL MATCH</p><h2>Qwen3-8B-Chess · 独立对战</h2>
+      <p class="grpo-subtitle">累积20步学生 · 40局 · 双方non-thinking／16384 tokens · 同卡双模型</p></div>
+      <div class="grpo-controls"><label>实验 <select id="local-final-run"></select></label>
+        <label><input id="local-final-latest" type="checkbox" checked> 跟随最新测试</label></div></div>
+    <p id="local-final-status" class="grpo-message" role="status">正在查找测试记录…</p>
+    <div class="grpo-progress-track"><div id="local-final-progress" class="grpo-progress-fill"></div></div>
+    <p id="local-final-detail" class="grpo-progress-note"></p><div id="local-final-kpis" class="grpo-kpis"></div>
+    <details><summary>模型与测试协议</summary><p id="local-final-protocol"></p></details>
+    <div id="local-final-games" class="matrix"></div>
+  </section>
   <section class="evaluation-panel" aria-label="评测难度与胜负统计">
     <h2>评测难度与胜负统计</h2>
     <label><input id="show-archived-jobs" type="checkbox"> 显示已归档任务</label><span id="archived-job-count" class="muted"></span>
@@ -62,7 +73,7 @@
   </section>
   <main>
     <section class="game-view" aria-label="学生对局与复盘"><div class="game-heading"><h2>学生 · 对局与复盘</h2>
-      <label>范围 <select id="game-scope"><option value="campaign">本研究历史（最近1000局）</option><option value="job">选中任务</option><option value="final">DeepSeek 最终测试（上方所选实验）</option></select></label>
+      <label>范围 <select id="game-scope"><option value="campaign">本研究历史（最近1000局）</option><option value="job">选中任务</option><option value="final">独立对战（上方所选实验）</option></select></label>
       <label>对局 <select id="game"><option value="">选择对局</option></select></label>
       <button id="follow-game">跟随最新对局</button><span id="game-loading" role="status"></span></div>
       <div class="game-layout">
@@ -83,7 +94,7 @@
           <p id="replay-label" class="muted">尚无可回放的走子</p><div id="moves" class="moves" aria-label="走子列表"></div>
         </div>
         <aside class="game-seat">
-          <details id="opponent-panel" open hidden><summary>DeepSeek · 对手输出</summary>
+          <details id="opponent-panel" open hidden><summary id="opponent-title">对手输出</summary>
             <p id="opponent-ply" class="muted"></p>
             <pre id="opponent-output" class="stream short"></pre>
             <pre id="opponent-diagnostics" class="stream short"></pre>
@@ -118,9 +129,9 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=last-box-random-moves-1", "connection");
+    loadDashboardScript("static/rsi.js?v=local-chess-opponent-1", "connection");
   </script>
-<script src="static/rsi-final.js?v=last-box-random-moves-1"></script>
+<script src="static/rsi-final.js?v=local-chess-opponent-1"></script>
 <script src="static/rsi-elo.js?v=checkpoint-elo-40parallel-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>

@@ -1,7 +1,7 @@
 /* Run with: node tests/test_final_replay_ui.js */
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-const {mapSummary,mapEvent,readEventPage,statistics,emptyRandomMoves,tallyRandomMove}=require('../src/llmgo/server/static/rsi-final.js');
+const {mapSummary,mapEvent,readEventPage,statistics,emptyRandomMoves,tallyRandomMove,opponentName}=require('../src/llmgo/server/static/rsi-final.js');
 const initial='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const after='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
 const records=[{type:'episode_started',fen:initial,student_color:'white'},
@@ -24,6 +24,8 @@ class Element{
   add(item){this.append(item);}scrollIntoView(){}get options(){return this.children;}
 }
 (async()=>{
+  assert.equal(opponentName({opponent:{kind:'local_model',model:'Qwen3-8B-Chess'}}),'Qwen3-8B-Chess');
+  assert.equal(opponentName({opponent:{model:'deepseek-v4.1-flash'}}),'DeepSeek');
   const random=emptyRandomMoves();for(const event of records)tallyRandomMove(random,event);
   assert.equal(random.student_random_moves,1);assert.equal(random.opponent_random_moves,1);
   assert.deepEqual(random.student_fallback_reasons,{missing_box:1});
@@ -85,5 +87,15 @@ class Element{
   assert.equal(JSON.parse(bytes.subarray(opponentTrace.offset,opponentTrace.offset+opponentTrace.length).toString()).type,'opponent_move');
   const trace=vm.runInContext('state.viewer.frames[1].view.events.find(e=>e.event.status==="finished")',context);
   assert.equal(trace.path,game.rawFolder+'/events.jsonl');assert.equal(trace.apiBase,game.apiBase);
+  const localGame={...game,id:'qwen-chess-00',folder:'final/local/qwen-chess-00',opponent_name:'Qwen3-8B-Chess',opponent_text:'Qwen3-8B-Chess non-thinking'};
+  context.llmgoReplay.setFinalGames([game],'deepseek-panel');
+  await context.llmgoReplay.openFinalGame([localGame],localGame.folder,'qwen-chess-panel');
+  assert.match(ids.get('game-summary').textContent,/学生 1 \/ Qwen3-8B-Chess 1/);
+  assert.equal(ids.get('opponent-title').textContent,'Qwen3-8B-Chess · 对手输出');
+  assert.ok(ids.get('game').options.some(option=>option.value===game.folder));
+  assert.ok(ids.get('game').options.some(option=>option.value===localGame.folder));
+  context.llmgoReplay.setFinalGames([game],'deepseek-panel');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ids.get('game').value,localGame.folder,'Refreshing DeepSeek must preserve the selected local game');
   console.log('Final replay: partial/formal scores, aborted games, UTF-8 byte cursors, shared board, prompt/output and raw references passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

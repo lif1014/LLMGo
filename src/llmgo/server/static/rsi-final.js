@@ -3,6 +3,7 @@
   'use strict';
   const encoder=new TextEncoder();
   const percent=v=>typeof v==='number'?(100*v).toFixed(1)+'%':'—';
+  function opponentName(protocol){return protocol?.opponent?.kind==='local_model'?(protocol.opponent.model||'本地模型'):'DeepSeek';}
   function mapSummary(summary,side){
     if(!summary)return null;
     const aborted=summary.aborted===true;
@@ -77,11 +78,13 @@
     return {...counts,completed:valid.length,winRate:valid.length?counts.wins/valid.length:null,
       score:valid.length?(counts.wins+.5*counts.draws)/valid.length:null,formal:false};
   }
-  const helpers={mapSummary,mapEvent,readRecordPage,readEventPage,statistics,emptyRandomMoves,tallyRandomMove};
+  const helpers={mapSummary,mapEvent,readRecordPage,readEventPage,statistics,emptyRandomMoves,tallyRandomMove,opponentName};
   if(typeof module!=='undefined'&&module.exports)module.exports=helpers;
   globalThis.llmgoFinal=helpers;
   if(typeof document==='undefined')return;
-  const el=id=>document.getElementById(id),section=el('deepseek-panel');if(!section)return;
+  let discoveryPromise=null,discoveryTime=0;
+  function mount(sectionId,prefix,local){
+  const el=id=>document.getElementById(id.startsWith('final-')?prefix+id.slice(5):id),section=el(sectionId);if(!section)return;
   let selected='',busy=false,lastDiscovery=0,experiments=[],generation=0,discoveryWarnings=[];
   const cache=new Map(),moveCounts=new Map();
   const endpoint=run=>'api/grpo/runs/'+encodeURIComponent(run);
@@ -125,16 +128,24 @@
     }));return result;
   }
   async function discover(){
+    if(!discoveryPromise||Date.now()-discoveryTime>60000){
+    discoveryTime=Date.now();
+    discoveryPromise=(async()=>{
     const runs=await get('api/grpo/runs');
     const found=await parallel(runs,async run=>{
       try{
         const files=await get(endpoint(run.id)+'/files');
-        return files.some(f=>f.path==='final-test/protocol.json')?{id:run.id,files}:null;
+        const protocol=await object(run.id,files,'final-test/protocol.json');
+        return protocol?{id:run.id,files,protocol}:null;
       }catch(error){return {id:run.id,error:error.message};}
     });
+    return found;
+    })();
+    }
+    const found=await discoveryPromise;
     discoveryWarnings=found.filter(row=>row?.error);
     const previousRuns=new Map(experiments.map(row=>[row.id,row]));
-    experiments=found.flatMap(row=>!row?[]:row.error?(previousRuns.has(row.id)?[previousRuns.get(row.id)]:[]):[row]);
+    experiments=found.flatMap(row=>!row?[]:row.error?(previousRuns.has(row.id)?[previousRuns.get(row.id)]:[]):Boolean(row.protocol.opponent?.kind==='local_model')===local?[row]:[]);
     lastDiscovery=Date.now();
     if(!experiments.length&&discoveryWarnings.length)throw Error('实验目录暂不可读，请稍后刷新');
     const previous=el('final-run').value;
@@ -155,6 +166,7 @@
     }
     const paths=['final-test/protocol.json','final-test/progress.json','final-test/result.json','submission.json','progress.json','failure.json'];
     const [protocol,progress,formal,submission,outerProgress,failure]=await Promise.all(paths.map(p=>object(run,files,p)));
+    const opponent=opponentName(protocol);
     const derivedPage=await get(endpoint(run)+'/artifact?'+new URLSearchParams({path:'final-test/random-moves.json',length:524288}),true);
     if(derivedPage&&!derivedPage.eof)throw Error('随机走子统计未完整返回');
     const derived=derivedPage?JSON.parse(derivedPage.text):null;
@@ -167,7 +179,7 @@
       const mapped=mapSummary(summary,side);
       if(mapped)mapped.student_win=summary.result===1;
       const game={id,folder:'final/'+run+'/'+id,rawFolder,apiBase:endpoint(run),model_seat:side,
-        task_label:submission?.id||submission?.task_id||run,opponent_text:'DeepSeek non-thinking',summary:mapped,randomMoves:random};
+        task_label:submission?.id||submission?.task_id||run,opponent_name:opponent,opponent_text:opponent+' non-thinking',summary:mapped,randomMoves:random};
       game.readEvents=cursor=>readEventPage((offset,length)=>get(game.apiBase+'/artifact?'+new URLSearchParams({path:file.path,offset,length})),cursor,side,summary);
       return {game,summary,index,random};
     });
@@ -181,26 +193,26 @@
     el('final-status').textContent=(stats.formal?'完整测试结果':failed?'测试异常，已完成局保留':'暂时统计 · 尚未发布完整结果')+' · '+run+(discoveryWarnings.length?' · '+discoveryWarnings.length+'项历史目录暂不可读':'');
     el('final-status').className='grpo-message'+(failed?' error':'');
     el('final-progress').style.width=Math.min(100,100*stats.completed/total)+'%';
-    el('final-detail').textContent='任务 '+(submission?.id||submission?.task_id||'未记录')+' · '+stats.completed+'/'+total+'局 · 最后落盘 '+stamp+' · 随机后备累计：学生 '+studentRandom+' / DeepSeek '+opponentRandom+' · 每15秒读磁盘，不查询排程器；旧中断任务可能仍保留 playing 记录。';
+    el('final-detail').textContent='任务 '+(submission?.id||submission?.task_id||'未记录')+' · '+stats.completed+'/'+total+'局 · 最后落盘 '+stamp+' · 随机后备累计：学生 '+studentRandom+' / '+opponent+' '+opponentRandom+' · 每15秒读磁盘，不查询排程器。';
     const kpis=[['有效完成',stats.completed+'/'+total],['学生胜',stats.wins],['和棋',stats.draws],['学生负',stats.losses],['胜率',percent(stats.winRate)],['得分率',percent(stats.score)]];
     el('final-kpis').replaceChildren(...kpis.map(([label,value])=>{const card=document.createElement('div');card.className='grpo-kpi';const title=document.createElement('span');title.className='grpo-kpi-label';title.textContent=label;const number=document.createElement('strong');number.textContent=value;card.append(title,number);return card;}));
     el('final-protocol').textContent='学生：'+(protocol.student_protocol?.model_name||'—')+' · 模型 SHA：'+(protocol.student_model_identity?.sha256||'—')+'\n请求对手：'+(protocol.opponent?.model||'—')+' · '+(protocol.opponent?.base_url||'')+' · non-thinking\n棋步上限：'+protocol.max_plies+'半步 · 五次重复：'+(protocol.fivefold_repetition===true?'自动判和':protocol.fivefold_repetition===false?'关闭':'历史记录未注明')+'\n答案提取：'+(protocol.answer_parser||'历史版本，见冻结源；随机步按当时实际执行统计')+'\n白/黑：'+protocol.white+'/'+protocol.black+' · 最多并行：'+protocol.parallel_games+'\n只有完整结果标为正式；未完成测试的胜率仅基于已完成局，不合并不同重试。';
     const table=document.createElement('table'),head=document.createElement('tr');
-    for(const title of ['对局','学生执色','结果','学生随机后备','DeepSeek随机后备','半步','终局原因','棋盘']){const th=document.createElement('th');th.textContent=title;head.append(th);}table.append(head);
+    for(const title of ['对局','学生执色','结果','学生随机后备',opponent+'随机后备','半步','终局原因','棋盘']){const th=document.createElement('th');th.textContent=title;head.append(th);}table.append(head);
     for(const row of rows){const tr=document.createElement('tr');
       for(const value of [row.index+1,seat(row.game.model_seat),outcome(row.game.summary),row.random.student_random_moves,row.random.opponent_random_moves,row.summary?.plies??'—',row.summary?.reason||'—']){const td=document.createElement('td');td.textContent=value;tr.append(td);}
       const td=document.createElement('td'),button=document.createElement('button');button.textContent=row.summary?'复盘':'查看对局';
-      button.onclick=()=>{if(globalThis.llmgoReplay)globalThis.llmgoReplay.openFinalGame(rows.map(r=>r.game),row.game.folder);else el('final-status').textContent='棋盘脚本尚未就绪，请稍后重试';};td.append(button);tr.append(td);table.append(tr);
+      button.onclick=()=>{if(globalThis.llmgoReplay)globalThis.llmgoReplay.openFinalGame(rows.map(r=>r.game),row.game.folder,sectionId);else el('final-status').textContent='棋盘脚本尚未就绪，请稍后重试';};td.append(button);tr.append(td);table.append(tr);
     }
     el('final-games').replaceChildren(table);
-    if(globalThis.llmgoReplay)globalThis.llmgoReplay.setFinalGames(rows.map(r=>r.game));
+    if(globalThis.llmgoReplay)globalThis.llmgoReplay.setFinalGames(rows.map(r=>r.game),sectionId);
   }
   async function refresh(){
     if(busy||document.hidden||globalThis.llmgoReplay?.isPaused())return;busy=true;
     try{
       if(!experiments.length||Date.now()-lastDiscovery>60000)await discover();
       const run=el('final-run').value;
-      if(!run){el('final-status').textContent='暂无已启动的 DeepSeek 最终测试。';return;}
+      if(!run){el('final-status').textContent=local?'暂无 Qwen3-8B-Chess 独立对战。':'暂无已启动的 DeepSeek 最终测试。';return;}
       if(run!==selected){selected=run;generation++;el('final-games').replaceChildren();}
       await loadRun(run,generation);
     }catch(error){el('final-status').textContent='测试记录暂不可读：'+error.message;el('final-status').className='grpo-message error';}
@@ -209,4 +221,7 @@
   el('final-run').onchange=()=>{el('final-latest').checked=false;generation++;refresh();};
   el('final-latest').onchange=()=>{lastDiscovery=0;refresh();};
   refresh();setInterval(refresh,15000);
+  }
+  mount('deepseek-panel','final',false);
+  mount('qwen-chess-panel','local-final',true);
 })();

@@ -140,7 +140,9 @@ class Controller:
         snapshot=source_snapshot(Path(repo or self.site['repo']),folder/'source')
         policy={'games_per_level':VALIDATION_GAMES,'white_per_level':20,'black_per_level':20,
                 'vllm_max_num_seqs':20,'max_parallel_games':80,
-                'max_plies':MAX_GAME_PLIES,'fivefold_repetition':True}
+                'max_plies':MAX_GAME_PLIES,'fivefold_repetition':True,
+                'request_timeout_seconds':None,'service_ready_timeout_seconds':None,
+                'harness_timeout_seconds':None,'uci_timeout_seconds':None}
         self.state.setdefault('upgrades',[]).append({'utc':utc(),'kind':'validation_policy',
             'previous_source':self.state['source'],'source':snapshot,'site':self.site,
             'workspace_preserved':str(workspace) if workspace else None})

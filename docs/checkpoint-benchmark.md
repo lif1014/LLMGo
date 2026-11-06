@@ -19,3 +19,5 @@
 GPU 主程序使用配置中的絕對 `worker_python`（與此前成功 DeepSeek 評測相同的 control venv），不用 site 中可能只是 `python3` 的通用值。提交前以該解譯器、實際凍結 source、無 CPU 測試依賴 overlay 的環境，驗證 `chess` 及完整最終測試模組可匯入，保存 `worker-import-check.log`。首批 `chess-elo-20261106T014000` 因裸 `python3` 缺 chess、在對局前失敗；保留所有舊任務與產物，新批次使用獨立 source、run 與 runtime 路徑。
 
 網頁保留六項進度、勝和負、得分率、Teacher=1800 的表現分及逐局復盤入口。現有 DeepSeek 表格與「學生 · 對局與復盤」照常可看原始回答及雙方隨機後備走子。沒有新增曲線。
+
+第 11 輪的額外對戰使用 `configs/evaluation/checkpoint-elo-r11-20261106.json`，兩項皆為 model-new／PREEMPTABLE／1 H800、40 局／40 並行，沿用同一對手與棋局協議。j000012 step-5／step-10 是從 j000008 step-5 分支續訓而來，累積 GRPO step 分別為 20／25，不是接在 j000010 後面。其目錄為 `var/benchmarks/chess-elo-r11-20261106T043000/`，衍生目錄為 `var/runs/chess-checkpoint-benchmark-r11/benchmark.json`，保留原六 checkpoint 的對照表。

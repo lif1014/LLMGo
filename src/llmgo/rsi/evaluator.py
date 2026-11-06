@@ -123,7 +123,7 @@ def candidate_messages(payload, fen, board, default):
            {'OPENAI_API_KEY','DEEPSEEK_API_KEY','WANDB_API_KEY','CODEX_API_KEY'}}
     env['CUDA_VISIBLE_DEVICES'] = ''
     proc = subprocess.run([sys.executable,'-I',str(Path(__file__).with_name('prompt_bridge.py')),str(source)],
-                          input=json.dumps(request),text=True,capture_output=True,cwd=source,env=env,timeout=None if payload.get('research_scope')=='phase2_prompt_only' else 15)
+                          input=json.dumps(request),text=True,capture_output=True,cwd=source,env=env,timeout=None)
     if proc.returncode:
         raise RuntimeError('Candidate harness failed: '+proc.stderr[-2000:])
     return json.loads(proc.stdout)

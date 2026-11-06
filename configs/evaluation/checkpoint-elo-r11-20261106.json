@@ -1,0 +1,26 @@
+{
+  "batch_id": "chess-elo-r11-20261106T043000",
+  "worker_python": "/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python",
+  "catalog_run": "chess-checkpoint-benchmark-r11",
+  "teacher_rating": 1800,
+  "games": 40,
+  "parallel_games": 40,
+  "resource_pool": "model-new",
+  "priority": "PREEMPTABLE",
+  "reference_run": "chess-grpo-v1-j000007-s00005-deepseek-final20-20261105T100000Z-model-new-lastbox",
+  "candidate": "var/campaigns/chess-grpo-v1/candidates/r000006/source",
+  "entries": [
+    {
+      "id": "j12-s5", "label": "第11輪 · step-5", "local_step": 5,
+      "cumulative_steps": 20, "parent": "j8-s5",
+      "model": "var/runs/chess-grpo-v1-j000012/scaling/models/step-00000005",
+      "expected_sha256": "8705ad09504ab1383ec111c1c83f9068125ec3b28fdc97d03ea7dd0f5774d0c0"
+    },
+    {
+      "id": "j12-s10", "label": "第11輪 · step-10", "local_step": 10,
+      "cumulative_steps": 25, "parent": "j12-s5",
+      "model": "var/runs/chess-grpo-v1-j000012/scaling/models/step-00000010",
+      "expected_sha256": "4ae4425af5e43a104ddb83ccdb86517871ddcabe2b1b070724a3ee2ae9c3a8b6"
+    }
+  ]
+}

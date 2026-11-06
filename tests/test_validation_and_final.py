@@ -65,7 +65,10 @@ def final_fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(module,'VllmServer',Server)
     monkeypatch.setattr(module,'visible_gpu_ids',lambda:['0'])
     monkeypatch.setattr(module,'_pick_ports',lambda *args:[8000])
-    monkeypatch.setattr(module,'_wait_servers',lambda *args:None)
+    def wait_ready(services, timeout):
+        assert timeout is None
+        return None
+    monkeypatch.setattr(module,'_wait_servers',wait_ready)
     return module,model,candidate,tmp_path/'run/final-test',servers
 
 
@@ -89,6 +92,7 @@ def test_final_test_balances_twenty_games_and_uses_actual_denominator(final_fixt
     assert protocol['seed_pairs']==[417000+i for i in range(games//2)]
     assert protocol['student_request_timeout_seconds'] is None
     assert protocol['opponent_request_timeout_seconds'] is None
+    assert protocol['service_ready_timeout_seconds'] is None
     assert protocol['max_plies']==300 and protocol['fivefold_repetition'] is True
     assert protocol['parallel_games']==parallel
     assert protocol['student_vllm_max_num_seqs']==max(8,parallel)
@@ -139,13 +143,15 @@ def test_final_replica_explicitly_disables_async_scheduler(tmp_path,monkeypatch)
     from llmgo.rsi.service import VllmServer
     from llmgo.rsi.deepseek_final import PROTOCOL
     calls=[]
-    monkeypatch.setattr('llmgo.rsi.service.subprocess.Popen',lambda argv,**kw:calls.append(argv))
+    monkeypatch.setattr('llmgo.rsi.service.subprocess.Popen',lambda argv,**kw:calls.append((argv,kw)))
     server=VllmServer(tmp_path/'model',PROTOCOL,tmp_path/'vllm.log',8000,'0',
                       python='fixture-python',max_num_seqs=20,async_scheduling=False,
                       compilation_config={'cudagraph_mode':'PIECEWISE'})
     server.start()
-    assert '--no-async-scheduling' in calls[0]
-    assert json.loads(calls[0][calls[0].index('--compilation-config')+1])=={'cudagraph_mode':'PIECEWISE'}
+    argv,options=calls[0]
+    assert '--no-async-scheduling' in argv
+    assert json.loads(argv[argv.index('--compilation-config')+1])=={'cudagraph_mode':'PIECEWISE'}
+    assert options['env']['VLLM_ENGINE_READY_TIMEOUT_S']=='-1'
     server.stop()
 
 

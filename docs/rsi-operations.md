@@ -46,3 +46,5 @@ DeepSeek 棋局可直接在網頁「DeepSeek · 最終測試」查看。選擇�
 
 
 2026-11-05：1472149／j000010 完成 5 step 及模型匯出後，L2/L3 驗證因學生 HTTP 請求的舊 600 秒期限失敗，保留 75/80 局。已移除 `evaluator.request_completion` 的預設 socket 期限；後續包含新版 evaluator 的受保護快照才生效。GPU 排程輪詢仍為 600 秒。舊任務、凍結源碼與已完成棋局不重寫；live 更新不等於正在執行的 Controller 或其舊受保護快照已採用。
+
+2026-11-06：主研究暫停後，驗證的學生／DeepSeek HTTP、vLLM 就緒總等待、harness 子程序與 UCI 通訊均改為無時間期限。使用 `Controller.upgrade_validation()` 建立新受保護快照並刷新既有研究副本的 context；保留原快照、歷史任務、模型與棋局，不解除 research hold，也不啟動 Meta。若 meta-session 殘留 process，先以原宿主任務的終態證明程序已消失，備份會話後才清除失效程序欄位；不能只憑舊 updated 時間判定死亡。

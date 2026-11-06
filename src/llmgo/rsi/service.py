@@ -24,7 +24,7 @@ def visible_gpu_ids() -> list[str]:
             return []
         return [item.strip() for item in pinned.split(",") if item.strip()]
     try:
-        completed = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=5)
+        completed = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=None)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return []
     if completed.returncode != 0:
@@ -110,6 +110,9 @@ class VllmServer:
         self.log = self.log_path.open("w", encoding="utf-8")
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = self.gpu_id
+        # vLLM 0.17 uses this value in ZeroMQ poll(milliseconds). A negative
+        # timeout blocks until EngineCore is ready, including slow cold starts.
+        env["VLLM_ENGINE_READY_TIMEOUT_S"] = "-1"
         env.pop("PYTHONPATH", None)
         env.pop("PYTHONHOME", None)
         self.proc = subprocess.Popen(
@@ -127,7 +130,7 @@ class VllmServer:
         url = f"{self.base_url}/models"
         name = str(self.protocol["model_name"])
         try:
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=2) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=None) as response:
                 body = response.read().decode("utf-8", "replace")
             return name in body
         except (urllib.error.URLError, TimeoutError, OSError):
@@ -152,10 +155,11 @@ class VllmServer:
             self.log.close()
             self.log = None
 
-def _wait_servers(servers: list[VllmServer], timeout: float) -> str | None:
-    deadline = time.time() + timeout
+def _wait_servers(servers: list[VllmServer], timeout: float | None = None) -> str | None:
+    """Wait for readiness or process exit; evaluation has no startup deadline."""
+    deadline = None if timeout is None else time.monotonic() + timeout
     pending = list(servers)
-    while pending and time.time() < deadline:
+    while pending and (deadline is None or time.monotonic() < deadline):
         still = []
         for server in pending:
             if server.proc is not None and server.proc.poll() is not None:

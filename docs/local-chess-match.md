@@ -15,3 +15,19 @@ Runtime roots use `var/runtime/lc-<10-character hash>` rather than the full run 
 All logs and JSON are remote under `LLMGo!/var/runs/chess-j10-s5-vs-qwen3-8b-chess-20261106/`, with model files under `assets/models`, temporary download parts under `assets/models/.Qwen3-8B-Chess-parts`, and frozen source / submission receipts under `var/benchmarks/chess-j10-s5-vs-qwen3-8b-chess-20261106/`. A live replay index exposes every game to the existing read-only Web process. Each player's raw answer, requested prompt, parse/fallback details and actual moves are retained. One failed future does not prevent collecting other completed games.
 
 The dashboard adds a Qwen3-8B-Chess section with its own experiment selection, W/D/L, win and score rates, progress and replay buttons. Both opponent panels feed separate banks into “学生 · 对局与复盘”; opponent labels and random fallback counts follow the selected game. Do not assign this opponent DeepSeek's 1800 anchor or silently publish an Elo for this match. The Meta-Agent campaign remains paused; this independent test does not advance or tune the research campaign.
+
+The mainline cumulative 15-step comparison uses `j000008/scaling/models/step-00000005`,
+identity `0b6c00ed85d443a0932c2a00690401a0416bb2d3680c4119b4ff6e8059a63cec`.
+This is the solid-line step-15 model, separate from the rolled-back `j000007/step-10` branch.
+Submit its independent 40-game test with:
+
+```bash
+/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python -B \
+  '/user/lyh4170/LLMGo!/scripts/submit_local_chess_match.py' \
+  --config configs/evaluation/qwen3-chess-meta15-20261108.json
+```
+
+Use `--run-id` for a separately receipted retry. The plan and protocol retain the configured
+cumulative training steps, and game records identify their actual match run. The default
+configuration continues to select the cumulative 20-step student. Existing tasks keep their
+frozen source, models and results. Both comparisons appear in the same Qwen3-8B-Chess panel.

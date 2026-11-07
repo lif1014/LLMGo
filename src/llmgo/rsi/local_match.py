@@ -32,6 +32,7 @@ def match_protocol(plan):
         'opponent_protocol':{**PROTOCOL,'model_name':'Qwen3-8B-Chess'},
         'student_model_identity':plan['student_identity'],'opponent_model_identity':plan['opponent_identity'],
         'student_model_path':plan['student_model'],'opponent_model_path':plan['opponent_model'],
+        'student_cumulative_steps':plan.get('student_cumulative_steps'),
         'answer_parser':ANSWER_PARSER,'opponent_answer_parser':ANSWER_PARSER,
         'parallel_games':40,'student_vllm_max_num_seqs':40,'opponent_vllm_max_num_seqs':40,
         'gpu_count':1,'student_gpu_memory_utilization':.35,'opponent_gpu_memory_utilization':.55,
@@ -71,7 +72,7 @@ def play_game(index,output,student_url,opponent_url):
     game_id=f'qwen-chess-{index:02d}'
     opponent={'level':'qwen3-chess','level_id':'Qwen3-8B-Chess','skill':None,
         'depth':None,'movetime_sec':None,'nodes':None,'threads':1,'hash_mb':0,'thinking':'disabled'}
-    episode=ChessEpisode(game_id,'j000010-step5',side,2,None,output/'games'/game_id,
+    episode=ChessEpisode(game_id,output.parent.name,side,2,None,output/'games'/game_id,
         seed=417000+index//2,opponent_spec=opponent,
         engine_factory=lambda *args,**kwargs:LocalOpponent(opponent_url,index))
     episode.engine.record=episode.event

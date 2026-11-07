@@ -36,18 +36,19 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo',type=Path,default=Path('/user/lyh4170/LLMGo!'))
     parser.add_argument('--run-id',help='New run ID for a separately receipted retry')
+    parser.add_argument('--config',type=Path,default=Path('configs/evaluation/qwen3-chess-20261106.json'))
     args=parser.parse_args();root=args.repo
-    config=read_json(root/'configs/evaluation/qwen3-chess-20261106.json')
+    config=read_json(root/args.config)
     run_id=identifier(args.run_id or config['run_id'])
     run=root/'var/runs'/run_id;run.mkdir(parents=True,exist_ok=False)
     site=read_json(root/'configs/rsi/site.beijing.json')
     site['runtime_root']=str(match_runtime(root,run_id))
     atomic_json(run/'ipc-preflight.json',check_ipc_path(Path(site['runtime_root'])))
     student=root/config['student_model'];identity=model_identity(student)
-    if identity['sha256']!=config['student_sha256']:raise ValueError('Wrong 20-step student checkpoint')
+    if identity['sha256']!=config['student_sha256']:raise ValueError('Wrong configured student checkpoint')
     where=root/'var/benchmarks'/run_id;source=source_snapshot(root,where/'source')
     plan={'output':str(run),'site':site,'source':source,'student_model':str(student),
-        'student_identity':identity,'student_cumulative_steps':20,
+        'student_identity':identity,'student_cumulative_steps':config['student_cumulative_steps'],
         'opponent_model':str(root/config['opponent_model']),'opponent_identity':None,
         'opponent_revision':config['opponent_revision'],'inference_python':site['inference_python'],
         'download_receipt':str(root/'assets/models/Qwen3-8B-Chess.download.json'),

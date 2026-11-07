@@ -1,0 +1,20 @@
+{
+  "run_id": "chess-meta15-j8-s5-vs-qwen3-8b-chess-20261108",
+  "student_model": "var/runs/chess-grpo-v1-j000008/scaling/models/step-00000005",
+  "student_sha256": "0b6c00ed85d443a0932c2a00690401a0416bb2d3680c4119b4ff6e8059a63cec",
+  "student_cumulative_steps": 15,
+  "opponent_model": "assets/models/Qwen3-8B-Chess",
+  "opponent_repo": "ljcnju/Qwen3-8B-Chess",
+  "opponent_revision": "9bf822f4090b9704c16354d8c55d6239925608ae",
+  "download_endpoint": "https://hf-mirror.com",
+  "resource_pool": "model-new",
+  "priority": "PREEMPTABLE",
+  "gpu_model": "H800",
+  "gpu_count": 1,
+  "games": 40,
+  "parallel_games": 40,
+  "max_tokens": 16384,
+  "enable_thinking": false,
+  "student_gpu_memory_utilization": 0.35,
+  "opponent_gpu_memory_utilization": 0.55
+}

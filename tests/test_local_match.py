@@ -33,12 +33,45 @@ def test_long_match_id_uses_a_real_short_unix_socket_path():
         assert runtime!=submit.match_runtime(root,run_id+'-other')
 
 
+def test_submitter_uses_the_selected_fifteen_step_config(tmp_path,monkeypatch,capsys):
+    script=Path(__file__).resolve().parents[1]/'scripts/submit_local_chess_match.py'
+    spec=importlib.util.spec_from_file_location('submit_selected_match',script)
+    submit=importlib.util.module_from_spec(spec);spec.loader.exec_module(submit)
+    student=tmp_path/'models/fifteen';student.mkdir(parents=True)
+    atomic_json(student/'config.json',{});(student/'model.safetensors').write_bytes(b'fifteen')
+    config={'run_id':'meta15-test','student_model':'models/fifteen',
+        'student_sha256':model_identity(student)['sha256'],'student_cumulative_steps':15,
+        'opponent_model':'models/opponent','opponent_revision':'pinned'}
+    atomic_json(tmp_path/'selected.json',config)
+    atomic_json(tmp_path/'configs/rsi/site.beijing.json',{'inference_python':'fixture','image':'fixture'})
+    monkeypatch.setattr(submit.sys,'argv',[str(script),'--repo',str(tmp_path),'--config','selected.json'])
+    monkeypatch.setattr(submit,'check_ipc_path',lambda path:{'passed':True})
+    monkeypatch.setattr(submit,'source_snapshot',lambda root,target:{'root':str(target),'sha256':'fixture'})
+    calls=[]
+    def platform(site,argv):
+        calls.append(argv)
+        if argv[1]=='list':return {'tasks':[]}
+        if '--dry-run' in argv:
+            return {'request':{'task':{'resource_pool_id':523,'priority':3,'resources':{'gpu_count':1}}}}
+        return {'id':123,'status':'Queued'}
+    monkeypatch.setattr(submit,'cctl',platform)
+    submit.main()
+    plan=read_json(tmp_path/'var/runs/meta15-test/plan.json')
+    assert plan['student_model']==str(student) and plan['student_cumulative_steps']==15
+    assert plan['student_identity']==model_identity(student)
+    protocol=read_json(tmp_path/'var/runs/meta15-test/final-test/protocol.json')
+    assert protocol['student_cumulative_steps']==15 and protocol['parallel_games']==40
+    assert sum(argv[1]=='create' and '--dry-run' not in argv for argv in calls)==1
+    assert json.loads(capsys.readouterr().out)['task_id']==123
+
+
 def test_two_models_share_one_gpu_and_play_all_forty_games(tmp_path,monkeypatch):
     models=[]
     for name in ('student','opponent'):
         path=tmp_path/name;path.mkdir();atomic_json(path/'config.json',{})
         (path/'model.safetensors').write_bytes(name.encode());models.append(path)
     plan={'output':str(tmp_path/'run'),'inference_python':'fixture','opponent_revision':'pinned',
+          'student_cumulative_steps':15,
           **{name+'_model':str(path) for name,path in zip(('student','opponent'),models)},
           **{name+'_identity':model_identity(path) for name,path in zip(('student','opponent'),models)}}
     starts=[];ready=[];servers=[]
@@ -76,9 +109,11 @@ def test_two_models_share_one_gpu_and_play_all_forty_games(tmp_path,monkeypatch)
     assert all(s.stopped for s in servers)
     assert len(requests)==160
     output=Path(plan['output'])/'final-test'
+    assert read_json(output/'protocol.json')['student_cumulative_steps']==15
     assert len(read_json(output/'replay-index.json')['files'])==80
     assert len(read_json(output/'random-moves.json')['games'])==40
     first=[json.loads(line) for line in (output/'games/qwen-chess-00/events.jsonl').read_text().splitlines()]
+    assert first[0]['policy_version']=='run'
     assert any(e['type']=='opponent_request_started' and e['messages'] for e in first)
     assert next(e for e in first if e['type']=='opponent_move')['diagnostics']['raw_output']==r'\boxed{e5}'
 

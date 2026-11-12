@@ -94,7 +94,7 @@ An explicit engineering check, which allocates one GPU but does not train a Stud
 ```
 
 It uses the same pool policy and worker, starts thinking/tool-capable Qwen, and requires
-Codex to actually execute a tool and copy a nonce file before passing. The check's600-second
+Codex to actually execute a tool and copy a nonce file before passing. The check's1,800-second
 model/tool deadline is specific to this acceptance test; production research has no overall
 deadline. Launching the normal study does not allocate a separate startup-probe GPU.
 
@@ -129,3 +129,8 @@ Responses.instructions before the pinned LiteLLM conversion. User/assistant/tool
 call IDs and content remain intact; the original request is retained as evidence. DeepSeek
 API input conversion is unchanged. GPU acceptance identified this requirement before any
 research was started.
+
+Qwen streaming replies send SSE comment heartbeats every20 seconds while awaiting upstream
+creation or the next event. Comments do not fabricate model output or extend token limits;
+they prevent Codex from retrying a valid long first generation after its stream idle timeout.
+The engineering tool-check deadline is30 minutes; production research has no overall deadline.

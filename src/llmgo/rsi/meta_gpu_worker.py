@@ -56,7 +56,7 @@ def run(request_path,*,server_class=VllmServer,backend_class=CodexBackend):
             from .connection_check import check_connection
             environment=dict(os.environ,CODEX_HOME=str(home),LLMGO_META_THINKING='true',
                 LLMGO_META_RUNTIME=str(attempt/'bridge'),LLMGO_META_MAX_OUTPUT_TOKENS=str(site.get('meta_max_output_tokens',16384)))
-            acceptance=check_connection(site,attempt/'tool-acceptance',timeout=600,env=environment,tools_check=True)
+            acceptance=check_connection(site,attempt/'tool-acceptance',timeout=1800,env=environment,tools_check=True)
             if not acceptance['ok']:raise RuntimeError('GPU Meta tool acceptance failed: '+str(acceptance))
             answer={'status':'needs_input','summary':'GPU Meta engineering check passed; no research or training started','proposal_path':None}
         else:

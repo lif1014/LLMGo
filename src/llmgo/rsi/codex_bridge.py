@@ -76,6 +76,28 @@ def qwen_instructions_first(options):
     return value,moved
 
 
+async def heartbeat_events(iterator,interval=20):
+    """SSE comments keep Codex connected while waiting for upstream events."""
+    pending=None
+    try:
+        while True:
+            if pending is None:pending=asyncio.ensure_future(anext(iterator))
+            done,_=await asyncio.wait({pending},timeout=interval)
+            if not done:
+                yield None
+                continue
+            try:item=pending.result()
+            except StopAsyncIteration:return
+            pending=None
+            yield item
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending,return_exceptions=True)
+        close=getattr(iterator,'aclose',None)
+        if close:await close()
+
+
 def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None, *, thinking=None, max_output_tokens=None):
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse, StreamingResponse
@@ -137,8 +159,20 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
             options["extra_body"]=extra
         if max_output_tokens is not None:
             options["max_output_tokens"]=min(options.get("max_output_tokens") or max_output_tokens,max_output_tokens)
+        qwen_stream=selected_model.lower().startswith('qwen') and payload.get('stream')
+        async def deferred():
+            upstream=await responder(**options)
+            if prepare_chat_iterator(upstream):
+                record('iterator_compat',request_id=rid,repair='defer_empty_chat_start',version='litellm-1.105.2')
+            try:
+                async for item in upstream:yield item
+            finally:
+                close=getattr(upstream,'aclose',None)
+                if close:
+                    completion=close()
+                    if inspect.isawaitable(completion):await completion
         try:
-            response = await responder(**options)
+            response = heartbeat_events(deferred()) if qwen_stream else await responder(**options)
         except Exception as error:
             message = scrub(str(error), known)
             record('error', request_id=rid, error=type(error).__name__, detail=message)
@@ -158,6 +192,10 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
             protocol = ReasoningStream()
             try:
                 async for item in response:
+                    if item is None and qwen_stream:
+                        record('heartbeat',request_id=rid)
+                        yield ': waiting for Qwen\n\n'
+                        continue
                     data = document(item)
                     # Keep the exact converter event as evidence. Record repairs
                     # as metadata rather than duplicating every text delta.

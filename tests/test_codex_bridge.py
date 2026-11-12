@@ -150,3 +150,23 @@ def test_qwen_moves_interleaved_developer_instructions_before_tool_dialogue(tmp_
         with TestClient(app) as client:client.post('/v1/responses',headers={'Authorization':'Bearer token'},json=source)
     assert seen[0]['instructions']==normalized['instructions']
     assert seen[1]['input']==source['input'] and seen[1]['instructions']=='initial'
+
+
+def test_heartbeat_keeps_pending_read_without_duplicate_upstream_or_changing_events():
+    import asyncio
+    from llmgo.rsi.codex_bridge import heartbeat_events
+    async def run():
+        calls=[];closed=[]
+        async def source():
+            try:
+                calls.append('one request');await asyncio.sleep(.04)
+                yield {'type':'response.completed','response':{'status':'completed'}}
+            finally:closed.append(True)
+        result=[item async for item in heartbeat_events(source(),interval=.005)]
+        assert result.count(None)>=1 and result[-1]['type']=='response.completed'
+        assert calls==['one request'] and closed==[True]
+        iterator=heartbeat_events(source(),interval=.001)
+        assert await anext(iterator) is None
+        await iterator.aclose()
+        assert closed==[True,True]
+    asyncio.run(run())

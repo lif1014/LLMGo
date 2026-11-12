@@ -223,7 +223,7 @@ class GpuMetaBackend:
                     pool,snapshot=self.select_pool(current_intent=active/'submission.json')
                     if pool!=report['pool'] and better_free_capacity(report['pool'],pool,snapshot):
                         # Only this identity-checked, not-yet-running Meta allocation can move pools.
-                        self.transport.command(['job','stop',str(report['task_id'])])
+                        self.transport.command(['job','stop',str(report['task_id']),'--confirm','tasks/'+str(report['task_id'])])
                         report.update(status='switching_pool',selection=snapshot)
                 atomic_json(active/'report.json',report)
             publish_meta_overview(self.memory.root,self.site)

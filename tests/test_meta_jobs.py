@@ -82,7 +82,9 @@ def test_queued_task_only_moves_after_identity_check(tmp_path):
     site,memory,workspace=fixture(tmp_path);clock=[0.];created=[];stopped=[];gets=[]
     class Platform:
         def command(self,args):
-            if args[:2]==['job','stop']:stopped.append(args[2]);return {}
+            if args[:2]==['job','stop']:
+                assert args[3:]==['--confirm','tasks/'+args[2]]
+                stopped.append(args[2]);return {}
             if args[:2]==['job','get']:
                 i=int(args[2]);a=created[i-1];gets.append((i,clock[0]));report=read_json(a/'report.json')
                 state='Queued' if i==1 and not stopped else 'Killed' if i==1 else 'Succeeded'

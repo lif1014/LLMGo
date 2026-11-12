@@ -39,7 +39,7 @@ HIGH 與訓練共用單一名額；名額被佔用時選其他池，不影響訓
 
 大型權重、parquet、引擎、實驗輸出和憑證留在遠端，不進 Git；原始碼、配方、測試與文檔進 GitHub。逐檔 SHA-256 資產搬遷回執在遠端 `var/migrations/20261102/assets.json`。資料有 99,571 筆訓練、2,291 筆驗證、23,243 筆測試。詳細內容見 [GRPO pipeline](docs/grpo-pipeline.md)。
 
-預設仍用現有篩選資料。Meta-Agent 可自行決定是否使用新的完整 Lichess 訓練池，以及如何篩選、混合或安排課程；也可修改超參、reward 等 RL 設計。初始 Qwen3.5-4B checkpoint、prompt 與 non-thinking 模式固定。每輪記錄選樣程式／查詢、ID 清單、分類統計及基於敗局的假設，不要求資料選樣 random seed 或算力預算比較。工具與範例見 [Lichess 資料使用](docs/lichess-data.md)。
+預設仍用現有篩選資料。Meta-Agent 可自行決定是否使用新的完整 Lichess 訓練池，以及如何篩選、混合或安排課程；也可修改超參、reward 等 RL 設計。初始 Qwen3.5-4B checkpoint、prompt 與 non-thinking 模式固定。每輪記錄選樣程式／查詢、ID 清單、分類統計及基於敗局的假設，不要求資料選樣 random seed 或算力預算比較。可選選樣工具支援分類配比（如 `fork=1 pin=2`）、難度範圍及唯讀預覽；不強制使用，也可自行寫選樣程式。工具與範例見 [Lichess 資料使用](docs/lichess-data.md)。
 
 GRPO 預設 KL loss 係數為 `0.05`，entropy coefficient 為 `0`；實際 verl 設定由 `src/llmgo/training/chess_r1_config.py` 產生。Entropy 診斷仍保留。
 

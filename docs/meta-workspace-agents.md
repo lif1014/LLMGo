@@ -14,3 +14,13 @@
 Meta 推理卡不執行學生訓練或正式 GPU 評測。只有缺少使用者獨有資訊／權限才 needs_input。
 禁止 SFT；學生初始模型、prompt、non-thinking 固定。RL 策略由你自行研究。
 只讀本 campaign 的研究記憶及產物，不讀其他研究的結果、checkpoint 或配方。
+
+
+可選資料選樣工具：`scripts/select_lichess_data.py` 已支援分類配比與難度範圍，
+例如 `--mix fork=1 pin=2 --num-puzzles 30000 --rating-min 800 --rating-max 1600`。
+先用 `--list-tags` 查真實分類、`--preview` 查配額是否可滿足；複合分類／各組難度用 `--spec` JSON。
+用 `/user/lyh4170/venvs/llmgo-lichess-data-20261103/bin/python` 執行 CPU 選樣。
+比例以 puzzle 計算，同題只加入一次，再保留其在訓練池中的全部局面；每輪保留交付檔。
+詳見 `docs/lichess-data.md`。**不一定需要用這個腳本**：可以保留預設資料，也可以自行寫選樣程式。
+是否使用、分類配比及難度由你根據本研究敗局自主決定，不是強制課程。
+只修改實驗配方的 train_file，不改預設資料、固定學生 prompt、non-thinking 或正式評測協議。

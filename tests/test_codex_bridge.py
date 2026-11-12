@@ -128,3 +128,25 @@ def test_local_gpu_endpoint_bypasses_remote_proxy():
     local=proxy_environment(env,'http://127.0.0.1:8100/v1')
     assert not any('proxy' in k.lower() and k.lower()!='no_proxy' for k in local)
     assert proxy_environment(env,'https://external/v1')['HTTPS_PROXY'].startswith('http://whitelist-proxy')
+
+
+def test_qwen_moves_interleaved_developer_instructions_before_tool_dialogue(tmp_path):
+    from llmgo.rsi.codex_bridge import qwen_instructions_first
+    source={'instructions':'initial','input':[
+        {'role':'user','content':'task'},
+        {'role':'developer','content':[{'type':'input_text','text':'environment'}]},
+        {'type':'function_call','call_id':'call1','name':'exec_command','arguments':'{}'},
+        {'type':'function_call_output','call_id':'call1','output':'done'},
+        {'role':'system','content':'additional rule'}]}
+    normalized,moved=qwen_instructions_first(source)
+    assert moved==2 and normalized['instructions']=='initial\n\nenvironment\n\nadditional rule'
+    assert [x.get('type') for x in normalized['input']]==[None,'function_call','function_call_output']
+    assert source['input'][1]['role']=='developer'  # Original receipt stays intact.
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    for model in ['Qwen3.5-4B','deepseek-v4.1-flash']:
+        app=create_app(model,'http://127.0.0.1:8100/v1','unused','token',tmp_path/(model+'.jsonl'),responder=responder)
+        with TestClient(app) as client:client.post('/v1/responses',headers={'Authorization':'Bearer token'},json=source)
+    assert seen[0]['instructions']==normalized['instructions']
+    assert seen[1]['input']==source['input'] and seen[1]['instructions']=='initial'

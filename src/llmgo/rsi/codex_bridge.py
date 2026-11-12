@@ -53,6 +53,29 @@ def proxy_environment(environment, api_base=None):
     return env
 
 
+def qwen_instructions_first(options):
+    """Qwen templates allow one leading system message; preserve all instructions.
+
+    Codex may insert developer messages between user/tool turns. The pinned
+    LiteLLM converter prepends Responses.instructions as a system message, so
+    collect those instruction messages there without reordering tool dialogue.
+    """
+    value=dict(options);items=value.get('input')
+    if not isinstance(items,list):return value,0
+    instructions=[value['instructions']] if value.get('instructions') else []
+    rest=[];moved=0
+    for item in items:
+        if isinstance(item,dict) and item.get('role') in {'system','developer'}:
+            content=item.get('content','')
+            if isinstance(content,list):
+                content='\n'.join(block.get('text','') if isinstance(block,dict) else str(block) for block in content)
+            instructions.append(str(content));moved+=1
+        else:rest.append(item)
+    if moved:
+        value['instructions']='\n\n'.join(instructions);value['input']=rest
+    return value,moved
+
+
 def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None, *, thinking=None, max_output_tokens=None):
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse, StreamingResponse
@@ -103,6 +126,9 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
         record('request', request_id=rid, payload=payload)
         options = dict(payload)
         selected_model = payload.get('model') or model
+        if selected_model.lower().startswith('qwen'):
+            options,moved=qwen_instructions_first(options)
+            if moved:record('qwen_instructions_normalized',request_id=rid,moved_messages=moved)
         options.update(model='openai/'+selected_model, api_base=chat_base(api_base), api_key=upstream_key,
                        use_chat_completions_api=True, num_retries=0, drop_params=True)
         if thinking is not None:

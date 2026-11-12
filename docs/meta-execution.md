@@ -110,3 +110,10 @@ Student training/evaluation costs remain in the existing GRPO and evaluation pan
 The current Student allocation still waits at its safe checkpoint while a Meta task queues
 and runs. This change removes a permanent Meta GPU; it does not release/reallocate the8
 Student cards at every review. Cross-job Student resume can be a separate future change.
+
+Qwen's chat template requires system instructions at the beginning. For Qwen only, the
+bridge combines Codex's interleaved system/developer instruction messages into leading
+Responses.instructions before the pinned LiteLLM conversion. User/assistant/tool ordering,
+call IDs and content remain intact; the original request is retained as evidence. DeepSeek
+API input conversion is unchanged. GPU acceptance identified this requirement before any
+research was started.

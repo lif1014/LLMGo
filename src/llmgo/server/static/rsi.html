@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=meta-on-demand-1";
+      stylesheet.href = "static/rsi.css?v=meta-on-demand-2";
       document.head.append(stylesheet);
     })();
   </script>
@@ -126,7 +126,7 @@
       <p id="cost"></p><div id="results" class="feed"></div></section>
   </main>
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
-  <script src="static/rsi-meta.js?v=meta-on-demand-1"></script>
+  <script src="static/rsi-meta.js?v=meta-on-demand-2"></script>
   <script>
     function loadDashboardScript(src, statusId, ready, attempt = 0) {
       const script = document.createElement("script");
@@ -140,9 +140,9 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=meta-on-demand-1", "connection");
+    loadDashboardScript("static/rsi.js?v=meta-on-demand-2", "connection");
   </script>
-<script src="static/rsi-final.js?v=meta-on-demand-1"></script>
+<script src="static/rsi-final.js?v=meta-on-demand-2"></script>
 <script src="static/rsi-elo.js?v=checkpoint-elo-40parallel-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>

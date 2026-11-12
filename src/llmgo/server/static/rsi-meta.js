@@ -3,11 +3,15 @@
 'use strict';
 const names={prepared:'准备请求',queued:'等待GPU排程',running:'执行中',loading_model:'加载模型',
  thinking:'思考中',generating:'生成回答',tool_execution:'执行工具',releasing_gpu:'交接完成，释放GPU',
- completed:'工作完成',invalid:'无效尝试',failed:'执行失败',switching_pool:'切换资源池',idle:'等待研究／验证结果',paused:'研究暂停'};
+ waiting_for_terminal:'交接已落盘，等待任务结束',waiting_for_artifact:'等待结果落盘',invalid_pending_restore:'隔离无效尝试的修改',completed:'工作完成',invalid:'无效尝试',failed:'执行失败',switching_pool:'切换资源池',idle:'等待研究／验证结果',paused:'研究暂停'};
 const fmt=v=>typeof v==='number'?v.toFixed(3):'未记录';
 function stage(row,a){
  if(!a)return names[row.status]||row.status||'等待结果';
- if(['completed','invalid','failed','switching_pool','queued'].includes(a.status))return names[a.status];
+ if(['completed','invalid','failed','switching_pool','invalid_pending_restore'].includes(a.status))return names[a.status];
+ if(a.worker_stage==='completed'||a.worker_stage==='releasing_gpu')return names.waiting_for_terminal;
+ if(a.worker_stage==='loading_model'||a.worker_stage==='failed')return names[a.worker_stage];
+ if(a.worker_stage==='running')return names[a.activity]||names.running;
+ if(a.status==='queued')return names.queued;
  return names[a.activity]||names[a.worker_stage]||names[a.status]||a.status;
 }
 function view(data){

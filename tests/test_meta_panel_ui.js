@@ -9,3 +9,7 @@ assert.equal(view({current:{execution:'api',thinking:null,status:'paused'}}).met
 assert.equal(view({current:{execution:'api'}}).stages.length,4);
 assert.equal(view(gpu).stages.length,6);
 console.log('Shared Meta panel API/GPU/invalid/loading projection passed');
+
+assert.equal(stage({}, {status:'queued',worker_stage:'loading_model'}),'加载模型');
+assert.equal(stage({}, {status:'running',worker_stage:'completed'}),'交接已落盘，等待任务结束');
+assert.equal(stage({}, {status:'invalid',worker_stage:'completed'}),'无效尝试');

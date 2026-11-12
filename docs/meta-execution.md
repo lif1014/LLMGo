@@ -42,8 +42,10 @@ Other users' tasks are never stopped or modified; queue summaries alone inform s
 
 Platform polls are persisted and at least600 seconds apart, including Controller restart.
 Before each new allocation and after a killed attempt, all four pools are re-evaluated. If a
-still-queued own Meta task belongs in the other pool, its identity is checked, it is stopped,
-and a replacement is submitted only after the original is confirmed terminal. Running
+still-queued own Meta task can move to a pool with strictly more free H800s (at least one),
+its identity is checked, it is stopped, and a replacement is submitted only after the
+original is confirmed terminal. Equally full pools retain queue position rather than
+cycling due to small changes in queue length. Running
 tasks are not killed merely because queue conditions changed.
 
 Killed/stopped allocations are invalid even if `result.json` already exists. Their edits

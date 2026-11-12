@@ -91,7 +91,8 @@ def test_queued_task_only_moves_after_identity_check(tmp_path):
                     'resourcePoolId':523 if i==1 else 525,'priority':report['priority'],'resourcesTotal':{'gpuCount':1}}
             raise AssertionError(args)
     class Backend(GpuMetaBackend):
-        def select_pool(self,**kwargs):return ('model-new' if not created else 'model-autosft'),{}
+        def select_pool(self,**kwargs):
+            return ('model-new' if not created else 'model-autosft'),{'model-new':{'free_gpus':0},'model-autosft':{'free_gpus':1}}
         def submit(self,a,r):
             created.append(a);r.update(task_id=len(created),description='mine',next_poll_at=clock[0]+600)
             atomic_json(a/'report.json',r)
@@ -123,6 +124,13 @@ def test_unknown_telemetry_uses_preemptable_without_guessing_high(tmp_path):
         def command(self,args):raise OSError('unavailable')
     pool,snapshot=GpuMetaBackend(site,memory,transport=Platform()).select_pool()
     assert pool=='model-new' and snapshot['model-new']['warning'] and not snapshot['high_admission']['available']
+
+
+@pytest.mark.parametrize('current,target,move',[(0,0,False),(0,1,True),(1,1,False),(1,2,True),(None,2,False)])
+def test_queued_tasks_keep_position_without_more_available_cards(current,target,move):
+    from llmgo.rsi.meta_jobs import better_free_capacity
+    assert better_free_capacity('model-new','model-claw-tool',{
+        'model-new':{'free_gpus':current},'model-claw-tool':{'free_gpus':target}}) is move
 
 
 def test_api_and_legacy_share_projection_without_gpu(tmp_path,monkeypatch):

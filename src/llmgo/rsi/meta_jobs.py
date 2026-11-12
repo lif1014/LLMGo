@@ -77,6 +77,13 @@ def choose_pool(snapshots,*,exclude=()):
     return min(pools,key=lambda p:(snapshots[p]['queued_people'],snapshots[p]['queued_tasks'],order.index(p)))
 
 
+def better_free_capacity(current,target,snapshots):
+    """Do not lose queue position by cycling through equally full pools."""
+    before=snapshots.get(current,{}).get('free_gpus')
+    after=snapshots.get(target,{}).get('free_gpus')
+    return before is not None and after is not None and after>=1 and after>before
+
+
 def request_record(root,workspace,prompt,site):
     key=request_key(workspace,prompt);folder=Path(root)/'meta_requests'/key
     folder.mkdir(parents=True,exist_ok=True)
@@ -214,7 +221,7 @@ class GpuMetaBackend:
                 report['status']='queued' if status in QUEUED else 'running'
                 if status in QUEUED:
                     pool,snapshot=self.select_pool(current_intent=active/'submission.json')
-                    if pool!=report['pool']:
+                    if pool!=report['pool'] and better_free_capacity(report['pool'],pool,snapshot):
                         # Only this identity-checked, not-yet-running Meta allocation can move pools.
                         self.transport.command(['job','stop',str(report['task_id'])])
                         report.update(status='switching_pool',selection=snapshot)

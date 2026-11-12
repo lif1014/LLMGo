@@ -419,28 +419,9 @@ class Controller:
         if self.state.get("research_scope", PHASE1_SCOPE) == PHASE1_SCOPE:
             self._validate_phase1_workspace(workspace)
         proposal = read_json(path)
-        digest(proposal)  # Reject non-JSON/nonfinite metadata before creating frozen artifacts.
-        if not isinstance(proposal.get("hypothesis"), str) or not proposal["hypothesis"].strip():
-            raise ValueError("Describe an experiment hypothesis")
+        from .proposal import validate_proposal
+        validate_proposal(proposal)
         jobs = proposal.get("jobs", [])
-        if not isinstance(jobs, list):
-            raise ValueError("jobs must be a list of commands")
-        for command in jobs:
-            resources = command.get("resources", {}) if isinstance(command,dict) else {}
-            if not isinstance(resources,dict) or set(resources)-{"gpu_count","cpu","memory_gib"}:
-                raise ValueError("Invalid job resources")
-            for key,value in resources.items():
-                if type(value) is not int or value < (0 if key=="gpu_count" else 1) or (key=="gpu_count" and value > 8):
-                    raise ValueError("Invalid job resources")
-            argv = command.get("argv") if isinstance(command, dict) else None
-            if not isinstance(argv, list) or not argv or any(not isinstance(x,str) or not x or "\0" in x for x in argv):
-                raise ValueError("Each job requires a nonempty argv string array")
-        evaluation_gpus = proposal.get("evaluation_gpus", self.site["gpu_count"])
-        if type(evaluation_gpus) is not int or not 1 <= evaluation_gpus <= 8:
-            raise ValueError("evaluation_gpus must be an integer from 1 to 8")
-        batch = proposal.get("evaluation_batch", 0)
-        if type(batch) is not int or batch < 0:
-            raise ValueError("evaluation_batch must be a nonnegative integer")
         plan = evaluation_plan(proposal.get("evaluation")) if proposal.get("evaluation", True) is not False else None
         model = proposal.get("model_path", self.state["working"]["model_path"])
         if Path(model).resolve() != Path(self.site["base_model"]).resolve():

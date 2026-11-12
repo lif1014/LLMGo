@@ -96,10 +96,11 @@ class ResearchHandshake:
             if path.parent != self.workspace:
                 raise ValueError("Use a proposal in the registered workspace root")
             proposal = strict_object(path.read_text())
-            if not isinstance(proposal, dict) or not proposal.get("hypothesis"):
-                raise ValueError("Write the completed proposal before committing")
-            if proposal["hypothesis"] == "Describe the next experiment":
-                raise ValueError("The initial proposal template is not a completed experiment")
+            if isinstance(proposal,dict) and 'training_review' in proposal:
+                if not isinstance(proposal['training_review'],dict):raise ValueError('training_review must be an object')
+            else:
+                from .proposal import validate_proposal
+                validate_proposal(proposal)
             answer["proposal_path"] = str(path)
             proposal_sha, source_sha = file_hash(path), workspace_hash(self.workspace)
         atomic_json(self.result_path, {"schema_version": 1, "request_id": self.request_id,

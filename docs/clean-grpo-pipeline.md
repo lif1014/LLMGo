@@ -76,3 +76,16 @@ Meta一卡的四池排程由框架管理，見 docs/meta-execution.md，不自�
 RUN 由 manifest.output 決定，通常是 var/runs/<campaign>-<job>。
 新 campaign 先測原始學生基線，再研究；基線不產生 RL checkpoint。
 Web 從共享產物更新，等待結果不會反覆呼叫 Meta。
+
+
+交接前必須在 workspace 執行（本研究要求先提交訓練）：
+
+```bash
+/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python scripts/check_research_proposal.py --proposal proposal.json --require-training
+```
+
+`hypothesis` 必須是字串；詳細假設可放 `research_notes`。訓練使用 `jobs[].argv` 字串陣列，
+`training_config`、`status: ready_for_execution` 或口頭描述不會提交訓練。
+修正檢查器指出的實際問題，讀回檔案並重跑檢查，成功後才執行本次 finish_command。
+finish_research.py 與 Controller 共用此格式檢查；格式錯誤會在當次工具呼叫返回，
+保持本會話繼續修改，不等 GPU 結束後才發現。檢查不提交任務，也不替你選擇 RL 策略。

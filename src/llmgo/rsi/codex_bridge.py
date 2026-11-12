@@ -36,8 +36,13 @@ def chat_base(url):
     return url + '/v1' if not parsed.path else url
 
 
-def proxy_environment(environment):
+def proxy_environment(environment, api_base=None):
     env = dict(environment)
+    if api_base and urllib.parse.urlsplit(api_base).hostname in {'localhost','127.0.0.1','::1'}:
+        for key in ('HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROXY','all_proxy'):
+            env.pop(key,None)
+        env['NO_PROXY']=env['no_proxy']='localhost,127.0.0.1,::1'
+        return env
     proxy = 'http://whitelist-proxy.cybertron.svc.cluster.local:7891'
     for name in ('HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy'):
         env[name] = proxy
@@ -48,7 +53,7 @@ def proxy_environment(environment):
     return env
 
 
-def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None):
+def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None, *, thinking=None, max_output_tokens=None):
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse, StreamingResponse
     if responder is None:
@@ -100,6 +105,12 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
         selected_model = payload.get('model') or model
         options.update(model='openai/'+selected_model, api_base=chat_base(api_base), api_key=upstream_key,
                        use_chat_completions_api=True, num_retries=0, drop_params=True)
+        if thinking is not None:
+            extra=dict(options.get("extra_body") or {})
+            extra["chat_template_kwargs"]={**extra.get("chat_template_kwargs",{}),"enable_thinking":thinking}
+            options["extra_body"]=extra
+        if max_output_tokens is not None:
+            options["max_output_tokens"]=min(options.get("max_output_tokens") or max_output_tokens,max_output_tokens)
         try:
             response = await responder(**options)
         except Exception as error:
@@ -226,7 +237,7 @@ def launch(arguments, *, prefix='/user/lyh4170/tools/codex-reused-20261023', bri
     env['PATH'] = str(prefix/'bin') + os.pathsep + env.get('PATH', os.defpath)
     env['TMPDIR'] = str(prefix/'_runtime/tmp')
     env['XDG_CACHE_HOME'] = str(prefix/'_runtime/cache')
-    env = proxy_environment(env)
+    env = proxy_environment(env,config.get("model_providers",{}).get(config.get("model_provider","custom"),{}).get("base_url"))
     binary = str(prefix/'codex-native')
     informational = arguments and (arguments[0] in {'login','logout','help','completion','features','mcp','sandbox'}
                     or any(arg in {'--version','-V','--help','-h'} for arg in arguments))
@@ -240,7 +251,7 @@ def launch(arguments, *, prefix='/user/lyh4170/tools/codex-reused-20261023', bri
     upstream = config['model_providers'][provider]
     key = upstream.get('experimental_bearer_token') or env.get(auth['api_key_env']) or '__not_configured__'
     model = config['model']
-    runtime = prefix/'_runtime/bridge'/uuid.uuid4().hex
+    runtime = Path(env.get('LLMGO_META_RUNTIME',str(prefix/'_runtime/bridge')))/uuid.uuid4().hex
     runtime.mkdir(parents=True, mode=0o700)
     os.chmod(runtime,0o700)
     local_token = secrets.token_urlsafe(32)
@@ -323,5 +334,8 @@ def serve_main(argv=None):
     parser.add_argument('--trace',type=Path,required=True)
     args=parser.parse_args(argv)
     import uvicorn
-    app=create_app(args.model,args.api_base,os.environ['LLMGO_UPSTREAM_API_KEY'],os.environ['LLMGO_BRIDGE_TOKEN'],args.trace)
+    thinking=os.environ.get('LLMGO_META_THINKING')
+    app=create_app(args.model,args.api_base,os.environ['LLMGO_UPSTREAM_API_KEY'],os.environ['LLMGO_BRIDGE_TOKEN'],args.trace,
+        thinking=None if thinking is None else thinking=='true',
+        max_output_tokens=int(os.environ['LLMGO_META_MAX_OUTPUT_TOKENS']) if os.environ.get('LLMGO_META_MAX_OUTPUT_TOKENS') else None)
     uvicorn.run(app,host='127.0.0.1',port=args.port,access_log=False)

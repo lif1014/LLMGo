@@ -113,11 +113,11 @@ function matrix(rows){
   }target.append(table);
 }
 function renderStatus(s,x){
-  const m=s.meta||{},j=s.active_job||{},r=x.report||{},h=x.heartbeat||{},recovery=s.controller_recovery;
+  const m={...(s.meta||{}),...(globalThis.llmgoMetaPanel?.session()||{})},j=s.active_job||{},r=x.report||{},h=x.heartbeat||{},recovery=s.controller_recovery;
   if(m.token_usage)usage(m.token_usage);
   el("overview").textContent=(labels[s.phase]||s.phase)+" · 工作版本 "+(s.working?.id||s.incumbent?.id||"—")+" · 实测最佳 "+(s.best?.candidate_id||"—")+
     (s.round===0?" · 初始基线（研究轮次0，不是难度0）":" · 第"+s.round+"轮研究")+(j.level!=null?" · 当前评测 L"+j.level+" / "+j.id:"");
-  el("meta-status").textContent="最近记录状态："+show(m.status)+"\n线程："+show(m.thread_id)+"\n轮次："+show(m.turn_id)+"\n工作目录："+show(m.cwd)+
+  el("meta-status").textContent=(m.model?"模型："+m.model+" · "+(m.execution==="gpu_job"?"按需GPU":"API")+" · Thinking "+(m.thinking==null?"未记录":m.thinking?"开启":"关闭")+"\n":"")+"最近记录状态："+show(m.status)+"\n线程："+show(m.thread_id)+"\n轮次："+show(m.turn_id)+"\n工作目录："+show(m.cwd)+
     "\n最近状态时间："+date(m.updated)+"\n记录的进程："+(m.process?m.process.host+" / PID "+m.process.pid:"当前无已记录子进程")+
     (s.research_control?.paused?"\n研究已暂停 · "+show(s.research_control.reason)+"\n既有任务继续监控；解除需 --resume-research":"")+
     (recovery?"\n控制器："+(recovery.status==="waiting"?"等待自动恢复":"暂停，需要处理")+" · "+recovery.stage+" / "+recovery.code+
@@ -533,7 +533,7 @@ async function refresh(){
       if(generation!==state.generation)return;
     }
     state.jobs=s.recent_jobs||[];state.activeJobId=s.active_job?.id;await archivesRead;if(generation!==state.generation)return;
-    renderStatus(s,{});state.totalHours=s.worker_gpu_hours||0;if(state.evaluations.length)curve();
+    renderStatus(s,{});if(globalThis.llmgoMetaPanel)globalThis.llmgoMetaPanel.refresh(state.campaign,s.meta);state.totalHours=s.worker_gpu_hours||0;if(state.evaluations.length)curve();
     el("connection").textContent="概览已更新 · 其余内容载入中";el("connection").className="";
     executorRead.then(x=>{if(generation===state.generation&&sequence===refreshSequence)renderStatus(s,x||{});});
     const latest=[s.active_job,s.latest_job].find(j=>j?.id&&!purgedJob(j)&&!purgedJob(jobInfo(j.id))&&(!state.archivedJobs.has(j.id)||j.id===state.activeJobId))?.id||"";
@@ -565,6 +565,7 @@ async function rawPage(){
   }catch(e){if(state.raw===raw&&raw.generation===state.generation)el("raw-content").textContent=e.message;}
 }
 function selectCampaign(){
+  if(globalThis.llmgoMetaPanel)globalThis.llmgoMetaPanel.reset();
   if(typeof resetIndependent==="function")resetIndependent();
   for(const request of state.requests)request.abort();state.generation++;state.campaign=el("campaign").value;
   state.maintenanceRefresh=0;

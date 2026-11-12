@@ -56,8 +56,10 @@ def _pick_ports(preferred: int, count: int) -> list[int]:
     return chosen
 
 class VllmServer:
-    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None, gpu_memory_utilization: float | None = None) -> None:
+    def __init__(self, model_path: Path, protocol: dict, log_path: Path, port: int, gpu_id: str, python: str | None = None, max_num_seqs: int = 8, async_scheduling: bool | None = None, compilation_config: dict | None = None, gpu_memory_utilization: float | None = None, model_context_length: int | None = None, tool_call_parser: str | None = None) -> None:
         self.model_path = model_path
+        self.model_context_length=model_context_length
+        self.tool_call_parser=tool_call_parser
         self.protocol = protocol
         self.log_path = log_path
         self.port = port
@@ -82,7 +84,7 @@ class VllmServer:
 
     def start(self) -> None:
         max_tokens = int(self.protocol["max_tokens"])
-        max_len = max_tokens + 1024
+        max_len = self.model_context_length or max_tokens + 1024
         cmd = ([self.python, "-I", "-m", "vllm.entrypoints.cli.main"] if self.python else ["vllm"]) + [
             "serve",
             str(self.model_path),
@@ -104,6 +106,8 @@ class VllmServer:
             "--gpu-memory-utilization",
             str(self.gpu_memory_utilization) if self.gpu_memory_utilization is not None else os.environ.get("CHESS_PTB_GPU_MEMORY_UTILIZATION", "0.90"),
         ]
+        if self.tool_call_parser:
+            cmd.extend(["--enable-auto-tool-choice","--tool-call-parser",self.tool_call_parser])
         if self.async_scheduling is not None:
             cmd.append('--async-scheduling' if self.async_scheduling else '--no-async-scheduling')
         if self.compilation_config is not None:

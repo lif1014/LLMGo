@@ -153,7 +153,7 @@ class CctlExecutor:
         # Enumerate own tasks; no blind retry if listings are incomplete or ambiguous.
         for page in range(1, 101):
             response = self.command(["job", "list", "--own", "--cluster", "beijing", "--project",
-                                     self.site["project"], "--pool", "model-autosft",
+                                     self.site["project"], "--pool", intent.get("resource_pool",self.site.get("resource_pool","model-autosft")),
                                      "--page", str(page), "--limit", "100"])
             rows = response if isinstance(response, list) else response.get("tasks", response.get("items", []))
             for row in rows:

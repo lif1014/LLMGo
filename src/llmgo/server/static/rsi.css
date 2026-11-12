@@ -81,3 +81,5 @@ svg { width:100%; background:#fafcf9; } dialog { max-width:90vw; width:1000px; }
 .final-dashboard #final-kpis { margin-top:18px; }.final-dashboard #final-protocol { overflow-wrap:anywhere; font-size:12px; white-space:pre-line; }
 .final-dashboard #final-progress { width:0; }.final-dashboard #final-games button { font-size:12px; }
 .final-dashboard .grpo-kpi strong { font-size:24px; }.final-dashboard select { max-width:480px; }
+
+.meta-stages{display:flex;flex-wrap:wrap;gap:.6rem;list-style:none;padding:0;margin:1rem 0}.meta-stages li{padding:.4rem .7rem;border:1px solid #ccd7e4;border-radius:1.2rem;background:#f3f7fc;font-size:.85rem}.meta-cost{padding:.5rem 1rem;border-left:3px solid #3978b8;background:#f4f8fc}.meta-table{overflow-x:auto;margin-top:1rem}.meta-table table{width:100%;border-collapse:collapse;font-size:.85rem}.meta-table th,.meta-table td{text-align:left;padding:.65rem;border-bottom:1px solid #dce3ed;white-space:nowrap}.meta-invalid{opacity:.7}#meta-job-detail{max-height:28rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}

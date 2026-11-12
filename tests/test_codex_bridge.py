@@ -103,3 +103,28 @@ def test_reasoning_lifecycle_repair_is_delivered_and_original_evidence_is_preser
     assert [r['event'] for r in rows if r['kind']=='stream']==original
     assert len([r for r in rows if r['kind']=='stream_repair'])==2
     assert rows[-1]['kind']=='stream_normalization' and closed==[True]
+
+
+def test_qwen_thinking_reaches_upstream_without_affecting_api_defaults(tmp_path):
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    app=create_app('Qwen3.5-4B','http://127.0.0.1:8100/v1','unused','token',tmp_path/'qwen.jsonl',
+        responder=responder,thinking=True,max_output_tokens=16384)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello','max_output_tokens':32000})
+    assert seen[0]['extra_body']['chat_template_kwargs']['enable_thinking'] is True
+    assert seen[0]['max_output_tokens']==16384 and seen[0]['api_base']=='http://127.0.0.1:8100/v1'
+    seen.clear()
+    app=create_app('deepseek-v4.1-flash','https://provider/v1','unused','token',tmp_path/'api.jsonl',responder=responder)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello'})
+    assert 'extra_body' not in seen[0] and 'max_output_tokens' not in seen[0]
+
+
+def test_local_gpu_endpoint_bypasses_remote_proxy():
+    from llmgo.rsi.codex_bridge import proxy_environment
+    env={'HTTP_PROXY':'remote','https_proxy':'remote','ALL_PROXY':'remote'}
+    local=proxy_environment(env,'http://127.0.0.1:8100/v1')
+    assert not any('proxy' in k.lower() and k.lower()!='no_proxy' for k in local)
+    assert proxy_environment(env,'https://external/v1')['HTTPS_PROXY'].startswith('http://whitelist-proxy')

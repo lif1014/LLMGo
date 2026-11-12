@@ -2,6 +2,15 @@
 
 遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Phase 1 Meta-Agent 只研究 RL，固定 prompt、空 skills、無 harness，禁止 SFT；Phase 2 才開放 RL 和 harness 共同研究。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。詳見 [研究階段規則](docs/phase1-rl-scope.md) 和 [訓練目錄逐檔審核](docs/training-module-audit.md)。
 
+## Meta-Agent 執行方式
+
+DeepSeek API 與按需 GPU Qwen 共用同一套 Codex 工具、研究規則、提案交接與網頁。
+Qwen Meta 使用原始 Qwen3.5-4B、thinking 開啟，每次研究／checkpoint 審查才申請1張H800，
+完成後釋放；Student 仍為 non-thinking。Meta 卡僅用 model-autosft／NORMAL，
+不足1卡且排隊至少5人時可改 model-new／PREEMPTABLE；兩池擁擠則回 autosft。
+被 kill 的嘗試無效，先丟棄其工作副本修改，再重新選池。完整啟動、乾淨研究起點、
+重試與網頁說明見 [Meta 執行方式](docs/meta-execution.md)。新研究需明確啟動，安裝不恢復舊研究。
+
 ## 目錄
 
 | 路徑 | 用途 |

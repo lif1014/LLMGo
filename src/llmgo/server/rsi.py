@@ -269,6 +269,13 @@ def overview(name: str):
     return result
 
 
+@router.get("/campaigns/{name}/meta")
+def meta_status(name: str):
+    from llmgo.rsi.meta_jobs import meta_overview
+    root=campaign(name)
+    return meta_overview(root,campaign_state(root).get("site",{}))
+
+
 @router.get("/campaigns/{name}/activity")
 def activity(name: str, source: Literal["research", "executor"] = "research", cursor: int | None = Query(None, ge=0),
              before: int | None = Query(None, ge=1), limit: int = Query(80, ge=1, le=120)):

@@ -56,11 +56,19 @@ class CodexBackend:
         self.notifications = deque()
         self._secrets = ()
         self._heartbeat_at = 0.
+        self.status_mirror = None
+        self.overview_publisher = None
+        self._activity_at = 0.
 
     def _save(self, **changes):
         old_status = self.session.get("status")
         self.session.update(changes)
+        self.session.update(model=self.site.get("meta_model"),execution=self.site.get("meta_execution","api"),thinking=self.site.get("meta_thinking"))
         atomic_json(self.session_path, self.session)
+        if self.status_mirror:
+            atomic_json(self.status_mirror,self.session)
+        if self.overview_publisher:
+            self.overview_publisher()
         if "status" in changes and changes["status"] != old_status:
             self.memory.append("meta_status", {"status": changes["status"], "thread_id": self.session.get("thread_id"),
                 "turn_id": self.session.get("turn_id"), "cwd": self.session.get("cwd")})
@@ -85,6 +93,14 @@ class CodexBackend:
         """Persist a received message independently of active RPC dispatch."""
         self.memory.append("meta_event" if channel == "protocol" else "meta_stderr",
                            {"message": scrub_known(value, self._secrets), "thread_id": self.session.get("thread_id")})
+        if channel == "protocol" and isinstance(value, dict):
+            method=value.get("method", "")
+            if method.startswith("item/"):
+                item=value.get("params",{}).get("item",{})
+                activity="tool_execution" if self._is_action(item) else "thinking" if "reasoning" in method.lower() or item.get("type")=="reasoning" else "generating"
+                if activity!=self.session.get("activity") or time.monotonic()-self._activity_at>=2:
+                    self._activity_at=time.monotonic()
+                    self._save(activity=activity,updated=utc())
         if channel == "protocol" and isinstance(value, dict) and value.get("method") == "thread/tokenUsage/updated":
             usage = value.get("params", {}).get("tokenUsage")
             if isinstance(usage, dict):
@@ -188,9 +204,14 @@ class CodexBackend:
         self.notifications = deque()
         env = worker_environment(self.site)
         env["CODEX_HOME"] = str(inside(root, self.site["codex_home"]))
+        if self.site.get("meta_thinking") is not None:
+            env["LLMGO_META_THINKING"] = "true" if self.site["meta_thinking"] else "false"
+        if self.site.get("meta_max_output_tokens"):
+            env["LLMGO_META_MAX_OUTPUT_TOKENS"] = str(self.site["meta_max_output_tokens"])
+        env["LLMGO_META_RUNTIME"] = str(Path(self.site.get("runtime_root",root))/"meta-bridge")
         env, self._secrets = runtime_auth(self.site, env)
         instructions = (
-            "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
+            "你是国际象棋自主研究 Meta-Agent。推理可在本次独立GPU任务运行，研究工具与训练提交规则不变。"
             "当前是Phase 1：每轮先读持久Memory、失败记录与跨难度评测，只通过强化学习（RL）提升Qwen3.5-4B；可以修改RL算法、reward、数据选择与课程。"
             "禁止使用SFT（监督微调），包括SFT预热、辅助SFT损失、行为克隆和对教师答案的监督蒸馏；使用SFT，最终得分为0分。"
             "默认训练入口为 scripts/run_grpo.py，冻结配置为 configs/grpo/default.json；原始Qwen3.5-4B、题集、270M reward model 在本仓库 assets。"
@@ -199,7 +220,7 @@ class CodexBackend:
             "每轮交付选样程序或查询、选中的ID清单、分类统计，以及基于学生败局的选样假设；沿用默认数据也用 scripts/report_training_data.py 记录选择。没有败局证据时如实说明是首轮基线假设。无需提交random seed或算力预算比较；允许自主训练、修改RL算法、超参数和reward。"
             "初始checkpoint固定为 assets/models/Qwen3.5-4B，不可换另一初始模型或覆盖原始权重；持续训练可从该模型派生的本研究checkpoint继续。"
             "Phase 1固定Chess-R1非思考prompt、enable_thinking=false和\\boxed{SAN}答案；完整提示见docs/phase1-rl-scope.md和src/llmgo/training/chess_r1.py。训练任务会将recipe、checkpoint、日志和导出模型写入LLMGo!/var/runs/<实验ID>/grpo。"
-            "Phase 1不可改Chess-R1提示或答案协议，不可新增harness.py，skills.json必须保持空数组；不要通过数据字段或训练配置间接更换提示。Phase 2才会开放RL与harness共同研究。"
+            "Phase 1不可改Chess-R1提示或答案协议，不可新增harness.py，skills.json必须保持空数组；不要通过数据字段或训练配置间接更换提示。"
             "请检查每局完整events.jsonl，特别是输棋每一步、模型原文、fallback及终局原因，并据此写假设。"
             "离线教师可用于RL奖励/价值估计和局面分析，不可将教师走法或思考作为SFT目标。RL中的策略梯度和价值函数拟合仍可使用。"
             "开发验证只允许Fairy-Stockfish L2、L2.5、L3；L2.5固定skill -3/depth5/0.125秒。"

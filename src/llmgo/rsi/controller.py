@@ -634,6 +634,8 @@ class Controller:
         if self.state["phase"] != "PLANNING" or self.state.get("active_job") or not self.state.get("workspace"):
             raise ValueError("Recover Meta only at an idle PLANNING boundary with a registered workspace")
         from .meta import CodexBackend
+        if self.site.get("meta_execution")=="gpu_job":
+            raise ValueError("Resume GPU Meta through normal run; its request/intent reconciles without the API session recovery path")
         backend = CodexBackend(self.site, self.memory)
         # Preserve both the prior state and the failing session before recovery.
         folder = self.root / "recoveries" / ("meta-" + str(self.state["round"]) + "-" + digest(backend.session)[:16])
@@ -818,9 +820,9 @@ class Controller:
                 if result["status"] != "research_paused":
                     self._clear_recovery("advance")
                 if result['status']=='needs_training_review':
-                    from .meta import CodexBackend
+                    from .meta_jobs import meta_backend
                     from .training_review import ReviewExpired
-                    active_backend=backend or CodexBackend(self.site,self.memory)
+                    active_backend=backend or meta_backend(self.site,self.memory)
                     prompt=(f"读取context.json、.agents/skills/rsi-training-review/SKILL.md和完整曲线。当前训练在安全checkpoint等待你的决定；请求位于 {result['request']}。"
                         "用户已取消审查的固定截止时间；旧副本中900秒或15分钟的条款已失效，Worker将等待有效决定。"
                         "检查L2/L3结果和败局每一步。选择continue、replan或finish；在proposal.json的training_review写request_id、action、reason、selected_step。"
@@ -867,8 +869,8 @@ class Controller:
                     try:
                         require_research(self.root)
                         if backend is None:
-                            from .meta import CodexBackend
-                            active_backend = CodexBackend(self.site, self.memory)
+                            from .meta_jobs import meta_backend
+                            active_backend = meta_backend(self.site, self.memory)
                         else:
                             active_backend = backend
                         answer = active_backend.turn(workspace, prompt)

@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=local-chess-opponent-1";
+      stylesheet.href = "static/rsi.css?v=meta-on-demand-1";
       document.head.append(stylesheet);
     })();
   </script>
@@ -21,11 +21,21 @@
     <label>研究 <select id="campaign"></select></label><a href="#grpo-metrics-panel">GRPO 训练指标</a><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
   <p id="overview">上传框架并创建 campaign 后，这里显示远端研究状态。</p>
   <div class="status-grid">
-    <section><h2>强 Agent 状态</h2><pre id="meta-status">尚未读取</pre><p id="meta-usage" class="muted">等待服务返回Token用量</p></section>
+    <section><h2>Meta-Agent 状态</h2><pre id="meta-status">尚未读取</pre><p id="meta-usage" class="muted">等待服务返回Token用量</p></section>
     <section><h2>Executor 状态</h2><pre id="executor-state">尚未读取</pre></section>
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
+  <section id="meta-jobs-panel" class="evaluation-panel final-dashboard" aria-label="Meta工作与算力">
+    <div class="grpo-heading"><div><p class="grpo-eyebrow">META RESEARCH</p><h2>Meta-Agent · 工作与算力</h2>
+      <p class="grpo-subtitle">同一研究流程 · API 或按需 GPU · 只在研究与审查时调用模型</p></div></div>
+    <p id="meta-jobs-status" class="grpo-message" role="status">正在读取 Meta 工作记录…</p>
+    <ol id="meta-job-stages" class="meta-stages" aria-label="Meta工作阶段"></ol>
+    <div id="meta-job-cost" class="meta-cost"></div>
+    <div id="meta-jobs-table" class="meta-table"></div>
+    <p class="muted">GPU轮询每600秒；网页每15秒只读磁盘。被终止的尝试保留为无效记录，仍计入真实佔卡成本。执行器只采用成功终态的结果。</p>
+    <details><summary>选中工作的任务、用量与原始记录</summary><pre id="meta-job-detail">选择一项工作查看详情；思考与工具轨迹见下方研究记录。</pre></details>
+  </section>
   <section id="elo-panel" class="evaluation-panel final-dashboard" aria-label="Checkpoint Elo比较">
     <div class="grpo-heading"><div><p class="grpo-eyebrow">CHECKPOINT ARENA</p><h2>Checkpoint · Elo 对战</h2>
       <p class="grpo-subtitle">六个模型状态 · DeepSeek＝1800 · FIDE 表現分 · 保留训练分支</p></div></div>
@@ -47,7 +57,7 @@
   </section>
   <section id="qwen-chess-panel" class="evaluation-panel final-dashboard" aria-label="Qwen3-8B-Chess独立对战">
     <div class="grpo-heading"><div><p class="grpo-eyebrow">LOCAL MODEL MATCH</p><h2>Qwen3-8B-Chess · 独立对战</h2>
-      <p class="grpo-subtitle">累积20步学生 · 40局 · 双方non-thinking／16384 tokens · 同卡双模型</p></div>
+      <p class="grpo-subtitle">所选 checkpoint 学生 · 40局 · 双方non-thinking／16384 tokens · 同卡双模型</p></div>
       <div class="grpo-controls"><label>实验 <select id="local-final-run"></select></label>
         <label><input id="local-final-latest" type="checkbox" checked> 跟随最新测试</label></div></div>
     <p id="local-final-status" class="grpo-message" role="status">正在查找测试记录…</p>
@@ -105,7 +115,7 @@
         </aside>
       </div>
     </section>
-    <section><h2>强 Agent · 复盘与工具</h2>
+    <section><h2>Meta-Agent · 复盘与工具</h2>
       <div class="toolbar"><label>事件 <select id="coach-filter"><option value="all">全部</option><option value="text">文字/思考</option><option value="tool">工具/命令</option><option value="usage">Token用量</option><option value="request">请求</option><option value="error">异常</option><option value="lifecycle">轮次状态</option></select></label>
         <button id="coach-older">较早事件</button><button id="coach-live-button">返回实时</button></div>
       <p id="coach-window" class="muted"></p><details open><summary>最近可见思考/回答（有界窗口）</summary><pre id="coach-live"></pre></details>
@@ -116,6 +126,7 @@
       <p id="cost"></p><div id="results" class="feed"></div></section>
   </main>
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
+  <script src="static/rsi-meta.js?v=meta-on-demand-1"></script>
   <script>
     function loadDashboardScript(src, statusId, ready, attempt = 0) {
       const script = document.createElement("script");
@@ -129,9 +140,9 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=local-chess-opponent-1", "connection");
+    loadDashboardScript("static/rsi.js?v=meta-on-demand-1", "connection");
   </script>
-<script src="static/rsi-final.js?v=local-chess-opponent-1"></script>
+<script src="static/rsi-final.js?v=meta-on-demand-1"></script>
 <script src="static/rsi-elo.js?v=checkpoint-elo-40parallel-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>

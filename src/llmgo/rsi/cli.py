@@ -35,10 +35,13 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
             import torch
             check("gpu", torch.cuda.is_available(), f"{torch.cuda.device_count()} visible devices")
     else:
-        check("codex_config", (Path(site["codex_home"])/"config.toml").is_file(), site["codex_home"])
+        if site.get("meta_execution")=="gpu_job":
+            check("meta_model",(Path(site["meta_model_path"])/"config.json").is_file(),site["meta_model_path"])
+        else:
+            check("codex_config", (Path(site["codex_home"])/"config.toml").is_file(), site["codex_home"])
         check("codex_program", shutil.which(site["codex_bin"]), site["codex_bin"])
         check("cctl_program", shutil.which(site["cctl_bin"]), site["cctl_bin"])
-        if codex_auth:
+        if codex_auth and site.get("meta_execution","api")=="api":
             try:
                 config_path = Path(site["codex_home"])/"config.toml"
                 config = tomllib.loads(config_path.read_text()) if config_path.is_file() else {}
@@ -125,6 +128,8 @@ def main(argv=None):
     root = inside(site["user_root"], Path(site["campaign_root"]) / identifier(args.campaign))
     if args.command == "init":
         controller = Controller.create(site, args.campaign)
+        from .meta_jobs import publish_meta_overview
+        publish_meta_overview(controller.root,site)
         result = {"campaign": str(root), "state": controller.state}
     else:
         if not root.is_dir():

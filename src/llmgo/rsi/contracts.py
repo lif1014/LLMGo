@@ -91,6 +91,10 @@ def load_site(path: str | Path) -> dict:
         raise ValueError('Exactly one active or uncertain HIGH submission is allowed')
     if site.get('training_review') and site.get('executor_mode') != 'external':
         raise ValueError('Training reviews require an external Executor')
+    if site.get("meta_execution","api") not in {"api","gpu_job"}:
+        raise ValueError("Unknown Meta execution mode")
+    if site.get("meta_execution")=="gpu_job" and site.get("meta_thinking") is not True:
+        raise ValueError("Qwen GPU Meta uses thinking=true; Student remains non-thinking")
     # Legacy sites may still carry the removed review deadline. Reviews now
     # wait for the Agent's decision; never forward a misleading old limit.
     site.pop('review_timeout_seconds',None)

@@ -57,3 +57,5 @@ L2/L3 正式學生推論請求預設不設客戶端時間期限（`timeout=None`
 驗證期間的 vLLM 就緒等待、harness 子程序、UCI 啟動及通訊同樣不設時間期限。DeepSeek 客戶端預設也不設 socket 期限。這不改變對手難度所用的 UCI 搜尋時間，亦不改變 token／棋步上限。服務真的退出或網路回傳錯誤時保留未完成紀錄；清理已退出階段的子程序仍可使用關閉期限。
 
 每個驗證服務另設 `VLLM_ENGINE_READY_TIMEOUT_S=-1`，讓 vLLM 0.17 內部等待 EngineCore 的 ZeroMQ poll 無期限；不再只移除外層 readiness deadline 卻留下內層 600 秒限制。每卡一個 TP=1 副本沿用單程序 executor，沒有多卡 executor 的 execute-model RPC 期限。此設定只加到該次評測的服務子程序，不修改共享 vLLM 安裝或 GRPO 訓練環境。
+
+Meta 審查可使用原 API backend 或按需1GPU Qwen thinking backend；選池、kill無效與重試由普通Python管理，研究決策流程共用。詳見 [Meta execution](meta-execution.md)。學生原 allocation 在審查時仍保留，Meta卡另算；這次不改為跨任務釋放學生GPU。

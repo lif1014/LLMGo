@@ -12,6 +12,9 @@ HIGH 與訓練共用單一名額；名額被佔用時選其他池，不影響訓
 被 kill 的嘗試無效，先丟棄其工作副本修改，再重新選池。完整啟動、乾淨研究起點、
 重試與網頁說明見 [Meta 執行方式](docs/meta-execution.md)。新研究需明確啟動，安裝不恢復舊研究。
 
+新 Meta 研究的證據定位、完整棋譜統計與提案交接見 [操作手冊](docs/meta-research-operations.md)；
+不含歷史結論的訓練介面見 [新研究 GRPO 操作](docs/clean-grpo-pipeline.md)。
+
 ## 目錄
 
 | 路徑 | 用途 |

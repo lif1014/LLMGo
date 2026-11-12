@@ -190,17 +190,20 @@ def test_gpu_worker_uses_same_codex_runner_and_releases_service(tmp_path,monkeyp
 
 
 def test_clean_start_excludes_teacher_history_and_routes_outputs(tmp_path):
-    from llmgo.rsi.clean_start import prepare
+    from llmgo.rsi.clean_start import prepare,DOCS
     repo=tmp_path/'repo';repo.mkdir()
     for folder in ('src','scripts','tests','.agents','configs/grpo','assets','var/runs','docs'):(repo/folder).mkdir(parents=True,exist_ok=True)
     (repo/'src/code.py').write_text('print(1)')
     (repo/'var/runs/old-results.json').write_text('SECRET_RESEARCH_RESULT')
     (repo/'docs/grpo-maintenance.md').write_text('OLD_RESEARCH_CONCLUSION')
-    for name in ('lichess-data.md','training-reviews.md','meta-execution.md'):(repo/'docs'/name).write_text('generic contract')
+    for name in DOCS:(repo/'docs'/name).write_text('generic contract '+name)
     atomic_json(repo/'configs/grpo/default.json',{})
     site=tmp_path/'site.json';atomic_json(site,{'repo':str(repo)})
     target=tmp_path/'clean';result=prepare(repo,target,site)
     assert result.exists() and not (target/'docs/grpo-maintenance.md').exists()
+    assert (target/'docs/grpo-pipeline.md').read_text()=='generic contract clean-grpo-pipeline.md'
+    assert (target/'docs/rsi-operations.md').read_text()=='generic contract meta-research-operations.md'
+    assert (target/'AGENTS.md').read_text()=='generic contract meta-workspace-agents.md'
     assert not (target/'.git').exists() and (target/'var/runs').resolve()==repo/'var/runs'
     manifest=read_json(target/'clean-start.json')
     assert not any('old-results' in n or 'maintenance' in n for n in manifest['source_files'])

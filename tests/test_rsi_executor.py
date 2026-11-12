@@ -87,7 +87,8 @@ def result_for(c, job):
                "seed_schedule": payload["seed_schedule"], "model_identity": {"sha256": "fixture-model"}}
     metrics["statistics"] = batch_stats(metrics, expected_games=payload["protocol"]["games"])
     path = Path(payload["output"])/"metrics.json"
-    atomic_json(path, metrics)
+    from evidence_fixtures import with_raw_games
+    atomic_json(path, with_raw_games(metrics,path.parent,payload['protocol']))
     atomic_json(path.with_name("result.json"), {"manifest_sha256": job["sha256"], "artifact": str(path),
                                                "artifact_sha256": file_hash(path), "worker_wall_seconds": 99,
                                                "allocated_gpu_count": 1})

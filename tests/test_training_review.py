@@ -119,8 +119,9 @@ def loop_fixture(tmp_path):
         games=[{'game_id':f'{i}-{side}','pair_id':i,'model_seat':side,
                 'result':'draw' if step!=5 else f'{side}_win'} for i in range(payload['protocol']['games']//2) for side in ('white','black')]
         path=Path(payload['output'])/'metrics.json'
-        atomic_json(path,{'games':games,'model_identity':model_identity(payload['model_path']),
-            'source_identity':payload['source']['sha256'],'protocol_identity':digest(payload['protocol'])})
+        from evidence_fixtures import with_raw_games
+        atomic_json(path,with_raw_games({'games':games,'model_identity':model_identity(payload['model_path']),
+            'source_identity':payload['source']['sha256'],'protocol_identity':digest(payload['protocol'])},path.parent,payload['protocol']))
         return path
     def sleeper(_):
         path=Path(read_json(output/'scaling/pending-review.json')['path']);r=request(path)

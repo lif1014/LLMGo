@@ -319,9 +319,17 @@ class Controller:
         self.state["evaluation_cursor"] += 1
         self.state["phase"] = "BASELINE" if job["role"] == "baseline" else "EVALUATING"
 
+    def research_context(self, *, review=None):
+        from .research_evidence import publish_evidence
+        context=self.memory.context()
+        context['research_evidence']=publish_evidence(self.root,self.state,review=review)
+        return context
+
     def workspace(self):
         if self.state.get("workspace"):
-            return Path(self.state["workspace"])
+            folder=Path(self.state["workspace"])
+            atomic_json(folder/"context.json",self.research_context())
+            return folder
         self.state["round"] += 1
         folder = inside(self.site["user_root"], Path(self.site["worktree_root"])/self.state["campaign_id"]/f"round-{self.state['round']:06d}")
         parent = self.state["working"]
@@ -330,7 +338,7 @@ class Controller:
         # Preserve the parent cards so phase 1 can verify that they stay empty.
         if parent.get("skills_path"):
             shutil.copy2(parent["skills_path"], folder/"skills.json")
-        atomic_json(folder/"context.json", self.memory.context())
+        atomic_json(folder/"context.json", self.research_context())
         atomic_json(folder/"proposal.json", {"hypothesis": "Describe the next experiment", "evidence_refs": [],
             "jobs": [], "evaluation": evaluation_plan({"levels":[2,3]}), "recommend": False})
         self.state["workspace"] = str(folder)
@@ -356,7 +364,7 @@ class Controller:
         if not workspace.exists():
             source_snapshot(Path(payload['candidate_source']['root']),workspace)
             atomic_json(workspace/'proposal.json',{'hypothesis':f"Review training step {p['step']}",'jobs':[]})
-        atomic_json(workspace/'context.json',{'campaign':self.memory.context(),'training_review':review,
+        atomic_json(workspace/'context.json',{'campaign':self.research_context(review=review),'training_review':review,
             'curve':read_json(p['curve_path'])})
         self.state['training_review']={'request':str(path),'workspace':str(workspace),'step':p['step'],'request_id':review['request_id']}
         self.save()
@@ -860,7 +868,9 @@ class Controller:
                         "初始Qwen3.5-4B checkpoint固定，可继续本研究派生checkpoint。默认仍用现有筛选数据；可自主决定是否使用新的完整Lichess训练池、如何筛选与混合。"
                         "完整池位于 assets/datasets/lichess/20261103/boxed-nonthinking-v2，先检查verification.json。详见docs/lichess-data.md。"
                         "允许修改超参和reward等；无需random seed或算力预算比较。每轮交付选样程序/查询、ID清单、分类统计、基于败局的选样假设；沿用默认数据也记录选择。"
-                        "先做有证据的假设与资源计划，再提出训练或 L2/L2.5/L3 Fairy-Stockfish 开发验证。"
+                        "用户要求先围绕L2失败模式提交并执行RL训练，不以先做L2.5诊断代替首个训练方案；训练策略自主选择。"
+                        "context.research_evidence直接提供已核验的正式metrics、完整逐手时间线和固定分析Python。先读该索引与OPERATOR_GUIDANCE.md（若存在），不要猜路径、解压JSONL或安装依赖。"
+                        "正式metrics是分数唯一来源；评测协议不可修改，禁止把对局截为4步，展示截取不用于长度统计。"
                         "L2/L3 后续基线和验证每档40局、白黑各20局，共80局共享队列；每个评测vLLM副本max_num_seqs=20。五次重复局面自动和棋，棋步上限300半步（150回合）。旧规则与旧局数的结果保留，不混为相同协议。默认每5个optimizer step保存完整checkpoint并验证，验证后你决定continue、replan或finish；读取rsi-training-review技能。"
                         "保留全部中间checkpoint、原始得分与observed-best曲线；不把观测最优包络当作实际能力单调增长。DeepSeek non-thinking只留给用户做最终测试。每任务最多8 GPU，默认HIGH，同时最多一个HIGH任务。"
                         "按 docs/grpo-pipeline.md 的 recipe 与输出目录提交，训练和评测的 logs、JSON 与逐步棋谱全部写到远端项目 var/runs。"
@@ -897,7 +907,7 @@ class Controller:
                     except (ValueError, FileNotFoundError, TypeError) as exc:
                         self.memory.append("proposal_invalid", {"error": str(exc)})
                         self.state["meta_stalls"] += 1
-                        atomic_json(workspace/"context.json", self.memory.context())
+                        atomic_json(workspace/"context.json", self.research_context())
                         if self.state["meta_stalls"] >= 3:
                             self.state.update(phase="NEEDS_INPUT", needs_input=str(exc), resume_phase="PLANNING")
                         self.save()

@@ -4,7 +4,8 @@ from pathlib import Path
 
 from .contracts import atomic_json,digest,file_hash,read_json
 
-DOCS=('lichess-data.md','training-reviews.md','meta-execution.md')
+DOCS=('lichess-data.md','training-reviews.md','meta-execution.md',
+      'meta-research-operations.md','clean-grpo-pipeline.md','meta-workspace-agents.md')
 
 
 def prepare(repo,target,site_path):
@@ -40,8 +41,11 @@ Meta tasks use HIGH/model-autosft (sharing the single HIGH slot) or PREEMPTABLE/
 model-claw-tool, model-codeagent2. The framework selects available cards; never submit Meta cards yourself.
 All artifacts stay in this study's campaign/workspace/run paths. Do not read other studies.
 '''
-    for name in ('phase1-rl-scope.md','grpo-pipeline.md','rsi-operations.md'):(docs/name).write_text(scope)
+    (docs/'phase1-rl-scope.md').write_text(scope)
+    shutil.copy2(repo/'docs/clean-grpo-pipeline.md',docs/'grpo-pipeline.md')
+    shutil.copy2(repo/'docs/meta-research-operations.md',docs/'rsi-operations.md')
     (target/'README.md').write_text(scope)
+    shutil.copy2(repo/'docs/meta-workspace-agents.md',target/'AGENTS.md')
     (target/'assets').symlink_to(repo/'assets',target_is_directory=True)
     # Keep artifact locations compatible with the existing dashboard and Executor.
     # This is routing, not a read-isolation boundary.

@@ -208,7 +208,7 @@ class CodexBackend:
             env["LLMGO_META_THINKING"] = "true" if self.site["meta_thinking"] else "false"
         if self.site.get("meta_max_output_tokens"):
             env["LLMGO_META_MAX_OUTPUT_TOKENS"] = str(self.site["meta_max_output_tokens"])
-        env["LLMGO_META_RUNTIME"] = str(Path(self.site.get("runtime_root",root))/"meta-bridge")
+        env["LLMGO_META_RUNTIME"] = str(self.site.get("meta_bridge_root",Path(self.site.get("runtime_root",root))/"meta-bridge"))
         env, self._secrets = runtime_auth(self.site, env)
         instructions = (
             "你是国际象棋自主研究 Meta-Agent。推理可在本次独立GPU任务运行，研究工具与训练提交规则不变。"

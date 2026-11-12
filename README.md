@@ -6,8 +6,9 @@
 
 DeepSeek API 與按需 GPU Qwen 共用同一套 Codex 工具、研究規則、提案交接與網頁。
 Qwen Meta 使用原始 Qwen3.5-4B、thinking 開啟，每次研究／checkpoint 審查才申請1張H800，
-完成後釋放；Student 仍為 non-thinking。Meta 卡僅用 model-autosft／NORMAL，
-不足1卡且排隊至少5人時可改 model-new／PREEMPTABLE；兩池擁擠則回 autosft。
+完成後釋放；Student 仍為 non-thinking。Meta 卡可用 model-autosft／HIGH，
+或 model-new、model-claw-tool、model-codeagent2／PREEMPTABLE，優先選空閒 H800 較多的池。
+HIGH 與訓練共用單一名額；名額被佔用時選其他池，不影響訓練。
 被 kill 的嘗試無效，先丟棄其工作副本修改，再重新選池。完整啟動、乾淨研究起點、
 重試與網頁說明見 [Meta 執行方式](docs/meta-execution.md)。新研究需明確啟動，安裝不恢復舊研究。
 

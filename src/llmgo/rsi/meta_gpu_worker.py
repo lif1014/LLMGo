@@ -46,7 +46,7 @@ def run(request_path,*,server_class=VllmServer,backend_class=CodexBackend):
             'experimental_bearer_token = "local-loopback-only"','requires_openai_auth = false',
             'supports_websockets = false'])+'\n'
         (home/'config.toml').write_text(config);(home/'config.toml').chmod(0o600)
-        site.update(codex_home=str(home),meta_thinking=True)
+        site.update(codex_home=str(home),meta_thinking=True,meta_bridge_root=str(attempt/'bridge'))
         stage('running')
         memory=MemoryStore(request['campaign_root'])
         backend=backend_class(site,memory)

@@ -15,23 +15,33 @@ A paused campaign is never resumed by installing this feature.
 
 ## Resource policy
 
-Meta inference always requests exactly one H800. It never requests HIGH.
+Meta inference always requests exactly one H800. The November12 operator update allows:
 
-| model-autosft H800 headroom / queue | model-new H800 headroom / queue | Selection |
-|---|---|---|
-| At least1 free, or fewer than5 queued people | Any | model-autosft / NORMAL |
-| Fewer than1 free AND at least5 queued people | At least1 free, or fewer than5 queued people | model-new / PREEMPTABLE |
-| Fewer than1 free AND at least5 queued people | Zero free AND at least5 queued people | model-autosft / NORMAL |
+| Pool | Meta priority |
+|---|---|
+| model-autosft | HIGH |
+| model-new | PREEMPTABLE |
+| model-claw-tool | PREEMPTABLE |
+| model-codeagent2 | PREEMPTABLE |
 
-Headroom is the current pool H800 quota `capacity-used` in beijing, not a promise of
-immediate placement. Queue people are distinct visible submitters of queued H800 jobs,
-not GPU count or duplicate jobs by the same person. `meta_min_free_gpus=1` defines
-"too few" for this one-card request. Missing/incomplete telemetry conservatively selects
-NORMAL/autosft; it never authorizes HIGH or guesses zero queue. Other users' task details,
-commands and credentials are neither modified nor fed to the research model.
+Choose the pool with the most available H800 quota headroom; ties prefer fewer queued
+people, then fewer queued tasks, then table order. If none has a free card, choose the
+shortest queue. This replaces the earlier two-pool/five-person threshold policy.
+Headroom is `capacity-used` in beijing, not a guarantee of immediate placement. Queued
+people are distinct visible H800 submitters, excluding CPU jobs and other GPU types.
+
+HIGH admission is shared with Student training: one active or uncertain HIGH submission
+across both. If that slot is occupied, exclude autosft and select a PREEMPTABLE pool.
+Selection checks availability and submission rechecks under the existing shared file lock;
+an uncertain HIGH create retains its reservation until reconciled. A queued own HIGH Meta
+task does not count as a competing HIGH task when deciding whether to move pools.
+A failed pool query excludes its telemetry; if all queries fail, retain the warnings and
+queue in model-new/PREEMPTABLE without assuming available capacity or claiming a free HIGH
+slot. Existing NORMAL attempts retain their recorded priority and remain reconcilable.
+Other users' tasks are never stopped or modified; queue summaries alone inform selection.
 
 Platform polls are persisted and at least600 seconds apart, including Controller restart.
-Before each new allocation and after a killed attempt, both pools are re-evaluated. If a
+Before each new allocation and after a killed attempt, all four pools are re-evaluated. If a
 still-queued own Meta task belongs in the other pool, its identity is checked, it is stopped,
 and a replacement is submitted only after the original is confirmed terminal. Running
 tasks are not killed merely because queue conditions changed.
@@ -42,7 +52,7 @@ baseline before retry. Each attempt gets a new Codex home/session and prompt att
 Only a platform-Succeeded allocation with the matching request result can be adopted.
 Other execution failures stop for diagnosis rather than endlessly repeating deterministic
 errors. Ambiguous create responses retain the intent and reconcile the exact own task;
-there is no blind duplicate submission. The existing single-HIGH training admission is unchanged.
+there is no blind duplicate submission. Training and Meta use the same HIGH admission registry.
 
 ## New study and launch
 

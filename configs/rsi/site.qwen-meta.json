@@ -50,6 +50,5 @@
   "meta_max_output_tokens": 16384,
   "meta_cpu": 8,
   "meta_memory_gib": 64,
-  "meta_min_free_gpus": 1,
   "control_python": "/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python"
 }

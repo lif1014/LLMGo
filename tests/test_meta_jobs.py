@@ -8,10 +8,18 @@ from llmgo.rsi.memory import MemoryStore
 from llmgo.rsi.meta_jobs import GpuMetaBackend,ApiMetaBackend,choose_pool,pool_snapshot,meta_backend,meta_overview
 
 
-@pytest.mark.parametrize('af,aq,nf,nq,want',[(1,8,8,0,'model-autosft'),(0,4,8,0,'model-autosft'),
-    (0,5,1,5,'model-new'),(0,5,0,4,'model-new'),(0,5,0,5,'model-autosft'),(0,8,0,8,'model-autosft')])
-def test_pool_thresholds(af,aq,nf,nq,want):
-    assert choose_pool({'free_gpus':af,'queued_people':aq},{'free_gpus':nf,'queued_people':nq})==want
+@pytest.mark.parametrize('free,queues,want',[
+    ([1,8,4,1],[0,0,0,0],'model-new'),
+    ([0,0,4,1],[3,1,2,0],'model-claw-tool'),
+    ([0,0,0,2],[1,1,1,9],'model-codeagent2'),
+    ([4,4,4,4],[0,0,0,0],'model-autosft'),
+    ([0,0,0,0],[5,2,3,4],'model-new'),
+])
+def test_available_card_first_policy(free,queues,want):
+    from llmgo.rsi.meta_jobs import POOL_IDS
+    snapshots={p:{'free_gpus':f,'queued_people':q,'queued_tasks':q} for p,f,q in zip(POOL_IDS,free,queues)}
+    assert choose_pool(snapshots)==want
+    if want=='model-autosft':assert choose_pool(snapshots,exclude={'model-autosft'})=='model-new'
 
 
 def test_queue_counts_people_not_jobs_and_only_h800():
@@ -50,10 +58,10 @@ def test_killed_result_and_edits_are_discarded_then_reselect(tmp_path):
                 desc=read_json(attempt/'report.json')['description']
                 return {'id':index,'status':'Killed' if index==1 else 'Succeeded','stopReason':'PREEMPTED',
                     'description':desc,'project':'rsi','cluster':'beijing','resourcePoolId':523 if index==1 else 525,
-                    'priority':'PREEMPTABLE' if index==1 else 'NORMAL','resourcesTotal':{'gpuCount':1}}
+                    'priority':'PREEMPTABLE' if index==1 else 'HIGH','resourcesTotal':{'gpuCount':1}}
             raise AssertionError(args)
     class Backend(GpuMetaBackend):
-        def select_pool(self):return ('model-new' if not creates else 'model-autosft'),{}
+        def select_pool(self,**kwargs):return ('model-new' if not creates else 'model-autosft'),{}
         def submit(self,attempt,report):
             creates.append(attempt)
             report.update(task_id=len(creates),description='own-meta-'+str(len(creates)),status='queued',next_poll_at=clock[0]+600)
@@ -65,7 +73,7 @@ def test_killed_result_and_edits_are_discarded_then_reselect(tmp_path):
     assert read_json(creates[0]/'report.json')['status']=='invalid'
     assert (creates[0]/'discarded-workspace/proposal.json').read_text()=='invalid edit'
     assert meta_overview(memory.root,site)['current']['status']=='completed'
-    assert all(read_json(a/'report.json')['priority']!='HIGH' for a in creates)
+    assert [read_json(a/'report.json')['priority'] for a in creates]==['PREEMPTABLE','HIGH']
     # Restart must return the successful result without another submission.
     assert backend.turn(workspace,'research')==answer and len(creates)==2
 
@@ -83,7 +91,7 @@ def test_queued_task_only_moves_after_identity_check(tmp_path):
                     'resourcePoolId':523 if i==1 else 525,'priority':report['priority'],'resourcesTotal':{'gpuCount':1}}
             raise AssertionError(args)
     class Backend(GpuMetaBackend):
-        def select_pool(self):return ('model-new' if not created else 'model-autosft'),{}
+        def select_pool(self,**kwargs):return ('model-new' if not created else 'model-autosft'),{}
         def submit(self,a,r):
             created.append(a);r.update(task_id=len(created),description='mine',next_poll_at=clock[0]+600)
             atomic_json(a/'report.json',r)
@@ -92,7 +100,7 @@ def test_queued_task_only_moves_after_identity_check(tmp_path):
     assert stopped==['1'] and gets[:2]==[(1,600.),(1,1200.)]
 
 
-def test_meta_submission_is_one_gpu_never_high_and_intent_survives_uncertainty(tmp_path):
+def test_preemptable_submission_is_one_gpu_and_intent_survives_uncertainty(tmp_path):
     from llmgo.remote.cctl import SubmissionUncertain
     site,memory,workspace=fixture(tmp_path);attempt=tmp_path/'attempt';attempt.mkdir()
     atomic_json(attempt/'worker-request.json',{'source':{'root':'/frozen'}})
@@ -109,12 +117,12 @@ def test_meta_submission_is_one_gpu_never_high_and_intent_survives_uncertainty(t
     assert read_json(attempt/'submission.json')['status']=='SUBMITTING'
 
 
-def test_unknown_telemetry_uses_normal_autosft(tmp_path):
+def test_unknown_telemetry_uses_preemptable_without_guessing_high(tmp_path):
     site,memory,workspace=fixture(tmp_path)
     class Platform:
         def command(self,args):raise OSError('unavailable')
     pool,snapshot=GpuMetaBackend(site,memory,transport=Platform()).select_pool()
-    assert pool=='model-autosft' and snapshot['warning']
+    assert pool=='model-new' and snapshot['model-new']['warning'] and not snapshot['high_admission']['available']
 
 
 def test_api_and_legacy_share_projection_without_gpu(tmp_path,monkeypatch):
@@ -155,6 +163,7 @@ def test_gpu_worker_uses_same_codex_runner_and_releases_service(tmp_path,monkeyp
         def __init__(self,s,m):
             assert s['meta_thinking'] is True
             assert 'deepseek' not in str(s['codex_home'])
+            assert Path(s['meta_bridge_root'])==attempt/'bridge'
         def turn(self,w,p):
             assert w==workspace and 'GPU研究尝试' in p
             return {'status':'needs_input','summary':'ok','proposal_path':None}
@@ -186,3 +195,77 @@ def test_clean_start_excludes_teacher_history_and_routes_outputs(tmp_path):
     manifest=read_json(target/'clean-start.json')
     assert not any('old-results' in n or 'maintenance' in n for n in manifest['source_files'])
     with pytest.raises(FileExistsError):prepare(repo,target,site)
+
+
+def test_high_selection_excludes_own_training_and_keeps_other_pools(tmp_path):
+    site,memory,workspace=fixture(tmp_path)
+    class Platform:
+        def __init__(self):self.site=site
+        def command(self,args):
+            if args[:2]==['task','list']:return {'tasks':[{'id':9,'priority':'HIGH','status':'Running'}]}
+            if args[0]=='pool':
+                free={'model-autosft':10,'model-new':2,'model-claw-tool':4,'model-codeagent2':1}[args[2]]
+                return {'edges':{'resource_quotas':[{'name':'h800','capacity':free,'used':0,'edges':{'cluster':{'name':'beijing'}}}]}}
+            return {'tasks':[]}
+    pool,selection=GpuMetaBackend(site,memory,transport=Platform()).select_pool()
+    assert pool=='model-claw-tool' and not selection['high_admission']['available']
+
+
+@pytest.mark.parametrize('pool,pool_id',[('model-autosft',525),('model-new',523),('model-claw-tool',515),('model-codeagent2',514)])
+def test_each_pool_submits_exact_priority_and_one_gpu(tmp_path,pool,pool_id):
+    from llmgo.rsi.meta_jobs import PRIORITIES
+    site,memory,workspace=fixture(tmp_path);attempt=tmp_path/'attempt';attempt.mkdir()
+    atomic_json(attempt/'worker-request.json',{'source':{'root':'/frozen'}})
+    calls=[]
+    class Platform:
+        def __init__(self):self.site=site
+        def command(self,args):
+            calls.append(args)
+            if args[:2]==['task','list']:return {'tasks':[]}
+            if '--dry-run' in args:return {'request':{'task':{'resource_pool_id':pool_id,'priority':1 if pool_id==525 else 3,'resources':{'gpu_count':1}}}}
+            return {'id':7,'status':'Queued'}
+    GpuMetaBackend(site,memory,transport=Platform()).submit(attempt,{'pool':pool,'priority':PRIORITIES[pool],'request_id':'fixture'})
+    args=calls[-1]
+    assert args[args.index('--gpu')+1]=='1' and args[args.index('--priority')+1]==PRIORITIES[pool]
+    if pool=='model-autosft':assert str(attempt/'submission.json') in read_json(Path(site['repo'])/'var/runtime/high-admission/reservations.json')
+
+
+def test_high_race_falls_back_without_duplicate_create(tmp_path):
+    site,memory,workspace=fixture(tmp_path);attempt=tmp_path/'attempt';attempt.mkdir()
+    atomic_json(attempt/'worker-request.json',{'source':{'root':'/frozen'}});creates=[]
+    class Platform:
+        def __init__(self):self.site=site
+        def command(self,args):
+            if args[:2]==['task','list']:return {'tasks':[{'id':8,'priority':'HIGH','status':'Running'}]}
+            if '--dry-run' in args:
+                auto=args[args.index('--resource-pool')+1]=='model-autosft'
+                return {'request':{'task':{'resource_pool_id':525 if auto else 514,'priority':1 if auto else 3,'resources':{'gpu_count':1}}}}
+            creates.append(args);return {'id':7,'status':'Queued'}
+    class Backend(GpuMetaBackend):
+        def select_pool(self,**kwargs):
+            assert 'model-autosft' in kwargs['exclude'];return 'model-codeagent2',{}
+    Backend(site,memory,transport=Platform()).submit(attempt,{'pool':'model-autosft','priority':'HIGH','request_id':'fixture'})
+    assert len(creates)==1 and read_json(attempt/'submission.json')['resource_pool']=='model-codeagent2'
+
+
+def test_meta_uncertain_high_reserves_training_slot_and_own_queued_is_not_competitor(tmp_path):
+    from llmgo.remote.high_admission import high_available,high_slot,AdmissionBusy
+    from llmgo.remote.cctl import SubmissionUncertain
+    site,memory,workspace=fixture(tmp_path);attempt=tmp_path/'attempt';attempt.mkdir()
+    atomic_json(attempt/'worker-request.json',{'source':{'root':'/frozen'}})
+    class Platform:
+        def __init__(self):self.site=site;self.rows=[]
+        def command(self,args):
+            if args[:2]==['task','list']:return {'tasks':self.rows}
+            if args[:2]==['job','get']:return {'status':'Queued'}
+            if '--dry-run' in args:return {'request':{'task':{'resource_pool_id':525,'priority':1,'resources':{'gpu_count':1}}}}
+            raise OSError('unknown create outcome')
+    transport=Platform()
+    with pytest.raises(SubmissionUncertain):
+        GpuMetaBackend(site,memory,transport=transport).submit(attempt,{'pool':'model-autosft','priority':'HIGH','request_id':'fixture'})
+    with pytest.raises(AdmissionBusy):
+        with high_slot(transport,tmp_path/'training/submission.json'):raise AssertionError('must not create')
+    intent=attempt/'submission.json';data=read_json(intent);data['task_id']=7;atomic_json(intent,data)
+    transport.rows=[{'name':'tasks/7','priority':'HIGH','status':'Queued'}]
+    assert high_available(transport,intent)==(True,None)
+    assert high_available(transport)[0] is False

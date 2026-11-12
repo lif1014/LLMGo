@@ -1,7 +1,8 @@
-"""Common Meta request records and on-demand GPU execution, independent of training HIGH jobs."""
+"""Common Meta request records and on-demand GPU execution with shared HIGH admission."""
 from __future__ import annotations
 
 from datetime import datetime,timezone
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import shlex
@@ -14,11 +15,12 @@ from .memory import MemoryStore
 from .meta_protocol import MetaFailure
 from .research_control import require_research,ResearchPaused
 from llmgo.remote.cctl import CctlExecutor,SubmissionUncertain,_task_id
+from llmgo.remote.high_admission import high_available,high_slot,AdmissionBusy
 
 QUEUED={'Creating','Created','Pending','Scheduling','Queued','Requeue'}
 TERMINAL={'Succeeded','Failed','Killed','Stopped','OOMKilled','ImagePullBackOff','Invalid'}
-POOL_IDS={'model-autosft':525,'model-new':523}
-PRIORITIES={'model-autosft':'NORMAL','model-new':'PREEMPTABLE'}
+POOL_IDS={'model-autosft':525,'model-new':523,'model-claw-tool':515,'model-codeagent2':514}
+PRIORITIES={pool:'HIGH' if pool=='model-autosft' else 'PREEMPTABLE' for pool in POOL_IDS}
 
 
 def meta_mode(site):
@@ -61,11 +63,18 @@ def pool_snapshot(transport,pool):
         'free_scope':'H800 quota capacity minus used, not a placement guarantee','observed':utc()}
 
 
-def choose_pool(autosft,new,minimum_free=1):
-    crowded=lambda p:p['free_gpus']<minimum_free and p['queued_people']>=5
-    if crowded(autosft) and not (new['free_gpus']==0 and new['queued_people']>=5):
-        return 'model-new'
-    return 'model-autosft'
+def choose_pool(snapshots,*,exclude=()):
+    """Prefer available H800s, then the shorter queue; fixed order breaks exact ties."""
+    pools=[p for p in POOL_IDS if p not in exclude and 'free_gpus' in snapshots.get(p,{})]
+    if not pools:
+        # Authorized preemptable fallback; unknown headroom is never reported as zero.
+        return next(p for p in PRIORITIES if p!='model-autosft' and p not in exclude)
+    free=[p for p in pools if snapshots[p]['free_gpus']>=1]
+    order=list(POOL_IDS)
+    if free:
+        return min(free,key=lambda p:(-snapshots[p]['free_gpus'],snapshots[p]['queued_people'],
+            snapshots[p]['queued_tasks'],order.index(p)))
+    return min(pools,key=lambda p:(snapshots[p]['queued_people'],snapshots[p]['queued_tasks'],order.index(p)))
 
 
 def request_record(root,workspace,prompt,site):
@@ -204,7 +213,7 @@ class GpuMetaBackend:
                     continue
                 report['status']='queued' if status in QUEUED else 'running'
                 if status in QUEUED:
-                    pool,snapshot=self.select_pool()
+                    pool,snapshot=self.select_pool(current_intent=active/'submission.json')
                     if pool!=report['pool']:
                         # Only this identity-checked, not-yet-running Meta allocation can move pools.
                         self.transport.command(['job','stop',str(report['task_id'])])
@@ -213,21 +222,27 @@ class GpuMetaBackend:
             publish_meta_overview(self.memory.root,self.site)
             self.sleep(5)
 
-    def select_pool(self):
+    def select_pool(self,*,exclude=(),current_intent=None):
         snapshots={}
+        for pool in PRIORITIES:
+            try:snapshots[pool]=pool_snapshot(self.transport,pool)
+            except Exception as error:snapshots[pool]={'warning':str(error)}
+        blocked=set(exclude)
         try:
-            for pool in PRIORITIES:snapshots[pool]=pool_snapshot(self.transport,pool)
-            selected=choose_pool(snapshots['model-autosft'],snapshots['model-new'],self.site.get('meta_min_free_gpus',1))
+            available,reason=high_available(self.transport,current_intent)
         except Exception as error:
-            # Missing telemetry never authorizes a fallback or a HIGH submission.
-            snapshots['warning']=str(error);selected='model-autosft'
+            available,reason=False,str(error)
+        snapshots['high_admission']={'available':available,'reason':reason}
+        if not available:blocked.add('model-autosft')
+        selected=choose_pool(snapshots,exclude=blocked)
         return selected,snapshots
 
     def submit(self,attempt,report):
         request=read_json(attempt/'worker-request.json');pool=report['pool']
+        priority=report.get('priority',PRIORITIES[pool])
         worker=Path(request['source']['root'])/'scripts/run_meta_gpu.py'
         argv=['job','create','--project',self.site['project'],'--cluster','beijing','--resource-pool',pool,
-            '--billing-account-id',self.site['billing_account_id'],'--priority',PRIORITIES[pool],
+            '--billing-account-id',self.site['billing_account_id'],'--priority',priority,
             '--image',self.site['image'],'--gpu','1','--gpu-model','h800',
             '--cpu',str(self.site.get('meta_cpu',8)),'--memory',str(self.site.get('meta_memory_gib',64)),
             '--description',f"llmgo-meta:{self.memory.root.name}:{report['request_id']}:{attempt.name}",
@@ -237,27 +252,35 @@ class GpuMetaBackend:
             old=read_json(intent)
             if old.get('task_id'):created=old
             else:
-                transport=CctlExecutor({**self.site,'resource_pool':pool,'priority':PRIORITIES[pool]},self.transport.memory,runner=self.transport.runner)
+                transport=CctlExecutor({**self.site,'resource_pool':pool,'priority':priority},self.transport.memory,runner=self.transport.runner)
                 created=transport.reconcile(intent)
         else:
             preview=self.transport.command([*argv,'--dry-run'])
             mapped=preview['request']['task']
-            if mapped['resource_pool_id']!=POOL_IDS[pool] or mapped['priority']!={'NORMAL':2,'PREEMPTABLE':3}[PRIORITIES[pool]] or mapped['resources']['gpu_count']!=1:
+            if mapped['resource_pool_id']!=POOL_IDS[pool] or mapped['priority']!={'HIGH':1,'NORMAL':2,'PREEMPTABLE':3}[priority] or mapped['resources']['gpu_count']!=1:
                 raise ValueError('Meta submission resources differ from request')
             atomic_json(attempt/'dryrun.json',preview)
             description=argv[argv.index('--description')+1]
-            atomic_json(intent,{'status':'SUBMITTING','description':description,'resource_pool':pool,'priority':PRIORITIES[pool],'created':utc()})
-            try:task=self.transport.command(argv)
-            except Exception as error:raise SubmissionUncertain('Meta submission uncertain; reconcile existing intent') from error
-            created={**read_json(intent),'task_id':_task_id(task),'status':task['status']}
-            atomic_json(intent,created)
+            try:
+                with high_slot(self.transport,intent) if priority=='HIGH' else nullcontext():
+                    atomic_json(intent,{'status':'SUBMITTING','description':description,'resource_pool':pool,'priority':priority,'created':utc()})
+                    try:task=self.transport.command(argv)
+                    except Exception as error:raise SubmissionUncertain('Meta submission uncertain; reconcile existing intent') from error
+                    created={**read_json(intent),'task_id':_task_id(task),'status':task['status']}
+                    atomic_json(intent,created)
+            except AdmissionBusy:
+                # Another controller may have taken HIGH since selection. No create has run.
+                pool,snapshot=self.select_pool(exclude={'model-autosft'})
+                report.update(pool=pool,priority=PRIORITIES[pool],selection=snapshot)
+                atomic_json(attempt/'report.json',report)
+                return self.submit(attempt,report)
         report.update(task_id=created['task_id'],description=created['description'],status='queued',submitted=utc(),next_poll_at=self.clock()+600)
         atomic_json(attempt/'report.json',report)
-        self.memory.append('meta_job_submitted',{'request_id':report['request_id'],'task_id':report['task_id'],'pool':pool,'priority':PRIORITIES[pool]})
+        self.memory.append('meta_job_submitted',{'request_id':report['request_id'],'task_id':report['task_id'],'pool':pool,'priority':priority})
 
     def verify_task(self,task,report):
         if (_task_id(task)!=report['task_id'] or task.get('description')!=report['description']
-            or task.get('resourcePoolId')!=POOL_IDS[report['pool']] or task.get('priority')!=PRIORITIES[report['pool']]
+            or task.get('resourcePoolId')!=POOL_IDS[report['pool']] or task.get('priority')!=report['priority']
             or task.get('project')!=self.site['project'] or task.get('cluster')!='beijing'
             or task.get('resourcesTotal',{}).get('gpuCount')!=1):
             raise ValueError('Meta GPU task identity changed')

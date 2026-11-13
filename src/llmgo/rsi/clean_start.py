@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .contracts import atomic_json,digest,file_hash,read_json
 
-DOCS=('lichess-data.md','training-reviews.md','meta-execution.md',
+DOCS=('lichess-data.md','training-reviews.md','meta-execution.md','qwen38-meta.md',
       'meta-research-operations.md','clean-grpo-pipeline.md','meta-workspace-agents.md')
 
 
@@ -18,6 +18,7 @@ def prepare(repo,target,site_path):
     (target/'configs/grpo').mkdir(parents=True);shutil.copy2(repo/'configs/grpo/default.json',target/'configs/grpo/default.json')
     site=read_json(site_path);site['repo']=str(target)
     atomic_json(target/'configs/rsi/site.qwen-meta.json',site)
+    atomic_json(target/'configs/rsi/site.qwen38-meta.json',site)
     # Launcher gating in the shared Codex wrapper recognizes the same workspace roots.
     atomic_json(target/'configs/rsi/site.beijing.json',site)
     docs=target/'docs';docs.mkdir()
@@ -28,7 +29,7 @@ Start from assets/models/Qwen3.5-4B. This is a new study with no imported findin
 trained checkpoints, Memory, sessions, historical scores or teacher answers.
 Use RL only; no SFT. You may change RL/reward/hyperparameters/data selection.
 Student uses the fixed Chess-R1 prompt and non-thinking; harness absent, skills.json=[].
-Meta uses Qwen3.5-4B thinking and Codex tools in an on-demand one-GPU task.
+Meta uses the model in the site profile with thinking and Codex tools in an on-demand one-GPU task.
 Read all moves of losing games before forming the next hypothesis.
 Default training data is boxed-nonthinking-v2; the verified complete Lichess training pool is optional.
 Deliver selection code/query, selected IDs, category statistics and a failure-grounded hypothesis.
@@ -36,9 +37,8 @@ Every5 GRPO steps save the full optimizer/RNG/dataloader checkpoint, export and 
 40 games each. Decide continue/replan/finish only after the complete results.
 Referee:300 plies, fivefold repetition and current standard draw rules; no inference request deadline.
 Final DeepSeek non-thinking games remain outside development selection.
-Training submits HIGH/model-autosft with one HIGH slot. The inference card is only for Meta;
-Meta tasks use HIGH/model-autosft (sharing the single HIGH slot) or PREEMPTABLE/model-new,
-model-claw-tool, model-codeagent2. The framework selects available cards; never submit Meta cards yourself.
+All new jobs use PREEMPTABLE in model-new, model-claw-tool or model-codeagent2;
+model-autosft is disabled. The inference card is only for Meta. The framework selects available cards; never submit Meta cards yourself.
 All artifacts stay in this study's campaign/workspace/run paths. Do not read other studies.
 '''
     (docs/'phase1-rl-scope.md').write_text(scope)
@@ -54,4 +54,4 @@ All artifacts stay in this study's campaign/workspace/run paths. Do not read oth
     atomic_json(target/'clean-start.json',{'schema_version':1,'source_files':manifest,'source_sha256':digest(manifest),
         'excluded':['Git history','var/runs','campaign Memory','Codex sessions','historical benchmark configs','operator research conclusions'],
         'isolation':'Clean input/source only; same-account shared-filesystem read access is not sandboxed'})
-    return target/'configs/rsi/site.qwen-meta.json'
+    return target/'configs/rsi/site.qwen38-meta.json'

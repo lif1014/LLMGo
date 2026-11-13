@@ -67,12 +67,17 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
                                         env=cctl_env)
                 pools = json.loads(result.stdout) if result.returncode == 0 else []
                 rows = own_pool_rows(pools)
-                allowed = authorized_pool(rows)
+                pool=site.get('resource_pool','model-new')
+                allowed = authorized_pool(rows,pool)
+                if rows and not allowed:
+                    from llmgo.remote.resource_policy import SUBMISSION_POOLS
+                    detail_result=subprocess.run([site['cctl_bin'],'pool','get',pool,'--no-input','-o','json'],capture_output=True,text=True,timeout=90,env=cctl_env)
+                    allowed=detail_result.returncode==0 and json.loads(detail_result.stdout).get('id')==SUBMISSION_POOLS.get(pool)
                 detail = ("Authenticated own-pool lookup" if allowed else
-                          "model-autosft not found in own pools; returned: "+pool_summary(rows)) if result.returncode == 0 else cctl_failure_detail(result,cctl_env)
+                          pool+" not found in authorized pool lookup; returned: "+pool_summary(rows)) if result.returncode == 0 else cctl_failure_detail(result,cctl_env)
                 if result.returncode == 0 and not rows:
                     detail = ("cctl returned [] for own pools. Check cctl profile current/list and the logged-in account's "
-                              "pool membership on this server; do not bypass the model-autosft permission check.")
+                              "pool membership on this server; do not bypass the pool permission check (model-new).")
                 check("cctl_auth_and_pool", result.returncode == 0 and allowed, detail)
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 check("cctl_auth_and_pool", False, str(exc) if isinstance(exc,ValueError) else type(exc).__name__)

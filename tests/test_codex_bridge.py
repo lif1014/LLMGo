@@ -170,3 +170,21 @@ def test_heartbeat_keeps_pending_read_without_duplicate_upstream_or_changing_eve
         await iterator.aclose()
         assert closed==[True,True]
     asyncio.run(run())
+
+
+def test_qwen38_sampling_and_thinking_controls_are_forwarded_without_changing_api(tmp_path):
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    settings={'temperature':1.0,'top_p':.95,'top_k':20,'min_p':0.0,'presence_penalty':0.0,'repetition_penalty':1.0}
+    app=create_app('Qwen3.8-27B','http://127.0.0.1:8100/v1','unused','token',tmp_path/'qwen38.jsonl',
+                   responder=responder,thinking=True,max_output_tokens=65536,sampling=settings,
+                   reasoning_effort='xhigh',preserve_thinking=True)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello','max_output_tokens':100000})
+    sent=seen[0]
+    assert sent['max_output_tokens']==65536
+    assert sent['temperature']==1 and sent['presence_penalty']==0
+    assert sent['extra_body']['top_k']==20 and sent['extra_body']['min_p']==0
+    assert sent['extra_body']['reasoning_effort']=='xhigh'
+    assert sent['extra_body']['chat_template_kwargs']=={'enable_thinking':True,'preserve_thinking':True,'reasoning_effort':'xhigh'}

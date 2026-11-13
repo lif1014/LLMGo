@@ -28,3 +28,20 @@ def validate_proposal(proposal,*,require_training=False):
     if type(batch) is not int or batch<0:raise ValueError('evaluation_batch must be a nonnegative integer')
     if proposal.get('evaluation',True) is not False:evaluation_plan(proposal.get('evaluation'))
     return proposal
+
+
+def validate_workspace_proposal(workspace, proposal, *, require_training=False):
+    """Use the actual request context, so a review cannot pass as an empty study."""
+    from pathlib import Path
+    from .contracts import read_json
+    from .training_review import validate_choice
+    path = Path(workspace)/'context.json'
+    context = read_json(path) if path.is_file() else {}
+    if 'training_review' in context:
+        if not isinstance(proposal, dict):
+            raise ValueError('Review proposal must contain training_review')
+        validate_choice(context['training_review'], proposal.get('training_review'))
+        return proposal
+    if isinstance(proposal, dict) and 'training_review' in proposal:
+        raise ValueError('training_review requires the current workspace review context')
+    return validate_proposal(proposal, require_training=require_training)

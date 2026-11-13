@@ -1,4 +1,14 @@
-# Meta execution: API and on-demand Qwen GPU
+# Meta execution: API and on-demand GPU
+
+The current GPU teacher is Qwen3.8-27B thinking. The common Codex/bridge/controller
+interfaces still support DeepSeek API execution. See [Qwen3.8 deployment and acceptance](qwen38-meta.md)
+for the current128K context,64K output,56K compaction profile and exact launch commands.
+All new jobs use PREEMPTABLE/model-new, model-claw-tool or model-codeagent2; model-autosft
+is disabled. Existing paused studies are not resumed by installation.
+
+The sections below explain common behavior and historical implementation. Old Qwen3.5-4B
+Meta settings and HIGH/model-autosft descriptions are historical, not current launch policy.
+
 
 The existing DeepSeek API profile, `configs/rsi/site.beijing.json`, remains the default.
 `meta_execution` defaults to `api`; existing campaigns and sessions continue through the
@@ -15,46 +25,12 @@ A paused campaign is never resumed by installing this feature.
 
 ## Resource policy
 
-Meta inference always requests exactly one H800. The November12 operator update allows:
-
-| Pool | Meta priority |
-|---|---|
-| model-autosft | HIGH |
-| model-new | PREEMPTABLE |
-| model-claw-tool | PREEMPTABLE |
-| model-codeagent2 | PREEMPTABLE |
-
-Choose the pool with the most available H800 quota headroom; ties prefer fewer queued
-people, then fewer queued tasks, then table order. If none has a free card, choose the
-shortest queue. This replaces the earlier two-pool/five-person threshold policy.
-Headroom is `capacity-used` in beijing, not a guarantee of immediate placement. Queued
-people are distinct visible H800 submitters, excluding CPU jobs and other GPU types.
-
-HIGH admission is shared with Student training: one active or uncertain HIGH submission
-across both. If that slot is occupied, exclude autosft and select a PREEMPTABLE pool.
-Selection checks availability and submission rechecks under the existing shared file lock;
-an uncertain HIGH create retains its reservation until reconciled. A queued own HIGH Meta
-task does not count as a competing HIGH task when deciding whether to move pools.
-A failed pool query excludes its telemetry; if all queries fail, retain the warnings and
-queue in model-new/PREEMPTABLE without assuming available capacity or claiming a free HIGH
-slot. Existing NORMAL attempts retain their recorded priority and remain reconcilable.
-Other users' tasks are never stopped or modified; queue summaries alone inform selection.
-
-Platform polls are persisted and at least600 seconds apart, including Controller restart.
-Before each new allocation and after a killed attempt, all four pools are re-evaluated. If a
-still-queued own Meta task can move to a pool with strictly more free H800s (at least one),
-its identity is checked, it is stopped, and a replacement is submitted only after the
-original is confirmed terminal. Equally full pools retain queue position rather than
-cycling due to small changes in queue length. Running
-tasks are not killed merely because queue conditions changed.
-
-Killed/stopped allocations are invalid even if `result.json` already exists. Their edits
-are archived as `discarded-workspace`; the registered workspace is restored to the request
-baseline before retry. Each attempt gets a new Codex home/session and prompt attempt nonce.
-Only a platform-Succeeded allocation with the matching request result can be adopted.
-Other execution failures stop for diagnosis rather than endlessly repeating deterministic
-errors. Ambiguous create responses retain the intent and reconcile the exact own task;
-there is no blind duplicate submission. Training and Meta use the same HIGH admission registry.
+Only beijing/model-new, model-claw-tool, model-codeagent2 PREEMPTABLE submissions are
+currently authorized for Meta and Student jobs, including CPU maintenance. Choose available
+H800 headroom first, then shorter queues. GPU platform polls persist600 seconds across
+restarts. A killed/stopped Meta attempt is invalid even with a result file; archive its
+edits, restore its baseline and reselect. Never move a running task merely for a better
+queue, and never stop another user's work. Legacy task reads retain their recorded identity.
 
 ## New study and launch
 

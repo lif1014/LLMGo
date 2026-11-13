@@ -29,12 +29,16 @@ def run(request_path,*,server_class=VllmServer,backend_class=CodexBackend):
         port=_pick_ports(8100,1)[0]
         protocol={'model_name':site['meta_model'],'max_tokens':site.get('meta_max_output_tokens',16384)}
         service=server_class(Path(site['meta_model_path']),protocol,attempt/'vllm.log',port,gpus[0],
-            python=site['inference_python'],max_num_seqs=1,async_scheduling=False,
-            gpu_memory_utilization=.85,model_context_length=site.get('meta_context_length',65536),
-            tool_call_parser='qwen3_coder')
+            python=site.get('meta_inference_python',site['inference_python']),max_num_seqs=1,async_scheduling=False,
+            gpu_memory_utilization=site.get('meta_gpu_memory_utilization',.85),model_context_length=site.get('meta_context_length',65536),
+            tool_call_parser='qwen3_coder',dtype=site.get('meta_dtype',site.get('meta_precision')),kv_cache_dtype=site.get('meta_kv_cache_dtype'))
         stage('loading_model');service.start()
         error=_wait_servers([service],None)
         if error:raise RuntimeError(error)
+        if site.get('meta_long_context_check'):
+            stage('long_context_check')
+            from .meta_acceptance import check_long_context
+            check_long_context(site,service.base_url,attempt)
         # Independent home: no DeepSeek AGENTS, sessions, auth or learned preferences.
         home=attempt/'codex-home';home.mkdir(exist_ok=True)
         config='\n'.join([
@@ -52,7 +56,10 @@ def run(request_path,*,server_class=VllmServer,backend_class=CodexBackend):
         backend=backend_class(site,memory)
         backend.session_path=attempt/'session.json';backend.session={}
         prompt=request['prompt']+f"\n本次GPU研究尝试标识：{attempt.name}。只提交本次研究交接，推理卡不用于学生训练。"
-        if site.get('meta_engineering_check'):
+        if site.get('meta_benchmark'):
+            from .meta_benchmark import run_benchmark
+            answer=run_benchmark(site,memory,attempt,backend_class)
+        elif site.get('meta_engineering_check'):
             from .connection_check import check_connection
             environment=dict(os.environ,CODEX_HOME=str(home),LLMGO_META_THINKING='true',
                 LLMGO_META_RUNTIME=str(attempt/'bridge'),LLMGO_META_MAX_OUTPUT_TOKENS=str(site.get('meta_max_output_tokens',16384)))

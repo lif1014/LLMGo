@@ -24,3 +24,12 @@ Meta 推理卡不執行學生訓練或正式 GPU 評測。只有缺少使用者�
 詳見 `docs/lichess-data.md`。**不一定需要用這個腳本**：可以保留預設資料，也可以自行寫選樣程式。
 是否使用、分類配比及難度由你根據本研究敗局自主決定，不是強制課程。
 只修改實驗配方的 train_file，不改預設資料、固定學生 prompt、non-thinking 或正式評測協議。
+
+
+2026-11-13 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，
+學生仍是固定 Qwen3.5-4B non-thinking。所有新任務（含CPU維護、Meta、學生訓練／評測）
+只可在 model-new、model-claw-tool、model-codeagent2 使用 PREEMPTABLE；禁止 model-autosft，
+此規則取代本文任何舊 HIGH／model-autosft 指示。新研究由使用者明確啟動，不恢復舊研究。
+詳見 [Qwen3.8 操作說明](qwen38-meta.md)。
+訓練審查交接必須包含當前context的 training_review.request_id、action、reason、selected_step；
+執行 check_research_proposal.py 檢查後才交接，格式錯誤留在本回合修正。

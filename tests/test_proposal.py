@@ -33,7 +33,11 @@ def test_failed_handoff_stays_editable_and_corrected_proposal_commits(tmp_path):
 def test_evaluation_only_and_checkpoint_review_remain_valid(tmp_path):
     validate_proposal({'hypothesis':'diagnostic','jobs':[],'evaluation':{'levels':[2.5],'tracks':['player']}})
     workspace=tmp_path/'workspace';workspace.mkdir();p=workspace/'proposal.json'
-    p.write_text(json.dumps({'training_review':{'action':'continue','request_id':'bound-review'}}))
+    from llmgo.rsi.contracts import atomic_json,digest
+    payload={'step':5,'max_steps':150,'available_steps':[0,5]}
+    review={'request_id':digest(payload),'payload':payload}
+    atomic_json(workspace/'context.json',{'training_review':review})
+    p.write_text(json.dumps({'training_review':{'action':'continue','request_id':review['request_id'],'reason':'Continue the unchanged recipe'}}))
     h=ResearchHandshake(tmp_path/'campaign',workspace,'b'*64);h.publish()
     h.commit({'status':'ready','summary':'review','proposal_path':str(p)})
     assert h.read()['status']=='ready'
@@ -42,3 +46,19 @@ def test_evaluation_only_and_checkpoint_review_remain_valid(tmp_path):
 @pytest.mark.parametrize('edit',[{'jobs':[{'argv':'python train.py'}]},{'jobs':[{'argv':['python'],'resources':{'gpu_count':9}}]}, {'evaluation_gpus':0}])
 def test_invalid_argv_and_resource_requests_are_rejected(edit):
     with pytest.raises(ValueError):validate_proposal(valid()|edit)
+
+
+def test_review_context_rejects_empty_or_wrong_decision_before_handoff(tmp_path):
+    from llmgo.rsi.contracts import atomic_json,digest
+    workspace=tmp_path/'review';workspace.mkdir();p=workspace/'proposal.json'
+    payload={'step':5,'max_steps':150,'available_steps':[0,5]}
+    review={'request_id':digest(payload),'payload':payload}
+    atomic_json(workspace/'context.json',{'training_review':review})
+    h=ResearchHandshake(tmp_path/'campaign',workspace,'c'*64);h.publish()
+    answer={'status':'ready','summary':'review','proposal_path':str(p)}
+    for bad in [{'hypothesis':'done','jobs':[]}, {'training_review':{'action':'continue','request_id':'wrong','reason':'go'}}]:
+        atomic_json(p,bad)
+        with pytest.raises(ValueError,match='Decision requires'):h.commit(answer)
+        assert not h.result_path.exists()
+    atomic_json(p,{'training_review':{'request_id':review['request_id'],'action':'continue','reason':'Valid review','selected_step':5}})
+    h.commit(answer);assert h.read()==answer

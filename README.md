@@ -106,3 +106,12 @@ L2/L3 正式學生推論請求預設不設客戶端時間期限（`timeout=None`
 獨立 checkpoint 比較使用 `configs/evaluation/checkpoint-elo-20261106.json`：base 與五份已訓練權重各一個 model-new／PREEMPTABLE／1 H800 任務，每模型 40 局、白黑各 20，每卡 40 局並行且 vLLM max_num_seqs=40。沿用現有 DeepSeek non-thinking、last-box-san-v1、300 半步、五次重複判和及無請求逾時的最終測試協議。網頁「Checkpoint · Elo 對戰」讀取遠端衍生目錄，整批完成才顯示表現分；Teacher 固定 1800，得分率取最近整數百分比（半入）後查 FIDE 8.1.1 表，全勝／全負以名義 ±800 記分，非官方人類 Elo。詳見 [checkpoint 比較](docs/checkpoint-benchmark.md)。
 
 Qwen3-8B-Chess 獨立對戰使用主研究累積 20 步的 j000010 step-5：hf-mirror 下載並固定對手版本，model-new／PREEMPTABLE／1 H800 同卡雙 vLLM，各自 non-thinking、16,384 tokens，40 局／40 並行，白黑各 20。網頁另列 Qwen3-8B-Chess 專欄，並在「學生 · 對局與復盤」保留雙方原始輸出與隨機後備統計。設定與啟動入口見 [本地對手評測](docs/local-chess-match.md)。
+
+
+2026-11-13 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，
+學生仍是固定 Qwen3.5-4B non-thinking。所有新任務（含CPU維護、Meta、學生訓練／評測）
+只可在 model-new、model-claw-tool、model-codeagent2 使用 PREEMPTABLE；禁止 model-autosft，
+此規則取代本文任何舊 HIGH／model-autosft 指示。新研究由使用者明確啟動，不恢復舊研究。
+詳見 [Qwen3.8 操作說明](docs/qwen38-meta.md)（在docs目錄閱讀時使用 qwen38-meta.md）。
+訓練審查交接必須包含當前context的 training_review.request_id、action、reason、selected_step；
+執行 check_research_proposal.py 檢查後才交接，格式錯誤留在本回合修正。

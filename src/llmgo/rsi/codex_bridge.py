@@ -98,7 +98,7 @@ async def heartbeat_events(iterator,interval=20):
         if close:await close()
 
 
-def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None, *, thinking=None, max_output_tokens=None):
+def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None, *, thinking=None, max_output_tokens=None, sampling=None, reasoning_effort=None, preserve_thinking=None):
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse, StreamingResponse
     if responder is None:
@@ -157,6 +157,18 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
             extra=dict(options.get("extra_body") or {})
             extra["chat_template_kwargs"]={**extra.get("chat_template_kwargs",{}),"enable_thinking":thinking}
             options["extra_body"]=extra
+        if selected_model.lower().startswith('qwen'):
+            extra=dict(options.get('extra_body') or {})
+            template=dict(extra.get('chat_template_kwargs') or {})
+            if preserve_thinking is not None:template['preserve_thinking']=preserve_thinking
+            if reasoning_effort:
+                template['reasoning_effort']=reasoning_effort
+                extra['reasoning_effort']=reasoning_effort
+            if template:extra['chat_template_kwargs']=template
+            for key,value in (sampling or {}).items():
+                if key in {'temperature','top_p','presence_penalty'}:options[key]=value
+                else:extra[key]=value
+            if extra:options['extra_body']=extra
         if max_output_tokens is not None:
             options["max_output_tokens"]=min(options.get("max_output_tokens") or max_output_tokens,max_output_tokens)
         qwen_stream=selected_model.lower().startswith('qwen') and payload.get('stream')
@@ -401,5 +413,8 @@ def serve_main(argv=None):
     thinking=os.environ.get('LLMGO_META_THINKING')
     app=create_app(args.model,args.api_base,os.environ['LLMGO_UPSTREAM_API_KEY'],os.environ['LLMGO_BRIDGE_TOKEN'],args.trace,
         thinking=None if thinking is None else thinking=='true',
-        max_output_tokens=int(os.environ['LLMGO_META_MAX_OUTPUT_TOKENS']) if os.environ.get('LLMGO_META_MAX_OUTPUT_TOKENS') else None)
+        max_output_tokens=int(os.environ['LLMGO_META_MAX_OUTPUT_TOKENS']) if os.environ.get('LLMGO_META_MAX_OUTPUT_TOKENS') else None,
+        sampling=json.loads(os.environ['LLMGO_META_SAMPLING']) if os.environ.get('LLMGO_META_SAMPLING') else None,
+        reasoning_effort=os.environ.get('LLMGO_META_REASONING_EFFORT'),
+        preserve_thinking=None if 'LLMGO_META_PRESERVE_THINKING' not in os.environ else os.environ['LLMGO_META_PRESERVE_THINKING']=='true')
     uvicorn.run(app,host='127.0.0.1',port=args.port,access_log=False)

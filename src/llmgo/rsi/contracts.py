@@ -85,10 +85,8 @@ def load_site(path: str | Path) -> dict:
     sandbox_mode(site)
     if site.get("schema_version") != SCHEMA:
         raise ValueError("Unsupported site schema")
-    if (site['cluster'], site['resource_pool']) != ('beijing', 'model-autosft') or site['priority'] not in {'NORMAL','HIGH'}:
-        raise ValueError('Only beijing / model-autosft with NORMAL or HIGH is authorized')
-    if site.get('max_active_high_jobs',1) != 1:
-        raise ValueError('Exactly one active or uncertain HIGH submission is allowed')
+    from llmgo.remote.resource_policy import validate_submission
+    validate_submission(site['resource_pool'], site['priority'], site['cluster'])
     if site.get('training_review') and site.get('executor_mode') != 'external':
         raise ValueError('Training reviews require an external Executor')
     if site.get("meta_execution","api") not in {"api","gpu_job"}:

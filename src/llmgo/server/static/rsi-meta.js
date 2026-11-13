@@ -15,9 +15,10 @@ function stage(row,a){
  return names[a.activity]||names[a.worker_stage]||names[a.status]||a.status;
 }
 function view(data){
- const current=data.current||{},a=current.attempts?.at(-1),gpu=current.execution==='gpu_job';
+ const current=data.current||{},a=current.attempts?.at(-1),gpu=current.execution==='gpu_job',config=current.inference||{};
+ const settings=[config.meta_precision,config.meta_context_length?'Context '+config.meta_context_length:undefined,config.meta_max_output_tokens?'输出 '+config.meta_max_output_tokens:undefined,config.meta_reasoning_effort].filter(Boolean).join(' · ');
  return {title:(current.model||'模型未记录')+' · '+(gpu?'按需GPU':'API')+' · Thinking '+(current.thinking==null?'未记录':current.thinking?'开启':'关闭'),
-   status:stage(current,a),gpu,attempt:a,
+   status:stage(current,a),gpu,attempt:a,settings,
    stages:gpu?['发布请求','排队','加载模型','思考／工具','完成交接','GPU任务结束']:['发布请求','模型请求','思考／工具','完成交接'],
    metaGpuHours:gpu?fmt(data.meta_gpu_hours)+' GPU-hours':'不适用（API推理）'};
 }
@@ -33,7 +34,7 @@ async function get(url){const r=await fetch(url,{cache:'no-store',signal:AbortSi
 function render(data){
  latest=data;
  const v=view(data);
- if(el('meta-status'))el('meta-status').textContent=v.title+'\n'+v.status+(v.attempt?.task_id?'\n平台任务：'+v.attempt.task_id+' / '+v.attempt.pool+' / '+v.attempt.priority:'');el('meta-jobs-status').textContent=v.title+' · '+v.status;
+ if(el('meta-status'))el('meta-status').textContent=v.title+'\n'+v.status+(v.attempt?.task_id?'\n平台任务：'+v.attempt.task_id+' / '+v.attempt.pool+' / '+v.attempt.priority:'');el('meta-jobs-status').textContent=v.title+' · '+v.status+(v.settings?' · '+v.settings:'');
  el('meta-job-stages').replaceChildren(...v.stages.map(s=>{const li=document.createElement('li');li.textContent=s;return li;}));
  const cost=document.createElement('p');cost.textContent='Meta佔卡：'+v.metaGpuHours+' · 最近最多30次工作（包含无效尝试）';
  const note=document.createElement('p');note.className='muted';note.textContent='学生训练与验证的GPU时间在GRPO／评测栏分别查看。API Token仅显示服务报告值；没有可核实数据时不估算费用。';

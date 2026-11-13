@@ -11,8 +11,17 @@ description: 在每個已驗證的原生 checkpoint 上決定繼續訓練、改�
 - replan：可選任一已完整驗證 checkpoint。寫明新假設並在此研究副本修改 RL 方案；Controller 保留副本作下一輪起點，從所選父模型開始新實驗、新 optimizer。下一輪仍需提交提案與選樣交付。
 - finish：可選任一已完整驗證 checkpoint，包括初始 step 0。交付模型與完整曲線，由使用者另行做 DeepSeek non-thinking 最終測試。
 
-審查期間當前 HIGH allocation 仍保留，但訓練／推理子程序已退出；不要提交第二個 GPU 任務。不改凍結源碼或裁判。Phase 1 固定初始 Qwen3.5-4B、prompt、non-thinking，skills.json=[]，不新增 harness.py；允許修改 RL 超參、reward、資料與課程。使用者已取消固定審查期限：Worker 保留 allocation 與完整 checkpoint，持續等待有效的 continue／replan／finish 決策，不因經過 900 秒或 15 分鐘自動過期。排程輪詢仍由 Executor 每 600 秒處理，與 Agent 審查等待分開。歷史已過期請求不能改寫，operator 可在 Worker 結束且交接身份核驗後恢復已完成的 replan。
+審查期間當前 Student allocation 仍保留，但訓練／推理子程序已退出；不要提交第二個 GPU 任務。不改凍結源碼或裁判。Phase 1 固定初始 Qwen3.5-4B、prompt、non-thinking，skills.json=[]，不新增 harness.py；允許修改 RL 超參、reward、資料與課程。使用者已取消固定審查期限：Worker 保留 allocation 與完整 checkpoint，持續等待有效的 continue／replan／finish 決策，不因經過 900 秒或 15 分鐘自動過期。排程輪詢仍由 Executor 每 600 秒處理，與 Agent 審查等待分開。歷史已過期請求不能改寫，operator 可在 Worker 結束且交接身份核驗後恢復已完成的 replan。
 
 後續驗證政策：每 5 個 GRPO step 完成 L2、L3 各 40 局（每檔白黑各 20 局），共 80 局共享佇列，每個評測 vLLM 的 max_num_seqs=20。舊 20 局記錄保留原樣本數，不能混為同規模重測。GRPO 訓練 rollout 容量仍為原配方；DeepSeek 獨立測試局數不受此更改影響。
 
 棋局規則更新：後續 L2/L3 驗證與 DeepSeek 獨立測試啟用五次重複局面自動和棋，上限為 300 個半步（150 回合）。逼和、常見子力不足、五十步自動申請判和的原設定保留；三次重複局面仍不啟用。達步數上限前先判定將死等正常終局，舊凍結任務及歷史結果保留原規則。
+
+
+2026-11-13 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，
+學生仍是固定 Qwen3.5-4B non-thinking。所有新任務（含CPU維護、Meta、學生訓練／評測）
+只可在 model-new、model-claw-tool、model-codeagent2 使用 PREEMPTABLE；禁止 model-autosft，
+此規則取代本文任何舊 HIGH／model-autosft 指示。新研究由使用者明確啟動，不恢復舊研究。
+詳見 [Qwen3.8 操作說明](../../../docs/qwen38-meta.md)。
+訓練審查交接必須包含當前context的 training_review.request_id、action、reason、selected_step；
+執行 check_research_proposal.py 檢查後才交接，格式錯誤留在本回合修正。

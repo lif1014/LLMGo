@@ -340,26 +340,13 @@ def test_high_slot_blocks_other_own_jobs_and_unknown_intents(tmp_path):
     with high_slot(transport,second):atomic_json(second,{'status':'UNKNOWN'})
 
 
-def test_high_transport_submits_once_and_reserves_unknown_outcome(tmp_path,monkeypatch):
-    from llmgo.remote.cctl import CctlExecutor, SubmissionUncertain
+def test_retired_high_submission_is_rejected_before_platform_create(tmp_path,monkeypatch):
+    from llmgo.remote.cctl import CctlExecutor
     from llmgo.rsi.memory import MemoryStore
-    site={'user_root':str(tmp_path),'repo':str(tmp_path/'repo'),'priority':'HIGH','cctl_bin':'cctl','project':'rsi'}
-    calls=[]
-    def runner(argv,**kw):
-        calls.append(argv[1:3])
-        if argv[1:3]==['pool','list']:value=[{'name':'model-autosft'}]
-        elif argv[1:3]==['task','list']:value={'tasks':[]}
-        else:
-            assert argv[1:3]==['job','create']
-            raise subprocess.TimeoutExpired(argv,90)
-        return subprocess.CompletedProcess(argv,0,json.dumps(value),'')
-    t=CctlExecutor(site,MemoryStore(tmp_path/'memory'),runner)
-    monkeypatch.setattr(t,'request',lambda path:(['job','create'],str(path)))
-    first=tmp_path/'first/manifest.json';second=tmp_path/'second/manifest.json'
-    with pytest.raises(SubmissionUncertain):t.submit(first)
-    assert read_json(first.with_name('submission.json'))['priority']=='HIGH'
-    with pytest.raises(AdmissionBusy):t.submit(second)
-    assert calls.count(['job','create'])==1
+    t=CctlExecutor({'resource_pool':'model-autosft','priority':'HIGH','project':'rsi'},MemoryStore(tmp_path/'memory'))
+    monkeypatch.setattr(t,'request',lambda path:(['job','create'],'old envelope'))
+    monkeypatch.setattr(t,'command',lambda args:(_ for _ in ()).throw(AssertionError('No platform call permitted')))
+    with pytest.raises(ValueError,match='model-autosft is disabled'):t.submit(tmp_path/'manifest.json')
 
 
 def test_controller_review_guards_code_and_finishes_without_duplicate_evaluation(loop_fixture):

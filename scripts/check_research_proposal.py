@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from llmgo.rsi.meta_protocol import strict_object
-from llmgo.rsi.proposal import validate_proposal
+from llmgo.rsi.proposal import validate_workspace_proposal
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--require-training',action='store_true')
     args=parser.parse_args()
     try:
-        data=validate_proposal(strict_object(args.proposal.read_text()),require_training=args.require_training)
+        data=validate_workspace_proposal(args.proposal.resolve().parent,strict_object(args.proposal.read_text()),require_training=args.require_training)
         print(json.dumps({'ok':True,'jobs':len(data.get('jobs',[])),'proposal':str(args.proposal.resolve()),'submitted':False}))
     except (ValueError,OSError) as error:parser.exit(2,str(error)+'\n')
 

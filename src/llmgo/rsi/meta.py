@@ -208,6 +208,12 @@ class CodexBackend:
             env["LLMGO_META_THINKING"] = "true" if self.site["meta_thinking"] else "false"
         if self.site.get("meta_max_output_tokens"):
             env["LLMGO_META_MAX_OUTPUT_TOKENS"] = str(self.site["meta_max_output_tokens"])
+        if self.site.get('meta_sampling'):
+            env['LLMGO_META_SAMPLING']=json.dumps(self.site['meta_sampling'])
+        if self.site.get('meta_reasoning_effort'):
+            env['LLMGO_META_REASONING_EFFORT']=self.site['meta_reasoning_effort']
+        if 'meta_preserve_thinking' in self.site:
+            env['LLMGO_META_PRESERVE_THINKING']='true' if self.site['meta_preserve_thinking'] else 'false'
         env["LLMGO_META_RUNTIME"] = str(self.site.get("meta_bridge_root",Path(self.site.get("runtime_root",root))/"meta-bridge"))
         env, self._secrets = runtime_auth(self.site, env)
         instructions = (
@@ -234,7 +240,7 @@ class CodexBackend:
             "再返回ready和proposal绝对路径，由Executor提交及监控。--track model选择固定Prompt模型对照，--full-panel请求L2与L3完整验证。"
             "可以调用受保护evaluate.py；正式裁判、协议、引擎和结果记录不得更改。正式走棋由Qwen玩家完成，不用另一引擎替它选步。"
             "只写 /user/lyh4170，来源 /user/liyaohu4170 只读。不要修改用户其他任务的环境；新增依赖用本研究专用或实验独立venv与缓存，不原地升级系统/他人环境。"
-            "GPU任务每600秒查询一次，验证交接通过共享文件及时读取，不查询排程器。监控由独立Executor负责。只用beijing/model-autosft，默认HIGH，同时最多一个活动或提交结果不确定的HIGH任务；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
+            "GPU任务每600秒查询一次，验证交接通过共享文件及时读取，不查询排程器。监控由独立Executor负责。所有新任务只用beijing/model-new、model-claw-tool、model-codeagent2的PREEMPTABLE；禁止model-autosft；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
             "指定workspace是研究副本，可修改RL相关源码；Phase 1的prompt、harness和skills限制仍适用。用proposal.json登记计算命令和评测计划；"
             "Controller/Executor会快照和提交，避免重复提交同一实验。可以自行研究提交命令，遵守资源授权。"
             "没有研究总时间上限。失败也记录并继续，不要求每轮成功。"

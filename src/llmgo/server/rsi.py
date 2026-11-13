@@ -228,6 +228,8 @@ def campaigns():
     for path in sorted(root.glob("*/campaign.json")):
         try:
             inside(root, path)
+            marker=path.parent/'archive.json'
+            if marker.is_file() and read_json(marker).get('archived'):continue
             state = read_json(path)
             result.append({k: state.get(k) for k in ("campaign_id", "phase", "updated")})
         except (ValueError, OSError):

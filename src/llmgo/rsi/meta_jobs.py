@@ -1,8 +1,7 @@
-"""Common Meta request records and on-demand GPU execution with shared HIGH admission."""
+"""Common Meta request records and on-demand GPU execution under the current preemptable-only policy."""
 from __future__ import annotations
 
 from datetime import datetime,timezone
-from contextlib import nullcontext
 import json
 from pathlib import Path
 import shlex
@@ -15,12 +14,12 @@ from .memory import MemoryStore
 from .meta_protocol import MetaFailure
 from .research_control import require_research,ResearchPaused
 from llmgo.remote.cctl import CctlExecutor,SubmissionUncertain,_task_id
-from llmgo.remote.high_admission import high_available,high_slot,AdmissionBusy
+from llmgo.remote.resource_policy import SUBMISSION_POOLS, validate_submission
 
 QUEUED={'Creating','Created','Pending','Scheduling','Queued','Requeue'}
 TERMINAL={'Succeeded','Failed','Killed','Stopped','OOMKilled','ImagePullBackOff','Invalid'}
-POOL_IDS={'model-autosft':525,'model-new':523,'model-claw-tool':515,'model-codeagent2':514}
-PRIORITIES={pool:'HIGH' if pool=='model-autosft' else 'PREEMPTABLE' for pool in POOL_IDS}
+POOL_IDS=dict(SUBMISSION_POOLS)
+PRIORITIES={pool:'PREEMPTABLE' for pool in POOL_IDS}
 
 
 def meta_mode(site):
@@ -93,7 +92,8 @@ def request_record(root,workspace,prompt,site):
         kind='review' if context.exists() and read_json(context).get('training_review') else 'research'
         atomic_json(path,{'schema_version':1,'request_id':key,'workspace':str(workspace),
             'prompt':prompt,'kind':kind,'model':site.get('meta_model'),'thinking':site.get('meta_thinking'),
-            'execution':meta_mode(site),'created':utc(),'site':site})
+            'execution':meta_mode(site),'created':utc(),'site':site,
+            'inference':{k:site.get(k) for k in ('meta_precision','meta_context_length','meta_max_output_tokens','meta_compact_tokens','meta_reasoning_effort','meta_preserve_thinking')}})
     return folder,read_json(path)
 
 
@@ -117,7 +117,7 @@ def meta_overview(root,site):
                 a['gpu_hours']=seconds_between(w.get('started'),a.get('ended') or w.get('finished'))/3600 if data['execution']=='gpu_job' else None
             a['artifact']=str(path.relative_to(root));attempts.append(a)
         row={k:data.get(k) for k in ['request_id','kind','model','thinking','execution','created']}
-        row.update(workspace=data['workspace'],attempts=attempts,status=attempts[-1]['status'] if attempts else 'prepared')
+        row.update(inference=data.get('inference',{}),workspace=data['workspace'],attempts=attempts,status=attempts[-1]['status'] if attempts else 'prepared')
         rows.append(row)
     if rows:current=rows[0]
     else:
@@ -235,18 +235,13 @@ class GpuMetaBackend:
             try:snapshots[pool]=pool_snapshot(self.transport,pool)
             except Exception as error:snapshots[pool]={'warning':str(error)}
         blocked=set(exclude)
-        try:
-            available,reason=high_available(self.transport,current_intent)
-        except Exception as error:
-            available,reason=False,str(error)
-        snapshots['high_admission']={'available':available,'reason':reason}
-        if not available:blocked.add('model-autosft')
         selected=choose_pool(snapshots,exclude=blocked)
         return selected,snapshots
 
     def submit(self,attempt,report):
         request=read_json(attempt/'worker-request.json');pool=report['pool']
-        priority=report.get('priority',PRIORITIES[pool])
+        priority=report.get('priority',PRIORITIES.get(pool))
+        validate_submission(pool,priority)
         worker=Path(request['source']['root'])/'scripts/run_meta_gpu.py'
         argv=['job','create','--project',self.site['project'],'--cluster','beijing','--resource-pool',pool,
             '--billing-account-id',self.site['billing_account_id'],'--priority',priority,
@@ -264,23 +259,15 @@ class GpuMetaBackend:
         else:
             preview=self.transport.command([*argv,'--dry-run'])
             mapped=preview['request']['task']
-            if mapped['resource_pool_id']!=POOL_IDS[pool] or mapped['priority']!={'HIGH':1,'NORMAL':2,'PREEMPTABLE':3}[priority] or mapped['resources']['gpu_count']!=1:
+            if mapped['resource_pool_id']!=POOL_IDS[pool] or mapped['priority']!=3 or mapped['resources']['gpu_count']!=1:
                 raise ValueError('Meta submission resources differ from request')
             atomic_json(attempt/'dryrun.json',preview)
             description=argv[argv.index('--description')+1]
-            try:
-                with high_slot(self.transport,intent) if priority=='HIGH' else nullcontext():
-                    atomic_json(intent,{'status':'SUBMITTING','description':description,'resource_pool':pool,'priority':priority,'created':utc()})
-                    try:task=self.transport.command(argv)
-                    except Exception as error:raise SubmissionUncertain('Meta submission uncertain; reconcile existing intent') from error
-                    created={**read_json(intent),'task_id':_task_id(task),'status':task['status']}
-                    atomic_json(intent,created)
-            except AdmissionBusy:
-                # Another controller may have taken HIGH since selection. No create has run.
-                pool,snapshot=self.select_pool(exclude={'model-autosft'})
-                report.update(pool=pool,priority=PRIORITIES[pool],selection=snapshot)
-                atomic_json(attempt/'report.json',report)
-                return self.submit(attempt,report)
+            atomic_json(intent,{'status':'SUBMITTING','description':description,'resource_pool':pool,'priority':priority,'created':utc()})
+            try:task=self.transport.command(argv)
+            except Exception as error:raise SubmissionUncertain('Meta submission uncertain; reconcile existing intent') from error
+            created={**read_json(intent),'task_id':_task_id(task),'status':task['status']}
+            atomic_json(intent,created)
         report.update(task_id=created['task_id'],description=created['description'],status='queued',submitted=utc(),next_poll_at=self.clock()+600)
         atomic_json(attempt/'report.json',report)
         self.memory.append('meta_job_submitted',{'request_id':report['request_id'],'task_id':report['task_id'],'pool':pool,'priority':priority})

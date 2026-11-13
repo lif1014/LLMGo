@@ -13,6 +13,7 @@ from llmgo.rsi.artifacts import load_manifest
 from llmgo.rsi.contracts import atomic_json, digest, inside, read_json, utc
 from .cctl_env import cctl_environment, cctl_failure_detail
 from .pools import own_pool_rows, authorized_pool
+from .resource_policy import validate_submission, HISTORICAL_POOL_IDS, SUBMISSION_POOLS
 
 TERMINAL_FAILURE = {"Failed", "OOMKilled", "ImagePullBackOff", "Invalid", "Killed", "Stopped"}
 
@@ -81,8 +82,7 @@ class CctlExecutor:
         payload, site = manifest["payload"], self.site
         if payload["site"] != site:
             raise ValueError("Manifest and executor site differ")
-        if (site['cluster'],site['resource_pool']) != ('beijing','model-autosft') or site['priority'] not in {'NORMAL','HIGH'}:
-            raise ValueError("Unauthorized resource selection")
+        validate_submission(site['resource_pool'],site['priority'],site['cluster'])
         if site["user_root"] != "/user/lyh4170":
             raise ValueError("Only /user/lyh4170 can submit remote experiments")
         inside(site["user_root"], manifest_path)
@@ -99,7 +99,7 @@ class CctlExecutor:
                             "--manifest-sha256", manifest["sha256"]])
         description = f"llmgo-rsi:{payload['campaign_id']}:{payload['job_id']}:{manifest['sha256']}"
         return ["job", "create", "--project", site["project"], "--cluster", "beijing",
-                "--resource-pool", "model-autosft", "--billing-account-id", site["billing_account_id"],
+                "--resource-pool", site["resource_pool"], "--billing-account-id", site["billing_account_id"],
                 "--priority", site['priority'], "--image", site["image"], "--gpu", str(gpu),
                 *(["--gpu-model", site["gpu_model"]] if gpu else []),
                 "--cpu", str(resources["cpu"]), "--memory", str(resources["memory_gib"]),
@@ -120,18 +120,21 @@ class CctlExecutor:
             if intent.get("task_id"):
                 return intent
             return self.reconcile(intent_path)
+        pool = self.site.get('resource_pool','model-new')
+        validate_submission(pool,self.site.get('priority','PREEMPTABLE'))
         pools = self.command(["pool", "list", "--own"])
-        if not authorized_pool(own_pool_rows(pools)):
-            raise ValueError("Authorized model-autosft pool is unavailable")
-        if self.site.get('priority','NORMAL')=='HIGH':
-            from .high_admission import high_slot
-            with high_slot(self,intent_path):
-                return self._create_request(args,description,manifest_path,intent_path)
+        if not authorized_pool(own_pool_rows(pools),pool):
+            # Inherited project access may be absent from --own; verify the exact
+            # authorized pool. The server still enforces submission permissions.
+            detail = self.command(['pool','get',pool])
+            if detail.get('id') != SUBMISSION_POOLS[pool]:
+                raise ValueError('Authorized pool identity is unavailable')
+        return self._create_request(args,description,manifest_path,intent_path)
         return self._create_request(args,description,manifest_path,intent_path)
 
     def _create_request(self,args,description,manifest_path,intent_path):
         intent = {"description": description, "request_hash": digest(args), "status": "SUBMITTING",
-                  "manifest": str(manifest_path), "created": utc(),'priority':self.site.get('priority','NORMAL')}
+                  "manifest": str(manifest_path), "created": utc(),'priority':self.site.get('priority','PREEMPTABLE'),'resource_pool':self.site.get('resource_pool','model-new')}
         atomic_json(intent_path, intent)
         self.memory.append("submission_intent", intent)
         try:
@@ -153,7 +156,7 @@ class CctlExecutor:
         # Enumerate own tasks; no blind retry if listings are incomplete or ambiguous.
         for page in range(1, 101):
             response = self.command(["job", "list", "--own", "--cluster", "beijing", "--project",
-                                     self.site["project"], "--pool", intent.get("resource_pool",self.site.get("resource_pool","model-autosft")),
+                                     self.site["project"], "--pool", intent.get("resource_pool",self.site.get("resource_pool","model-new")),
                                      "--page", str(page), "--limit", "100"])
             rows = response if isinstance(response, list) else response.get("tasks", response.get("items", []))
             for row in rows:
@@ -188,8 +191,8 @@ class CctlExecutor:
         task = self.command(["job", "get", str(intent["task_id"])])
         if (_task_id(task) != int(intent["task_id"])
                 or task.get("description") != intent["description"] or task.get("project") != self.site["project"]
-                or task.get("cluster") != "beijing" or task.get("resourcePoolId") != 525
-                or task.get("priority") != intent.get('priority',self.site.get('priority','NORMAL'))):
+                or task.get("cluster") != "beijing" or task.get("resourcePoolId") != HISTORICAL_POOL_IDS.get(intent.get("resource_pool",self.site.get("resource_pool","model-new")))
+                or task.get("priority") != intent.get('priority',self.site.get('priority','PREEMPTABLE'))):
             raise ValueError("Task identity or authorized resource envelope changed")
         return task
 

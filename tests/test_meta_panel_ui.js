@@ -13,3 +13,6 @@ console.log('Shared Meta panel API/GPU/invalid/loading projection passed');
 assert.equal(stage({}, {status:'queued',worker_stage:'loading_model'}),'加载模型');
 assert.equal(stage({}, {status:'running',worker_stage:'completed'}),'交接已落盘，等待任务结束');
 assert.equal(stage({}, {status:'invalid',worker_stage:'completed'}),'无效尝试');
+
+const large={current:{model:'Qwen3.8-27B',execution:'gpu_job',thinking:true,inference:{meta_precision:'bfloat16',meta_context_length:131072,meta_max_output_tokens:65536,meta_reasoning_effort:'xhigh'}}};
+assert.match(view(large).settings,/131072/);assert.match(view(large).settings,/65536/);assert.match(view(large).settings,/bfloat16/);

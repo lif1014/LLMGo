@@ -598,7 +598,11 @@ el("close-raw").onclick=()=>{state.raw=null;el("raw").close();};
 el("raw-prev").onclick=()=>{if(state.raw){state.raw.relative=Math.max(0,state.raw.relative-65536);rawPage();}};
 el("raw-next").onclick=()=>{if(state.raw){state.raw.relative=Math.min(Math.max(0,state.raw.length-1),state.raw.relative+65536);rawPage();}};
 async function list(){
-  try{const rows=await json(apiRoot);options("campaign",rows,state.campaign,c=>c.campaign_id,c=>c.campaign_id);
+  try{const all=await json(apiRoot);
+    const checks=await Promise.all(all.map(async c=>{try{const p=await json(apiRoot+"/"+encodeURIComponent(c.campaign_id)+"/artifact?path=archive.json&length=16384");return p.eof&&JSON.parse(p.text).archived;}catch(e){return false;}}));
+    const rows=all.filter((_,i)=>!checks[i]);
+    if(state.campaign&&!rows.some(c=>c.campaign_id===state.campaign)){state.campaign="";el("campaign").value="";}
+    options("campaign",rows,state.campaign,c=>c.campaign_id,c=>c.campaign_id);
     if(!state.campaign&&rows.length){el("campaign").value=rows.at(-1).campaign_id;selectCampaign();}else if(!rows.length)el("connection").textContent="尚无campaign";
   }catch(e){if(e.name!=="AbortError")el("connection").textContent=e.message;}
 }

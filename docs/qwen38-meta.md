@@ -22,7 +22,7 @@ or resume a study by being installed. DeepSeek API execution remains supported.
 These sampling settings follow the [official model card](https://huggingface.co/Qwen/Qwen3.8-27B#best-practices).
 The 128K/64K/56K limits are this project's engineering profile. Output capacity is
 not a promise that every call generates 64K tokens. The independent Meta environment
-uses vLLM0.19.1/Transformers5.8.1 with the image's Torch2.10 CUDA12.9; deployment must
+uses vLLM0.19.1/Transformers5.8.1 with isolated Torch2.10 CUDA12.8; deployment must
 record actual import and GPU acceptance results. Student inference/training environments
 are not upgraded. BF16 feasibility on80GB H800 is measured, not inferred from model size.
 If another precision is tested, store a separate profile and results; do not mix it into BF16.
@@ -118,3 +118,8 @@ without GPU inference or provider credentials. Its receipt is separate from mode
 capability. `scripts/report_meta_comparison.py` compares only adopted platform-Succeeded
 benchmarks, using majority success per case and an exact two-sided McNemar test;
 repetitions do not inflate the number of paired cases.
+
+The Web page has a separate Meta model acceptance panel reading the disk-only
+`var/runs/qwen38-meta-20261113/acceptance-controller.json` every15 seconds. It shows
+model/task/pool, case progress, factual completion, first schema check and long-context
+checks. This is explicitly separate from formal research and never polls the platform.

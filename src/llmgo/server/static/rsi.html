@@ -36,6 +36,14 @@
     <p class="muted">GPU轮询每600秒；网页每15秒只读磁盘。被终止的尝试保留为无效记录，仍计入真实佔卡成本。执行器只采用成功终态的结果。</p>
     <details><summary>选中工作的任务、用量与原始记录</summary><pre id="meta-job-detail">选择一项工作查看详情；思考与工具轨迹见下方研究记录。</pre></details>
   </section>
+  <section id="meta-acceptance-panel" class="evaluation-panel final-dashboard" aria-label="Meta模型工程验收">
+    <div class="grpo-heading"><div><p class="grpo-eyebrow">META ACCEPTANCE</p><h2>Meta-Agent · 模型验收</h2>
+      <p class="grpo-subtitle">4B 与 27B · 同工具与推理额度 · 20类案例各三次 · 128K context／64K输出／56K compaction</p></div></div>
+    <p id="meta-acceptance-status" class="grpo-message" role="status">正在读取独立验收…</p>
+    <div id="meta-acceptance-table" class="meta-table"></div>
+    <p id="meta-acceptance-result" class="muted"></p>
+    <p class="muted">这是独立工程验收，不属于所选研究，也不启动学生训练。被抢占的尝试不采纳；重复案例不计为独立样本。</p>
+  </section>
   <section id="elo-panel" class="evaluation-panel final-dashboard" aria-label="Checkpoint Elo比较">
     <div class="grpo-heading"><div><p class="grpo-eyebrow">CHECKPOINT ARENA</p><h2>Checkpoint · Elo 对战</h2>
       <p class="grpo-subtitle">六个模型状态 · DeepSeek＝1800 · FIDE 表現分 · 保留训练分支</p></div></div>
@@ -126,7 +134,7 @@
       <p id="cost"></p><div id="results" class="feed"></div></section>
   </main>
   <dialog id="raw"><div class="toolbar"><button id="close-raw">关闭</button><button id="raw-prev">上一段</button><button id="raw-next">下一段</button><span id="raw-position"></span></div><pre id="raw-content"></pre></dialog>
-  <script src="static/rsi-meta.js?v=meta-on-demand-2"></script>
+  <script src="static/rsi-meta.js?v=qwen38-meta-1"></script>
   <script>
     function loadDashboardScript(src, statusId, ready, attempt = 0) {
       const script = document.createElement("script");
@@ -140,10 +148,11 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=meta-on-demand-2", "connection");
+    loadDashboardScript("static/rsi.js?v=qwen38-meta-1", "connection");
   </script>
 <script src="static/rsi-final.js?v=meta-on-demand-2"></script>
 <script src="static/rsi-elo.js?v=checkpoint-elo-40parallel-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
+<script src="static/rsi-meta-acceptance.js?v=qwen38-meta-1"></script>
 </body></html>

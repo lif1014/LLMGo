@@ -27,3 +27,17 @@ def test_summary_separates_initial_schema_errors_from_final_factual_success():
     value=summarize(rows)
     assert value['passed']==1 and value['first_check_schema_passes']==1
     assert value['schema_measured_cases']==2 and value['schema_check_failures']==1
+
+
+def test_comparison_uses_cases_not_repetitions_and_rejects_invalid_allocations():
+    import pytest
+    from llmgo.rsi.meta_benchmark import compare
+    def result(model,passed):
+        return {'model':model,'summary':{},'admission':{'platform_status':'Succeeded'},
+                'results':[{'id':str(i),'passed':passed} for i in range(8) for _ in range(3)]}
+    a,b=result('small',False),result('large',True)
+    r=compare(a,b)
+    assert r['paired_cases']==8 and r['right_only_success']==8
+    assert r['right_improved_at_p05']
+    b['admission']['platform_status']='Killed'
+    with pytest.raises(ValueError,match='Succeeded'):compare(a,b)

@@ -10,7 +10,7 @@ from .contracts import REPO,atomic_json,digest,read_json,utc,file_hash
 
 def cases():
     items=[]
-    for i,(wins,draws,losses) in enumerate([(0,7,33),(22,13,5),(2,5,33),(40,0,0),(0,40,0),(0,0,40)]):
+    for i,(wins,draws,losses) in enumerate([(3,6,31),(17,9,14),(1,11,28),(40,0,0),(0,40,0),(0,0,40)]):
         expected={'wins':wins,'draws':draws,'losses':losses,'games':40,
                   'win_rate':wins/40,'score':(wins+.5*draws)/40}
         items.append({'id':f'metrics-{i}','kind':'facts','files':{'metrics.json':{'statistics':{k:expected[k] for k in ['wins','draws','losses','games']},'unverified_note':'A narrative note is not the formal result.'}},
@@ -131,3 +131,28 @@ def run_benchmark(site,memory,attempt,backend_class):
     atomic_json(attempt/'benchmark-result.json',result)
     atomic_json(attempt/'benchmark-progress.json',{'stage':'completed','completed':len(results),'total':len(results),'summary':result['summary']})
     return {'status':'needs_input','summary':f"Engineering benchmark completed: {result['summary']['passed']}/{len(results)}; no Student training launched",'proposal_path':None}
+
+
+def compare(left,right):
+    """Case-paired majority comparison; repetitions are not independent cases."""
+    import collections
+    import math
+    for result in [left,right]:
+        if result.get('admission',{}).get('platform_status')!='Succeeded':
+            raise ValueError('Only platform-Succeeded, adopted benchmark results can be compared')
+    def votes(result):
+        groups=collections.defaultdict(list)
+        for row in result['results']:groups[row['id']].append(row['passed'])
+        return {key:sum(values)>len(values)/2 for key,values in groups.items()}
+    a,b=votes(left),votes(right)
+    if set(a)!=set(b):raise ValueError('Paired comparison requires the same completed case IDs')
+    better=sum(b[k] and not a[k] for k in a);worse=sum(a[k] and not b[k] for k in a)
+    n=better+worse
+    p=min(1.,2*sum(math.comb(n,k) for k in range(min(better,worse)+1))/2**n) if n else 1.
+    return {'left_model':left['model'],'right_model':right['model'],
+            'left_summary':left['summary'],'right_summary':right['summary'],
+            'paired_cases':len(a),'right_only_success':better,'left_only_success':worse,
+            'both_success':sum(a[k] and b[k] for k in a),'both_fail':sum(not a[k] and not b[k] for k in a),
+            'exact_mcnemar_p_two_sided':p,'right_improved_at_p05':better>worse and p<.05,
+            'scope':'Engineering factual/schema/tool cases, not Student chess improvement. Majority within repeated case; case IDs are the paired units.',
+            'left_admission':left['admission'],'right_admission':right['admission']}

@@ -111,3 +111,10 @@ installation, and its name must not be reused to overwrite existing evidence.
 The common Web panel shows model, thinking, precision, context/output limits, execution
 stage, exact pool/task ID, attempt history and measured cost for GPU/API modes. An archived
 campaign remains accessible by its known URL but is omitted from the active selector.
+
+The loopback-only `scripts/check_meta_reasoning_bridge.py --output FILE` verifies the
+actual pinned LiteLLM conversion across a reasoning/tool-call/tool-result round trip,
+without GPU inference or provider credentials. Its receipt is separate from model
+capability. `scripts/report_meta_comparison.py` compares only adopted platform-Succeeded
+benchmarks, using majority success per case and an exact two-sided McNemar test;
+repetitions do not inflate the number of paired cases.

@@ -4,9 +4,9 @@ import argparse
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from llmgo.rsi.contracts import atomic_json,load_site
+from llmgo.rsi.contracts import atomic_json,load_site,read_json
 from llmgo.rsi.memory import MemoryStore
-from llmgo.rsi.meta_jobs import GpuMetaBackend
+from llmgo.rsi.meta_jobs import GpuMetaBackend,meta_overview
 
 
 def main():
@@ -20,6 +20,14 @@ def main():
     workspace=root/'workspace';workspace.mkdir(parents=True,exist_ok=True)
     atomic_json(workspace/'context.json',{'engineering_benchmark':True})
     result=GpuMetaBackend(site,MemoryStore(root)).turn(workspace,'Isolated Meta capability benchmark only; never start Student work')
+    current=meta_overview(root,site)['current'];attempt=current['attempts'][-1]
+    if attempt['status']!='completed' or attempt.get('platform_status')!='Succeeded':
+        raise RuntimeError('Benchmark result is not from a valid completed allocation')
+    folder=(root/attempt['artifact']).parent
+    benchmark=read_json(folder/'benchmark-result.json')
+    benchmark['admission']={k:attempt.get(k) for k in ('task_id','platform_status','status','request_id','gpu_hours')}
+    benchmark['admission']['source_sha256']=read_json(folder/'worker-request.json')['source']['sha256']
+    atomic_json(root/'adopted-benchmark.json',benchmark)
     print(result)
 
 

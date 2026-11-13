@@ -123,3 +123,9 @@ The Web page has a separate Meta model acceptance panel reading the disk-only
 `var/runs/qwen38-meta-20261113/acceptance-controller.json` every15 seconds. It shows
 model/task/pool, case progress, factual completion, first schema check and long-context
 checks. This is explicitly separate from formal research and never polls the platform.
+
+Compatibility: vLLM0.19's API-level reasoning_effort enum does not include xhigh.
+The bridge supplies xhigh through chat_template_kwargs and removes conflicting
+Responses.reasoning overrides for this configured Qwen profile. DeepSeek requests
+are unchanged. Inference/transport failures abort engineering acceptance and are
+not counted as factual/schema failures or adopted as model capability scores.

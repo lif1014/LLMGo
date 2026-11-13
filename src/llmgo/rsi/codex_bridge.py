@@ -163,7 +163,12 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
             if preserve_thinking is not None:template['preserve_thinking']=preserve_thinking
             if reasoning_effort:
                 template['reasoning_effort']=reasoning_effort
-                extra['reasoning_effort']=reasoning_effort
+                # vLLM0.19's API enum predates xhigh. The model's chat
+                # template supports it; do not let Responses.reasoning reinsert
+                # an incompatible or conflicting API-level effort.
+                options.pop('reasoning',None)
+                options.pop('reasoning_effort',None)
+                extra.pop('reasoning_effort',None)
             if template:extra['chat_template_kwargs']=template
             for key,value in (sampling or {}).items():
                 if key in {'temperature','top_p','presence_penalty'}:options[key]=value

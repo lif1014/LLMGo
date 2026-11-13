@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .contracts import REPO,atomic_json,digest,read_json,utc,file_hash
+from .meta_protocol import MetaFailure
 
 
 def cases():
@@ -117,7 +118,9 @@ def run_benchmark(site,memory,attempt,backend_class):
                 answer=backend.turn(workspace,prompt)
                 row['answer']=answer
                 row['passed']=answer['status']=='ready' and grade(case,workspace)
-            except Exception as e:row['error']=str(e)
+            except Exception as e:
+                row['error']=str(e)
+                row['infrastructure_error']=isinstance(e,MetaFailure) and e.code in {'transport','turn_failed','authentication_or_config','launcher','rpc_timeout','protocol_configuration'}
             row['inputs_unchanged']=all((workspace/n).is_file() and file_hash(workspace/n)==identity for n,identity in input_hashes.items())
             row['passed']=row['passed'] and row['inputs_unchanged']
             row['checks']=[json.loads(line) for line in (workspace/'checks.jsonl').read_text().splitlines()] if (workspace/'checks.jsonl').exists() else []
@@ -126,6 +129,9 @@ def run_benchmark(site,memory,attempt,backend_class):
             row['token_usage']=backend.session.get('token_usage')
             atomic_json(folder/'result.json',row);results.append(row)
             atomic_json(attempt/'benchmark-progress.json',{'stage':'running','completed':len(results),'total':len(selected)*count,'last_case':row['id'],'summary':summarize(results)})
+            if row.get('infrastructure_error'):
+                atomic_json(attempt/'benchmark-progress.json',{'stage':'failed','completed':len(results),'total':len(selected)*count,'error':row['error'],'infrastructure_error':True})
+                raise RuntimeError('Benchmark inference/transport failed; these are not capability scores: '+row['error'])
     result={'model':site['meta_model'],'inference':{k:site.get(k) for k in ('meta_precision','meta_context_length','meta_max_output_tokens','meta_compact_tokens')},
             'repetitions':count,'summary':summarize(results),'results':results,'finished':utc()}
     atomic_json(attempt/'benchmark-result.json',result)

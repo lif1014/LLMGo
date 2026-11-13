@@ -41,3 +41,20 @@ def test_comparison_uses_cases_not_repetitions_and_rejects_invalid_allocations()
     assert r['right_improved_at_p05']
     b['admission']['platform_status']='Killed'
     with pytest.raises(ValueError,match='Succeeded'):compare(a,b)
+
+
+def test_transport_failure_aborts_acceptance_instead_of_scoring_sixty_failures(tmp_path):
+    import pytest
+    from llmgo.rsi.meta_benchmark import run_benchmark
+    from llmgo.rsi.meta_protocol import MetaFailure
+    home=tmp_path/'codex-home';home.mkdir();(home/'config.toml').write_text('model="fixture"')
+    calls=[]
+    class Backend:
+        def __init__(self,*args):self.session={}
+        def turn(self,*args):calls.append(1);raise MetaFailure('HTTP request rejected',code='turn_failed')
+    with pytest.raises(RuntimeError,match='not capability scores'):
+        run_benchmark({'meta_model':'fixture','meta_benchmark_repetitions':3},None,tmp_path,Backend)
+    assert len(calls)==1
+    progress=json.loads((tmp_path/'benchmark-progress.json').read_text())
+    assert progress['stage']=='failed' and progress['infrastructure_error'] is True
+    assert not (tmp_path/'benchmark-result.json').exists()

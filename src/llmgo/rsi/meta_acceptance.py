@@ -31,7 +31,6 @@ json.dump({'messages':messages,'input_tokens':len(ids)},open(out,'w'))
         if p.returncode:raise RuntimeError('Long-context tokenizer failed: '+p.stderr[-1200:])
         source=read_json(prompt_path)
         body={'model':site['meta_model'],'messages':source['messages'],'max_tokens':budget,
-              'reasoning_effort':site.get('meta_reasoning_effort','xhigh'),
               'chat_template_kwargs':{'enable_thinking':True,'preserve_thinking':True,'reasoning_effort':site.get('meta_reasoning_effort','xhigh')},
               **site.get('meta_sampling',{})}
         if source['input_tokens']+budget>site['meta_context_length']:raise ValueError('Long-context test exceeds declared window')

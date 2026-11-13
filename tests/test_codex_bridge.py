@@ -181,10 +181,11 @@ def test_qwen38_sampling_and_thinking_controls_are_forwarded_without_changing_ap
                    responder=responder,thinking=True,max_output_tokens=65536,sampling=settings,
                    reasoning_effort='xhigh',preserve_thinking=True)
     with TestClient(app) as client:
-        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello','max_output_tokens':100000})
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello','max_output_tokens':100000,'reasoning':{'effort':'medium'}})
     sent=seen[0]
     assert sent['max_output_tokens']==65536
     assert sent['temperature']==1 and sent['presence_penalty']==0
     assert sent['extra_body']['top_k']==20 and sent['extra_body']['min_p']==0
-    assert sent['extra_body']['reasoning_effort']=='xhigh'
+    assert 'reasoning_effort' not in sent['extra_body'] and 'reasoning' not in sent
+    assert 'reasoning_effort' not in sent
     assert sent['extra_body']['chat_template_kwargs']=={'enable_thinking':True,'preserve_thinking':True,'reasoning_effort':'xhigh'}

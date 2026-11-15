@@ -37,8 +37,9 @@ Every5 GRPO steps save the full optimizer/RNG/dataloader checkpoint, export and 
 40 games each. Decide continue/replan/finish only after the complete results.
 Referee:300 plies, fivefold repetition and current standard draw rules; no inference request deadline.
 Final DeepSeek non-thinking games remain outside development selection.
-All new jobs use PREEMPTABLE in model-new, model-claw-tool or model-codeagent2;
-model-autosft is disabled. The inference card is only for Meta. The framework selects available cards; never submit Meta cards yourself.
+Student training uses model-autosft/HIGH (one active or uncertain HIGH job).
+Meta inference and standalone validation use model-autosft/NORMAL; Meta may also use
+model-new, model-claw-tool or model-codeagent2/PREEMPTABLE. The inference card is only for Meta. The framework selects available cards; never submit Meta cards yourself.
 All artifacts stay in this study's campaign/workspace/run paths. Do not read other studies.
 '''
     (docs/'phase1-rl-scope.md').write_text(scope)

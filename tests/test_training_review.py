@@ -340,13 +340,18 @@ def test_high_slot_blocks_other_own_jobs_and_unknown_intents(tmp_path):
     with high_slot(transport,second):atomic_json(second,{'status':'UNKNOWN'})
 
 
-def test_retired_high_submission_is_rejected_before_platform_create(tmp_path,monkeypatch):
+def test_training_high_submission_checks_shared_slot_before_create(tmp_path,monkeypatch):
     from llmgo.remote.cctl import CctlExecutor
     from llmgo.rsi.memory import MemoryStore
-    t=CctlExecutor({'resource_pool':'model-autosft','priority':'HIGH','project':'rsi'},MemoryStore(tmp_path/'memory'))
-    monkeypatch.setattr(t,'request',lambda path:(['job','create'],'old envelope'))
-    monkeypatch.setattr(t,'command',lambda args:(_ for _ in ()).throw(AssertionError('No platform call permitted')))
-    with pytest.raises(ValueError,match='model-autosft is disabled'):t.submit(tmp_path/'manifest.json')
+    site={'resource_pool':'model-autosft','priority':'HIGH','project':'rsi','user_root':str(tmp_path),'repo':str(tmp_path/'repo')}
+    t=CctlExecutor(site,MemoryStore(tmp_path/'memory'))
+    monkeypatch.setattr(t,'request',lambda path:(['job','create','--priority','HIGH'],'training envelope'))
+    def command(args):
+        if args[:2]==['pool','list']:return [{'name':'model-autosft'}]
+        if args[:2]==['task','list']:return {'tasks':[{'id':9,'priority':'HIGH','status':'Running'}]}
+        raise AssertionError('A busy HIGH slot must not submit another job')
+    monkeypatch.setattr(t,'command',command)
+    with pytest.raises(AdmissionBusy,match='own HIGH'):t.submit(tmp_path/'manifest.json')
 
 
 def test_controller_review_guards_code_and_finishes_without_duplicate_evaluation(loop_fixture):

@@ -91,6 +91,9 @@ class CctlExecutor:
         gpu = resources["gpu_count"]
         if type(gpu) is not int or not 0 <= gpu <= 8:
             raise ValueError("gpu_count must be an integer from 0 to 8")
+        priority = site['priority']
+        if site['resource_pool'] == 'model-autosft' and (payload.get('kind') == 'evaluate' or gpu == 0):
+            priority = 'NORMAL'
         for key in ("cpu", "memory_gib"):
             if type(resources[key]) is not int or resources[key] < 1:
                 raise ValueError("Worker CPU/memory must be positive integers")
@@ -100,7 +103,7 @@ class CctlExecutor:
         description = f"llmgo-rsi:{payload['campaign_id']}:{payload['job_id']}:{manifest['sha256']}"
         return ["job", "create", "--project", site["project"], "--cluster", "beijing",
                 "--resource-pool", site["resource_pool"], "--billing-account-id", site["billing_account_id"],
-                "--priority", site['priority'], "--image", site["image"], "--gpu", str(gpu),
+                "--priority", priority, "--image", site["image"], "--gpu", str(gpu),
                 *(["--gpu-model", site["gpu_model"]] if gpu else []),
                 "--cpu", str(resources["cpu"]), "--memory", str(resources["memory_gib"]),
                 "--description", description, "--entry", entry], description
@@ -121,7 +124,8 @@ class CctlExecutor:
                 return intent
             return self.reconcile(intent_path)
         pool = self.site.get('resource_pool','model-new')
-        validate_submission(pool,self.site.get('priority','PREEMPTABLE'))
+        priority = args[args.index('--priority')+1] if '--priority' in args else self.site.get('priority','PREEMPTABLE')
+        validate_submission(pool,priority)
         pools = self.command(["pool", "list", "--own"])
         if not authorized_pool(own_pool_rows(pools),pool):
             # Inherited project access may be absent from --own; verify the exact
@@ -129,12 +133,15 @@ class CctlExecutor:
             detail = self.command(['pool','get',pool])
             if detail.get('id') != SUBMISSION_POOLS[pool]:
                 raise ValueError('Authorized pool identity is unavailable')
-        return self._create_request(args,description,manifest_path,intent_path)
+        if priority == 'HIGH':
+            from .high_admission import high_slot
+            with high_slot(self,intent_path):
+                return self._create_request(args,description,manifest_path,intent_path)
         return self._create_request(args,description,manifest_path,intent_path)
 
     def _create_request(self,args,description,manifest_path,intent_path):
         intent = {"description": description, "request_hash": digest(args), "status": "SUBMITTING",
-                  "manifest": str(manifest_path), "created": utc(),'priority':self.site.get('priority','PREEMPTABLE'),'resource_pool':self.site.get('resource_pool','model-new')}
+                  "manifest": str(manifest_path), "created": utc(),'priority':args[args.index('--priority')+1] if '--priority' in args else self.site.get('priority','PREEMPTABLE'),'resource_pool':self.site.get('resource_pool','model-new')}
         atomic_json(intent_path, intent)
         self.memory.append("submission_intent", intent)
         try:

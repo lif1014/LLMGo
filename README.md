@@ -5,10 +5,10 @@
 ## Meta-Agent 執行方式
 
 DeepSeek API 與按需 GPU Qwen 共用同一套 Codex 工具、研究規則、提案交接與網頁。
-Qwen Meta 使用原始 Qwen3.5-4B、thinking 開啟，每次研究／checkpoint 審查才申請1張H800，
-完成後釋放；Student 仍為 non-thinking。Meta 卡可用 model-autosft／HIGH，
+Qwen Meta 使用 Qwen3.8-27B、thinking 開啟，每次研究／checkpoint 審查才申請1張H800，
+完成後釋放；Student 仍為 non-thinking。Meta 卡可用 model-autosft／NORMAL，
 或 model-new、model-claw-tool、model-codeagent2／PREEMPTABLE，優先選空閒 H800 較多的池。
-HIGH 與訓練共用單一名額；名額被佔用時選其他池，不影響訓練。
+HIGH 名額保留給學生訓練；Meta 的 NORMAL／PREEMPTABLE 推理不占用該名額。
 被 kill 的嘗試無效，先丟棄其工作副本修改，再重新選池。完整啟動、乾淨研究起點、
 重試與網頁說明見 [Meta 執行方式](docs/meta-execution.md)。新研究需明確啟動，安裝不恢復舊研究。
 
@@ -108,10 +108,11 @@ L2/L3 正式學生推論請求預設不設客戶端時間期限（`timeout=None`
 Qwen3-8B-Chess 獨立對戰使用主研究累積 20 步的 j000010 step-5：hf-mirror 下載並固定對手版本，model-new／PREEMPTABLE／1 H800 同卡雙 vLLM，各自 non-thinking、16,384 tokens，40 局／40 並行，白黑各 20。網頁另列 Qwen3-8B-Chess 專欄，並在「學生 · 對局與復盤」保留雙方原始輸出與隨機後備統計。設定與啟動入口見 [本地對手評測](docs/local-chess-match.md)。
 
 
-2026-11-13 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，
-學生仍是固定 Qwen3.5-4B non-thinking。所有新任務（含CPU維護、Meta、學生訓練／評測）
-只可在 model-new、model-claw-tool、model-codeagent2 使用 PREEMPTABLE；禁止 model-autosft，
-此規則取代本文任何舊 HIGH／model-autosft 指示。新研究由使用者明確啟動，不恢復舊研究。
+2026-11-16 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，
+學生仍是固定 Qwen3.5-4B non-thinking。學生訓練使用 model-autosft／HIGH，同時最多一個活動或提交不確定的 HIGH。
+Meta 推理使用 model-autosft／NORMAL，或 model-new、model-claw-tool、model-codeagent2／PREEMPTABLE；不使用 HIGH。
+獨立驗證使用 model-autosft／NORMAL；訓練 allocation 內的每5步驗證仍沿用該 HIGH allocation。
+此規則取代 11月13日禁用 model-autosft 的規則。新研究由使用者明確啟動，不恢復舊研究。
 詳見 [Qwen3.8 操作說明](docs/qwen38-meta.md)（在docs目錄閱讀時使用 qwen38-meta.md）。
 訓練審查交接必須包含當前context的 training_review.request_id、action、reason、selected_step；
 執行 check_research_proposal.py 檢查後才交接，格式錯誤留在本回合修正。

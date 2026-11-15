@@ -1,4 +1,4 @@
-"""Common Meta request records and on-demand GPU execution under the current preemptable-only policy."""
+"""Common Meta request records and on-demand GPU execution under the current training/inference allocation policy."""
 from __future__ import annotations
 
 from datetime import datetime,timezone
@@ -14,12 +14,12 @@ from .memory import MemoryStore
 from .meta_protocol import MetaFailure
 from .research_control import require_research,ResearchPaused
 from llmgo.remote.cctl import CctlExecutor,SubmissionUncertain,_task_id
-from llmgo.remote.resource_policy import SUBMISSION_POOLS, validate_submission
+from llmgo.remote.resource_policy import SUBMISSION_POOLS, META_PRIORITIES, PRIORITY_IDS, validate_submission
 
 QUEUED={'Creating','Created','Pending','Scheduling','Queued','Requeue'}
 TERMINAL={'Succeeded','Failed','Killed','Stopped','OOMKilled','ImagePullBackOff','Invalid'}
 POOL_IDS=dict(SUBMISSION_POOLS)
-PRIORITIES={pool:'PREEMPTABLE' for pool in POOL_IDS}
+PRIORITIES=dict(META_PRIORITIES)
 
 
 def meta_mode(site):
@@ -241,7 +241,7 @@ class GpuMetaBackend:
     def submit(self,attempt,report):
         request=read_json(attempt/'worker-request.json');pool=report['pool']
         priority=report.get('priority',PRIORITIES.get(pool))
-        validate_submission(pool,priority)
+        validate_submission(pool,priority,purpose='meta')
         worker=Path(request['source']['root'])/'scripts/run_meta_gpu.py'
         argv=['job','create','--project',self.site['project'],'--cluster','beijing','--resource-pool',pool,
             '--billing-account-id',self.site['billing_account_id'],'--priority',priority,
@@ -259,7 +259,7 @@ class GpuMetaBackend:
         else:
             preview=self.transport.command([*argv,'--dry-run'])
             mapped=preview['request']['task']
-            if mapped['resource_pool_id']!=POOL_IDS[pool] or mapped['priority']!=3 or mapped['resources']['gpu_count']!=1:
+            if mapped['resource_pool_id']!=POOL_IDS[pool] or mapped['priority']!=PRIORITY_IDS[priority] or mapped['resources']['gpu_count']!=1:
                 raise ValueError('Meta submission resources differ from request')
             atomic_json(attempt/'dryrun.json',preview)
             description=argv[argv.index('--description')+1]

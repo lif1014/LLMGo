@@ -9,18 +9,17 @@ from llmgo.rsi.meta_jobs import GpuMetaBackend,ApiMetaBackend,choose_pool,pool_s
 
 
 @pytest.mark.parametrize('free,queues,want',[
-    ([8,4,1],[0,0,0],'model-new'),
-    ([0,4,1],[1,2,0],'model-claw-tool'),
-    ([0,0,2],[1,1,9],'model-codeagent2'),
-    ([4,4,4],[0,0,0],'model-new'),
-    ([0,0,0],[2,3,4],'model-new'),
+    ([10,8,4,1],[0,0,0,0],'model-autosft'),
+    ([0,8,4,1],[0,0,0,0],'model-new'),
+    ([0,0,4,1],[0,1,2,0],'model-claw-tool'),
+    ([0,0,0,2],[0,1,1,9],'model-codeagent2'),
+    ([4,4,4,4],[0,0,0,0],'model-autosft'),
+    ([0,0,0,0],[5,2,3,4],'model-new'),
 ])
 def test_available_card_first_policy(free,queues,want):
     from llmgo.rsi.meta_jobs import POOL_IDS
     snapshots={p:{'free_gpus':f,'queued_people':q,'queued_tasks':q} for p,f,q in zip(POOL_IDS,free,queues)}
-    snapshots['model-autosft']={'free_gpus':999,'queued_people':0,'queued_tasks':0}
     assert choose_pool(snapshots)==want
-    assert 'model-autosft' not in POOL_IDS
 
 
 def test_queue_counts_people_not_jobs_and_only_h800():
@@ -126,7 +125,7 @@ def test_unknown_telemetry_uses_preemptable_without_guessing_high(tmp_path):
     class Platform:
         def command(self,args):raise OSError('unavailable')
     pool,snapshot=GpuMetaBackend(site,memory,transport=Platform()).select_pool()
-    assert pool=='model-new' and snapshot['model-new']['warning'] and 'model-autosft' not in snapshot
+    assert pool=='model-new' and snapshot['model-new']['warning'] and snapshot['model-autosft']['warning']
 
 
 @pytest.mark.parametrize('current,target,move',[(0,0,False),(0,1,True),(1,1,False),(1,2,True),(None,2,False)])
@@ -211,7 +210,7 @@ def test_clean_start_excludes_teacher_history_and_routes_outputs(tmp_path):
     with pytest.raises(FileExistsError):prepare(repo,target,site)
 
 
-def test_high_selection_excludes_own_training_and_keeps_other_pools(tmp_path):
+def test_training_high_slot_does_not_block_normal_meta_selection(tmp_path):
     site,memory,workspace=fixture(tmp_path)
     class Platform:
         def __init__(self):self.site=site
@@ -222,10 +221,10 @@ def test_high_selection_excludes_own_training_and_keeps_other_pools(tmp_path):
                 return {'edges':{'resource_quotas':[{'name':'h800','capacity':free,'used':0,'edges':{'cluster':{'name':'beijing'}}}]}}
             return {'tasks':[]}
     pool,selection=GpuMetaBackend(site,memory,transport=Platform()).select_pool()
-    assert pool=='model-claw-tool' and 'model-autosft' not in selection
+    assert pool=='model-autosft' and selection['model-autosft']['free_gpus']==10
 
 
-@pytest.mark.parametrize('pool,pool_id',[('model-new',523),('model-claw-tool',515),('model-codeagent2',514)])
+@pytest.mark.parametrize('pool,pool_id',[('model-autosft',525),('model-new',523),('model-claw-tool',515),('model-codeagent2',514)])
 def test_each_pool_submits_exact_priority_and_one_gpu(tmp_path,pool,pool_id):
     from llmgo.rsi.meta_jobs import PRIORITIES
     site,memory,workspace=fixture(tmp_path);attempt=tmp_path/'attempt';attempt.mkdir()
@@ -236,7 +235,7 @@ def test_each_pool_submits_exact_priority_and_one_gpu(tmp_path,pool,pool_id):
         def command(self,args):
             calls.append(args)
             if args[:2]==['task','list']:return {'tasks':[]}
-            if '--dry-run' in args:return {'request':{'task':{'resource_pool_id':pool_id,'priority':1 if pool_id==525 else 3,'resources':{'gpu_count':1}}}}
+            if '--dry-run' in args:return {'request':{'task':{'resource_pool_id':pool_id,'priority':2 if pool_id==525 else 3,'resources':{'gpu_count':1}}}}
             return {'id':7,'status':'Queued'}
     GpuMetaBackend(site,memory,transport=Platform()).submit(attempt,{'pool':pool,'priority':PRIORITIES[pool],'request_id':'fixture'})
     args=calls[-1]

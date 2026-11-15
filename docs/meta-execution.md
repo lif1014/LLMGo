@@ -3,19 +3,19 @@
 The current GPU teacher is Qwen3.8-27B thinking. The common Codex/bridge/controller
 interfaces still support DeepSeek API execution. See [Qwen3.8 deployment and acceptance](qwen38-meta.md)
 for the current128K context,64K output,56K compaction profile and exact launch commands.
-All new jobs use PREEMPTABLE/model-new, model-claw-tool or model-codeagent2; model-autosft
-is disabled. Existing paused studies are not resumed by installation.
+Training uses model-autosft/HIGH. Meta inference uses model-autosft/NORMAL or
+model-new, model-claw-tool, model-codeagent2/PREEMPTABLE. Existing paused studies are not resumed by installation.
 
 The sections below explain common behavior and historical implementation. Old Qwen3.5-4B
-Meta settings and HIGH/model-autosft descriptions are historical, not current launch policy.
+Meta settings are historical; the resource policy below is current.
 
 
 The existing DeepSeek API profile, `configs/rsi/site.beijing.json`, remains the default.
 `meta_execution` defaults to `api`; existing campaigns and sessions continue through the
 same Codex runner and Responses-to-Chat bridge. No DeepSeek game evaluator is changed.
-The Qwen profile, `configs/rsi/site.qwen-meta.json`, selects `gpu_job`, the original
-Qwen3.5-4B, thinking enabled, 65,536 context tokens, 45,000-token compaction trigger,
-and a 16,384-token maximum model reply. Student non-thinking is independent.
+The Qwen profile, `configs/rsi/site.qwen38-meta.json`, selects `gpu_job`, Qwen3.8-27B, thinking
+enabled, 131,072 context tokens, 57,344-token compaction trigger, and a 65,536-token
+maximum model reply. Student non-thinking is independent.
 
 A GPU allocation covers one complete research request or checkpoint review, including
 multiple model calls and tool execution. It ends after handing over its answer and
@@ -25,12 +25,14 @@ A paused campaign is never resumed by installing this feature.
 
 ## Resource policy
 
-Only beijing/model-new, model-claw-tool, model-codeagent2 PREEMPTABLE submissions are
-currently authorized for Meta and Student jobs, including CPU maintenance. Choose available
-H800 headroom first, then shorter queues. GPU platform polls persist600 seconds across
-restarts. A killed/stopped Meta attempt is invalid even with a result file; archive its
-edits, restore its baseline and reselect. Never move a running task merely for a better
-queue, and never stop another user's work. Legacy task reads retain their recorded identity.
+Student training uses beijing/model-autosft HIGH, with one active or uncertain HIGH
+job. Independent validation and Meta inference use model-autosft NORMAL; Meta can also
+use model-new, model-claw-tool or model-codeagent2 PREEMPTABLE. Meta never takes the
+training HIGH slot. Choose available H800 headroom first, then shorter queues. GPU
+platform polls persist600 seconds across restarts. A killed/stopped Meta attempt is
+invalid even with a result file; archive its edits, restore its baseline and reselect.
+Never move a running task merely for a better queue, and never stop another user's work.
+Legacy task reads retain their recorded identity.
 
 ## New study and launch
 
@@ -41,7 +43,7 @@ cd '/user/lyh4170/LLMGo!'
 /user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python -B scripts/prepare_qwen_research.py
 ```
 
-This builds `var/clean-starts/qwen-meta-v1`, with no Git history, prior campaign Memory,
+This builds `var/clean-starts/qwen38-27b-meta-v1`, with no Git history, prior campaign Memory,
 Codex sessions, benchmark recipes or research conclusions. It retains common implementation
 fixes, the default GRPO template, generic skills/tests and clean research instructions.
 `assets` and `var` route to the project assets/artifact roots so existing workers and Web
@@ -52,9 +54,9 @@ strict read isolation requires a separate filesystem/container policy.
 Start the new study explicitly, from its prepared source:
 
 ```bash
-bash '/user/lyh4170/LLMGo!/var/clean-starts/qwen-meta-v1/scripts/start_rsi.sh' \
-  --site '/user/lyh4170/LLMGo!/var/clean-starts/qwen-meta-v1/configs/rsi/site.qwen-meta.json' \
-  --campaign chess-grpo-qwen-meta-v1
+bash '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v1/scripts/start_rsi.sh' \
+  --site '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v1/configs/rsi/site.qwen38-meta.json' \
+  --campaign chess-grpo-qwen38-27b-meta-v1
 ```
 
 Fresh initialization measures Student L2/L3 baselines and imports no old trained checkpoint

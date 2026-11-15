@@ -29,14 +29,16 @@ If another precision is tested, store a separate profile and results; do not mix
 
 ## Current allocation policy
 
-All new jobs, including CPU maintenance, downloads, Student training/evaluation and
-Meta inference, use PREEMPTABLE in beijing/model-new, model-claw-tool or model-codeagent2.
-No new model-autosft submission is allowed. The submission boundaries enforce this;
-legacy HIGH admissions and historical task records remain readable but cannot authorize
-new jobs. Meta selects the most available H800 headroom, then shorter queues. Unknown
-telemetry never means zero or free capacity. Platform polls remain600 seconds apart.
-Preempted Meta attempts and their edits are invalid; restore the request baseline and
-reselect among the three authorized pools. No other user's task is stopped or modified.
+Student RL training uses beijing/model-autosft HIGH, with one active or uncertain
+HIGH submission at a time. Standalone validation uses model-autosft NORMAL; validation
+inside a training allocation retains that allocation. Meta inference uses model-autosft
+NORMAL or model-new, model-claw-tool, model-codeagent2 PREEMPTABLE; Meta never uses HIGH.
+Thus a training HIGH reservation does not block a NORMAL Meta review. CPU maintenance can
+use model-autosft NORMAL or the three PREEMPTABLE pools. Meta selects the most available
+H800 headroom, then shorter queues. Unknown telemetry never means zero or free capacity.
+Platform polls remain600 seconds apart. Preempted Meta attempts and their edits are
+invalid; restore the request baseline and reselect among the four authorized pools.
+No other user's task is stopped or modified.
 
 One card is held for a complete research/review request and its tools, then released.
 It is not a permanent devspace and not a new allocation for each token/API call. The

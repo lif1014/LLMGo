@@ -94,6 +94,16 @@ cd '/user/lyh4170/LLMGo!'
 /user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python scripts/prepare_qwen_research.py
 ```
 
+If the startup doctor reports `auth_expired`, refresh the remote project credential
+in the existing devspace. Local cctl login and this remote credential are independent.
+Use the same Cybertron account; the token stays private and is never printed:
+
+```bash
+/user/lyh4170/tools/bin/cctl login -e modelbest --profile modelbest
+install -m 600 "$HOME/.cybertronctl/profiles/modelbest/token" \
+  '/user/lyh4170/.config/llmgo/cybertron-token'
+```
+
 After reviewing acceptance results, the user explicitly starts:
 
 ```bash

@@ -44,6 +44,35 @@ def test_phase2_initial_model_and_meta_home_are_independent(tmp_path,monkeypatch
     assert '本阶段成果判为 0 分' in prompt and expected in prompt
     assert (home/'AGENTS.md').read_text()==(REPO/'docs/phase2-meta-prompt.md').read_text()
     assert not (Path(c.state['initial']['source']['root'])/'harness.py').exists()
+    assert c.site['runtime_root'] != site.get('runtime_root')
+
+
+def test_phase2_preparation_keeps_api_settings_and_excludes_phase1_instructions(tmp_path):
+    target=tmp_path/'phase2-source'
+    config=tmp_path/'site.json'
+    atomic_json(config,{'repo':str(REPO),'meta_execution':'api','meta_model':'deepseek-v4.1-flash',
+        'meta_thinking':True,'codex_home':'/original-private-home','priority':'NORMAL'})
+    path=phase2.prepare_source(REPO,target,config)
+    site=read_json(path)
+    assert site['research_scope']==phase2.SCOPE and site['repo']==str(target)
+    assert site['codex_home']=='/original-private-home' and site['meta_execution']=='api'
+    assert '禁止任何模型训练' in (target/'AGENTS.md').read_text()
+    assert not (target/'docs/meta-workspace-agents.md').exists()
+    assert not (target/'docs/phase1-rl-scope.md').exists()
+    assert (target/'examples/phase2/harness.py').is_file()
+    assert (target/'var').is_symlink() and (target/'assets').is_symlink()
+    assert 'historical results' in read_json(target/'clean-start.json')['excluded']
+
+
+def test_phase2_site_default_initializes_phase2_without_an_extra_scope_flag(tmp_path,monkeypatch,capsys):
+    from llmgo.rsi import cli
+    site,_=setup_site(tmp_path,monkeypatch)
+    site.update(research_scope=phase2.SCOPE,meta_execution='api',meta_model='deepseek-v4.1-flash',meta_thinking=True)
+    monkeypatch.setattr(cli,'load_site',lambda _:dict(site))
+    assert cli.main(['init','api-phase2'])==0
+    state=json.loads(capsys.readouterr().out)['state']
+    assert state['research_scope']==phase2.SCOPE and state['site']['meta_execution']=='api'
+    assert not any(k in state['site'] for k in ('meta_context_length','meta_max_output_tokens','meta_sampling'))
 
 
 def test_phase2_accepts_freeform_skills_and_generic_jobs_without_training_detection(tmp_path,monkeypatch):
@@ -100,8 +129,25 @@ def test_phase2_full_local_loop_delivers_best_harness_and_preserves_phase1(tmp_p
         if payload['candidate_id']!='initial':
             row=rows[0];side=row['model_seat']
             winner=side if payload['candidate_id']=='r000001' else ('black' if side=='white' else 'white')
-            row['result']=winner+'_win';row.pop('integrity');row['integrity']=digest(row)
-            atomic_json(output/'game_results'/f'{index:02d}.json',row)
+            row['result']=winner+'_win'
+        row=rows[0];side=row['model_seat']
+        score=0 if row['result']=='draw' else 1 if row['result']==side+'_win' else -1
+        # The current evidence builder verifies full timelines and diagnostics;
+        # provide those in this simulated match instead of weakening production checks.
+        path=Path(row['raw_events']);board=chess.Board()
+        events=[{'type':'episode_started','episode_id':row['game_id'],'student_color':side,'ply':0}]
+        for ply,uci in enumerate(['e2e4','e7e5'],1):
+            board.push_uci(uci)
+            events.append({'type':'student_move' if (ply%2==1)==(side=='white') else 'opponent_move',
+                           'episode_id':row['game_id'],'ply':ply,'uci':uci,'fen':board.fen()})
+        events.append({'type':'episode_finished','episode_id':row['game_id'],'ply':2,
+                       'result':score,'reason':'fixture','fen':board.fen()})
+        path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+        from llmgo.rsi.contracts import file_hash
+        row.update(diagnostics={'result':score,'plies':2},result_reason='fixture',
+                   event_hashes={'raw_events':file_hash(path)})
+        row.pop('integrity');row['integrity']=digest(row)
+        atomic_json(output/'game_results'/f'{index:02d}.json',row)
         return rows
     monkeypatch.setattr(evaluator,'play_batch',play)
     class LocalPlatform(Platform):

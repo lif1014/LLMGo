@@ -109,7 +109,10 @@ def test_phase1_keeps_prompt_fixed_but_accepts_rl_edits(tmp_path):
     config.pop('model_path')
     config_copy.write_text(json.dumps(config))
     (workspace/'src/llmgo/training/chess_r1_verl.py').write_text('ALGORITHM = "new_rl"\n')
-    candidate = controller.prepare(workspace/'proposal.json')
+    proposal_path=workspace/'proposal.json'
+    proposal=json.loads(proposal_path.read_text());proposal['hypothesis']='Test the edited RL algorithm with fixed prompt'
+    proposal_path.write_text(json.dumps(proposal))
+    candidate = controller.prepare(proposal_path)
     assert candidate['id'] == 'r000001'
 
 

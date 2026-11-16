@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import random
+import shutil
 import time
 from pathlib import Path
 
@@ -106,7 +107,66 @@ def play_game(index, output, url, payload):
         episode.close()
 
 
-def run(model, candidate, output, *, inference_python=None, games=10, parallel_games=1, research_scope="phase1_rl_only", max_model_len=None, candidate_id=None):
+def restore_completed_games(previous, output, protocol):
+    """Copy only verified, completed games from the same match into a new run."""
+    previous = Path(previous).resolve()
+    old = read_json(previous/'protocol.json')
+    keys = ('role', 'opponent', 'student_protocol', 'answer_parser',
+            'opponent_answer_parser', 'games', 'white', 'black', 'seed_pairs',
+            'max_plies', 'fivefold_repetition', 'invalid_move_policy', 'candidate_source_hashes')
+    if (old.get('research_scope', 'phase1_rl_only') != protocol.get('research_scope', 'phase1_rl_only')
+            or old.get('max_model_len') != protocol.get('max_model_len')):
+        raise ValueError('Cannot reuse games from a different research scope or context length')
+    if any(old.get(k) != protocol.get(k) for k in keys) or (
+            old['student_model_identity']['sha256'] != protocol['student_model_identity']['sha256']):
+        raise ValueError('Cannot reuse games from a different model, prompt or match protocol')
+    restored = []
+    for index in range(protocol['games']):
+        game_id = f'deepseek-final-{index:02d}'
+        folder = previous/'games'/game_id
+        if not (folder/'summary.json').is_file():
+            continue
+        summary = read_json(folder/'summary.json')
+        if not summary.get('completed') or summary.get('aborted'):
+            continue
+        side, seed = ('white' if index % 2 == 0 else 'black'), 417000 + index//2
+        if (summary['episode_id'] != game_id or summary['student_color'] != side
+                or summary['seed'] != seed or summary['result'] not in (-1, 0, 1)):
+            raise ValueError('Completed game identity mismatch')
+        board, terminal = chess.Board(), None
+        with (folder/'events.jsonl').open() as stream:
+            for line in stream:
+                event = json.loads(line)
+                if event['episode_id'] != game_id:
+                    raise ValueError('Completed game events have the wrong identity')
+                if event['type'] in ('student_move', 'opponent_move', 'forced_move'):
+                    board.push_uci(event['uci'])
+                if event['type'] == 'episode_finished':
+                    terminal = event
+        if (terminal is None or len(board.move_stack) != summary['plies']
+                or terminal['fen'] != board.fen() or terminal['result'] != summary['result']
+                or terminal['reason'] != summary['reason']):
+            raise ValueError('Completed game events do not match the summary')
+        destination = output/'games'/game_id
+        shutil.copytree(folder, destination)
+        row = {'game_id':game_id, 'index':index, 'pair_id':index//2, 'seed':seed,
+               'student_color':side, 'result':summary['result'], 'plies':summary['plies'],
+               'reason':summary['reason'], 'events':str(destination/'events.jsonl'),
+               'events_sha256':file_hash(destination/'events.jsonl'),
+               'student_random_moves':summary['random_moves'],
+               'resumed_from':str(folder)}
+        atomic_json(output/'game_results'/f'{index:02d}.json', row)
+        restored.append(row)
+    atomic_json(output/'resume.json', {'previous':str(previous),
+        'previous_protocol_sha256':file_hash(previous/'protocol.json'),
+        'completed_indices':[row['index'] for row in restored],
+        'note':'Completed games reused; interrupted games restart from the standard initial board.',
+        'created':utc()})
+    return restored
+
+
+def run(model, candidate, output, *, inference_python=None, games=10, parallel_games=1,
+        resume_from=None, research_scope="phase1_rl_only", max_model_len=None, candidate_id=None):
     if type(games) is not int or games < 2 or games % 2:
         raise ValueError('Final test games must be a positive even number, at least 2')
     if type(parallel_games) is not int or not 1 <= parallel_games <= 40:
@@ -129,7 +189,7 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
     payload = {'candidate_id': candidate_id or candidate.name, 'candidate_source': {'root': str(candidate)},
                'research_scope': research_scope,
                'skills_path': str(skills) if skills.is_file() else None}
-    atomic_json(output/'protocol.json', {'role': 'held_out_final_test',
+    protocol = {'role': 'held_out_final_test',
         'research_scope':research_scope, 'max_model_len':max_model_len, 'candidate_id':payload['candidate_id'],
         'opponent': {**OPPONENT,**opponent_identity()}, 'student_protocol': PROTOCOL,
         'answer_parser':ANSWER_PARSER, 'opponent_answer_parser':ANSWER_PARSER, 'games': games,
@@ -143,38 +203,53 @@ def run(model, candidate, output, *, inference_python=None, games=10, parallel_g
         'student_compilation_config': {'cudagraph_mode': 'PIECEWISE'},
         'max_plies': MAX_GAME_PLIES, 'fivefold_repetition': True, 'invalid_move_policy': 'random_legal',
         'student_model_identity': identity, 'candidate': str(candidate),
-        'candidate_source_hashes': source_hashes, 'started': utc()})
+        'candidate_source_hashes': source_hashes, 'started': utc()}
+    atomic_json(output/'protocol.json', protocol)
+    rows = restore_completed_games(resume_from, output, protocol) if resume_from else []
+    restored_indices = {row['index'] for row in rows}
     port = _pick_ports(8000, 1)[0]
     service = VllmServer(model, PROTOCOL, output/'vllm.log', port, gpu_ids[0],
                          python=inference_python, max_num_seqs=max(8, concurrency), async_scheduling=False,
                          compilation_config={'cudagraph_mode':'PIECEWISE'},
                          **({'max_model_len':max_model_len} if max_model_len is not None else {}))
-    rows = []
+    failures = []
+    def progress(stage='playing'):
+        atomic_json(output/'progress.json', {'stage':stage, 'completed':len(rows),
+            'failed':len(failures), 'remaining':games-len(rows)-len(failures),
+            'total':games, 'parallel_games':concurrency, 'resumed_games':len(restored_indices),
+            'errors':failures, 'updated':utc()})
     try:
         service.start()
         error = _wait_servers([service], None)
         if error:
             raise RuntimeError(error)
-        atomic_json(output/'progress.json', {'stage': 'playing', 'completed': 0, 'total': games,
-                                            'parallel_games': concurrency, 'updated': utc()})
+        progress()
         # Each game owns its board, RNG and event files. Only this coordinator
         # writes progress and result receipts, so parallel games cannot race on
         # an atomic JSON temporary file.
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             pending = {pool.submit(play_game, index, output, service.base_url, payload): index
-                       for index in range(games)}
+                       for index in range(games) if index not in restored_indices}
             for future in as_completed(pending):
                 index = pending[future]
-                row = future.result()
-                if row.get('index') != index:
-                    raise ValueError('Final-test game receipt has the wrong index')
-                rows.append(row)
-                atomic_json(output/'game_results'/f'{index:02d}.json', row)
-                atomic_json(output/'progress.json', {'stage': 'playing', 'completed': len(rows),
-                            'total': games, 'parallel_games': concurrency, 'updated': utc()})
+                try:
+                    row = future.result()
+                    if row.get('index') != index:
+                        raise ValueError('Final-test game receipt has the wrong index')
+                    rows.append(row)
+                    atomic_json(output/'game_results'/f'{index:02d}.json', row)
+                except Exception as error:
+                    failure = {'index':index, 'type':type(error).__name__,
+                               'error':str(error), 'updated':utc()}
+                    failures.append(failure)
+                    atomic_json(output/'game_errors'/f'{index:02d}.json', failure)
+                progress()
+        if failures:
+            raise RuntimeError(f"{len(failures)} final-test game(s) failed; "
+                               f"{len(rows)} valid games retained: {failures[0]['error']}")
     except Exception as error:
         atomic_json(output/'failure.json', {'type': type(error).__name__, 'error': str(error), 'updated': utc()})
-        atomic_json(output/'progress.json', {'stage': 'failed', 'completed': len(rows), 'total': games, 'updated': utc()})
+        progress('failed')
         raise
     finally:
         service.stop()
@@ -206,6 +281,7 @@ def main(argv=None):
     parser.add_argument('--max-model-len',type=int)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--inference-python')
+    parser.add_argument('--resume-from', type=Path, help='Previous final-test directory; reuse verified completed games')
     parser.add_argument('--games', type=int, default=10, help='Even total; half white and half black (default: 10)')
     parser.add_argument('--parallel-games', type=int, default=1, help='Concurrent games on the single vLLM replica (1–40)')
     parser.add_argument('--opponent-model',default=os.environ.get('DEEPSEEK_MODEL','deepseek-v4.1-flash'))
@@ -222,14 +298,14 @@ def main(argv=None):
     os.environ['DEEPSEEK_MODEL']=args.opponent_model
     os.environ['DEEPSEEK_BASE_URL']=args.opponent_base_url.rstrip('/')
     root = Path('/user/lyh4170')
-    for path in (args.model, args.candidate, args.output):
+    for path in (args.model, args.candidate, args.output, *([args.resume_from] if args.resume_from else [])):
         inside(root, path)
     repo = root/'LLMGo!'
     if args.output.resolve().parent.parent != (repo/'var/runs').resolve():
         raise ValueError('Final test output must be LLMGo!/var/runs/<run-id>/final-test')
     result = run(args.model, args.candidate, args.output,
                  inference_python=args.inference_python, games=args.games, parallel_games=args.parallel_games,
-                 research_scope=args.scope,max_model_len=args.max_model_len,
+                 resume_from=args.resume_from, research_scope=args.scope,max_model_len=args.max_model_len,
                  candidate_id=bundle['candidate_id'] if args.final_candidate else None)
     print(json.dumps({k:v for k,v in result.items() if k != 'rows'}, ensure_ascii=False))
     return 0

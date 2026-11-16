@@ -36,8 +36,13 @@ def chat_base(url):
     return url + '/v1' if not parsed.path else url
 
 
-def proxy_environment(environment):
+def proxy_environment(environment, api_base=None):
     env = dict(environment)
+    if api_base and urllib.parse.urlsplit(api_base).hostname in {'localhost','127.0.0.1','::1'}:
+        for key in ('HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy','ALL_PROXY','all_proxy'):
+            env.pop(key,None)
+        env['NO_PROXY']=env['no_proxy']='localhost,127.0.0.1,::1'
+        return env
     proxy = 'http://whitelist-proxy.cybertron.svc.cluster.local:7891'
     for name in ('HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy'):
         env[name] = proxy
@@ -48,7 +53,52 @@ def proxy_environment(environment):
     return env
 
 
-def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None):
+def qwen_instructions_first(options):
+    """Qwen templates allow one leading system message; preserve all instructions.
+
+    Codex may insert developer messages between user/tool turns. The pinned
+    LiteLLM converter prepends Responses.instructions as a system message, so
+    collect those instruction messages there without reordering tool dialogue.
+    """
+    value=dict(options);items=value.get('input')
+    if not isinstance(items,list):return value,0
+    instructions=[value['instructions']] if value.get('instructions') else []
+    rest=[];moved=0
+    for item in items:
+        if isinstance(item,dict) and item.get('role') in {'system','developer'}:
+            content=item.get('content','')
+            if isinstance(content,list):
+                content='\n'.join(block.get('text','') if isinstance(block,dict) else str(block) for block in content)
+            instructions.append(str(content));moved+=1
+        else:rest.append(item)
+    if moved:
+        value['instructions']='\n\n'.join(instructions);value['input']=rest
+    return value,moved
+
+
+async def heartbeat_events(iterator,interval=20):
+    """SSE comments keep Codex connected while waiting for upstream events."""
+    pending=None
+    try:
+        while True:
+            if pending is None:pending=asyncio.ensure_future(anext(iterator))
+            done,_=await asyncio.wait({pending},timeout=interval)
+            if not done:
+                yield None
+                continue
+            try:item=pending.result()
+            except StopAsyncIteration:return
+            pending=None
+            yield item
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending,return_exceptions=True)
+        close=getattr(iterator,'aclose',None)
+        if close:await close()
+
+
+def create_app(model, api_base, upstream_key, local_token, trace_path, responder=None, *, thinking=None, max_output_tokens=None, sampling=None, reasoning_effort=None, preserve_thinking=None):
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse, StreamingResponse
     if responder is None:
@@ -98,10 +148,51 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
         record('request', request_id=rid, payload=payload)
         options = dict(payload)
         selected_model = payload.get('model') or model
+        if selected_model.lower().startswith('qwen'):
+            options,moved=qwen_instructions_first(options)
+            if moved:record('qwen_instructions_normalized',request_id=rid,moved_messages=moved)
         options.update(model='openai/'+selected_model, api_base=chat_base(api_base), api_key=upstream_key,
                        use_chat_completions_api=True, num_retries=0, drop_params=True)
+        if thinking is not None:
+            extra=dict(options.get("extra_body") or {})
+            if selected_model.lower().startswith('deepseek'):
+                extra['thinking']={'type':'enabled' if thinking else 'disabled'}
+            else:
+                extra["chat_template_kwargs"]={**extra.get("chat_template_kwargs",{}),"enable_thinking":thinking}
+            options["extra_body"]=extra
+        if selected_model.lower().startswith('qwen'):
+            extra=dict(options.get('extra_body') or {})
+            template=dict(extra.get('chat_template_kwargs') or {})
+            if preserve_thinking is not None:template['preserve_thinking']=preserve_thinking
+            if reasoning_effort:
+                template['reasoning_effort']=reasoning_effort
+                # vLLM0.19's API enum predates xhigh. The model's chat
+                # template supports it; do not let Responses.reasoning reinsert
+                # an incompatible or conflicting API-level effort.
+                options.pop('reasoning',None)
+                options.pop('reasoning_effort',None)
+                extra.pop('reasoning_effort',None)
+            if template:extra['chat_template_kwargs']=template
+            for key,value in (sampling or {}).items():
+                if key in {'temperature','top_p','presence_penalty'}:options[key]=value
+                else:extra[key]=value
+            if extra:options['extra_body']=extra
+        if max_output_tokens is not None:
+            options["max_output_tokens"]=min(options.get("max_output_tokens") or max_output_tokens,max_output_tokens)
+        qwen_stream=selected_model.lower().startswith('qwen') and payload.get('stream')
+        async def deferred():
+            upstream=await responder(**options)
+            if prepare_chat_iterator(upstream):
+                record('iterator_compat',request_id=rid,repair='defer_empty_chat_start',version='litellm-1.105.2')
+            try:
+                async for item in upstream:yield item
+            finally:
+                close=getattr(upstream,'aclose',None)
+                if close:
+                    completion=close()
+                    if inspect.isawaitable(completion):await completion
         try:
-            response = await responder(**options)
+            response = heartbeat_events(deferred()) if qwen_stream else await responder(**options)
         except Exception as error:
             message = scrub(str(error), known)
             record('error', request_id=rid, error=type(error).__name__, detail=message)
@@ -121,6 +212,10 @@ def create_app(model, api_base, upstream_key, local_token, trace_path, responder
             protocol = ReasoningStream()
             try:
                 async for item in response:
+                    if item is None and qwen_stream:
+                        record('heartbeat',request_id=rid)
+                        yield ': waiting for Qwen\n\n'
+                        continue
                     data = document(item)
                     # Keep the exact converter event as evidence. Record repairs
                     # as metadata rather than duplicating every text delta.
@@ -226,7 +321,7 @@ def launch(arguments, *, prefix='/user/lyh4170/tools/codex-reused-20261023', bri
     env['PATH'] = str(prefix/'bin') + os.pathsep + env.get('PATH', os.defpath)
     env['TMPDIR'] = str(prefix/'_runtime/tmp')
     env['XDG_CACHE_HOME'] = str(prefix/'_runtime/cache')
-    env = proxy_environment(env)
+    env = proxy_environment(env,config.get("model_providers",{}).get(config.get("model_provider","custom"),{}).get("base_url"))
     binary = str(prefix/'codex-native')
     informational = arguments and (arguments[0] in {'login','logout','help','completion','features','mcp','sandbox'}
                     or any(arg in {'--version','-V','--help','-h'} for arg in arguments))
@@ -240,7 +335,7 @@ def launch(arguments, *, prefix='/user/lyh4170/tools/codex-reused-20261023', bri
     upstream = config['model_providers'][provider]
     key = upstream.get('experimental_bearer_token') or env.get(auth['api_key_env']) or '__not_configured__'
     model = config['model']
-    runtime = prefix/'_runtime/bridge'/uuid.uuid4().hex
+    runtime = Path(env.get('LLMGO_META_RUNTIME',str(prefix/'_runtime/bridge')))/uuid.uuid4().hex
     runtime.mkdir(parents=True, mode=0o700)
     os.chmod(runtime,0o700)
     local_token = secrets.token_urlsafe(32)
@@ -323,5 +418,11 @@ def serve_main(argv=None):
     parser.add_argument('--trace',type=Path,required=True)
     args=parser.parse_args(argv)
     import uvicorn
-    app=create_app(args.model,args.api_base,os.environ['LLMGO_UPSTREAM_API_KEY'],os.environ['LLMGO_BRIDGE_TOKEN'],args.trace)
+    thinking=os.environ.get('LLMGO_META_THINKING')
+    app=create_app(args.model,args.api_base,os.environ['LLMGO_UPSTREAM_API_KEY'],os.environ['LLMGO_BRIDGE_TOKEN'],args.trace,
+        thinking=None if thinking is None else thinking=='true',
+        max_output_tokens=int(os.environ['LLMGO_META_MAX_OUTPUT_TOKENS']) if os.environ.get('LLMGO_META_MAX_OUTPUT_TOKENS') else None,
+        sampling=json.loads(os.environ['LLMGO_META_SAMPLING']) if os.environ.get('LLMGO_META_SAMPLING') else None,
+        reasoning_effort=os.environ.get('LLMGO_META_REASONING_EFFORT'),
+        preserve_thinking=None if 'LLMGO_META_PRESERVE_THINKING' not in os.environ else os.environ['LLMGO_META_PRESERVE_THINKING']=='true')
     uvicorn.run(app,host='127.0.0.1',port=args.port,access_log=False)

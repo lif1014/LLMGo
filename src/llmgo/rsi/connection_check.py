@@ -82,6 +82,10 @@ def check_connection(site, output, *, offline=False, timeout=180, env=None, sand
     environment.update({k: v for k, v in worker_environment(site).items()
                         if k in {"TMPDIR", "XDG_CACHE_HOME", "CCTL_NO_UPDATE_CHECK"}})
     environment["CODEX_HOME"] = str(home)
+    if site.get('meta_thinking') is not None:
+        environment['LLMGO_META_THINKING']='true' if site['meta_thinking'] else 'false'
+    environment['LLMGO_META_RUNTIME']=str(site.get('meta_bridge_root',
+        Path(site.get('runtime_root',output))/'meta-bridge'))
     started = time.monotonic()
     process, readers = None, []
     events = queue.Queue()

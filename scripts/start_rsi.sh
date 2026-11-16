@@ -8,11 +8,12 @@ upgrade=false
 resume=false
 recover_meta=false
 restart_control=false
+site_override=
 research_action=
 action=start
 usage() {
   cat <<'HELP'
-用法：bash scripts/start_rsi.sh [--web] [--upgrade | --resume | --recover-meta] [--campaign NAME]
+用法：bash scripts/start_rsi.sh [--site FILE] [--web] [--upgrade | --resume | --recover-meta] [--campaign NAME]
       bash scripts/start_rsi.sh --restart-control [--web] [--campaign NAME]
       bash scripts/start_rsi.sh --status
       bash scripts/start_rsi.sh --logs
@@ -30,6 +31,7 @@ HELP
 }
 while (($#)); do
   case "$1" in
+    --site) [[ $# -ge 2 ]] || { usage; exit 2; }; site_override="$2"; shift 2 ;;
     --web) web=true; shift ;;
     --upgrade) upgrade=true; shift ;;
     --resume) resume=true; shift ;;
@@ -55,7 +57,7 @@ rsi_python="${RSI_PYTHON:-/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/pyt
 [[ -x "$rsi_python" ]] || { echo "控制Python不存在：$rsi_python；请在远端devspace执行。" >&2; exit 1; }
 cd "$repo"
 export PYTHONPATH="$repo/src${PYTHONPATH:+:$PYTHONPATH}"
-site="$repo/configs/rsi/site.beijing.json"
+site="${site_override:-$repo/configs/rsi/site.beijing.json}"
 settings="$("$rsi_python" - "$site" <<'PY'
 import json,sys
 from pathlib import Path
@@ -161,7 +163,11 @@ PY
 then
   echo '研究已暂停：本次启动跳过Meta推理检查，只恢复既有任务监控。'
 else
-  "$rsi_python" scripts/check_meta_connection.py --site "$site" --sandbox-check --tools-check
+  if [[ "$("$rsi_python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("meta_execution","api"))' "$site")" == gpu_job ]]; then
+    echo '按需GPU Meta：启动器只检查配置；实际推理与工具调用在请求的1GPU任务内完成。'
+  else
+    "$rsi_python" scripts/check_meta_connection.py --site "$site" --sandbox-check --tools-check
+  fi
 fi
 if [[ ! -f "$campaign_root/campaign.json" ]]; then
   "$rsi_python" scripts/rsi.py --site "$site" init "$campaign" >"$runtime/$campaign-init.json"

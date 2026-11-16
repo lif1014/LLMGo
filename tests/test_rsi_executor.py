@@ -87,7 +87,8 @@ def result_for(c, job):
                "seed_schedule": payload["seed_schedule"], "model_identity": {"sha256": "fixture-model"}}
     metrics["statistics"] = batch_stats(metrics, expected_games=payload["protocol"]["games"])
     path = Path(payload["output"])/"metrics.json"
-    atomic_json(path, metrics)
+    from evidence_fixtures import with_raw_games
+    atomic_json(path, with_raw_games(metrics,path.parent,payload['protocol']))
     atomic_json(path.with_name("result.json"), {"manifest_sha256": job["sha256"], "artifact": str(path),
                                                "artifact_sha256": file_hash(path), "worker_wall_seconds": 99,
                                                "allocated_gpu_count": 1})
@@ -303,7 +304,7 @@ def test_reconciliation_accepts_actual_v2_name_only_listings(tmp_path):
             task_id = int(argv[3])
             result = {'id': task_id, 'name': f'tasks/{task_id}', 'status': 'Running',
                       'description': 'fixture-experiment' if task_id == 12 else 'unrelated',
-                      'project': 'rsi', 'cluster': 'beijing', 'resourcePoolId': 525, 'priority': 'NORMAL'}
+                      'project': 'rsi', 'cluster': 'beijing', 'resourcePoolId': 523, 'priority': 'PREEMPTABLE'}
         return subprocess.CompletedProcess(argv, 0, json.dumps(result), '')
     transport = CctlExecutor({'cctl_bin': 'cctl', 'project': 'rsi'}, memory, runner)
     recovered = transport.reconcile(intent_path)
@@ -385,7 +386,7 @@ def test_submission_accepts_resource_name_and_remains_idempotent(tmp_path,monkey
     def runner(argv,**kwargs):
         calls.append(argv[1:3])
         if argv[1:3]==['pool','list']:
-            result=[{'name':'model-autosft'}]
+            result=[{'name':'model-new'}]
             if wrapped:result={'success':True,'data':result}
         else:
             assert argv[1:3]==['job','create']

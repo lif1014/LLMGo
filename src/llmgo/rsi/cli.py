@@ -36,10 +36,13 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
             import torch
             check("gpu", torch.cuda.is_available(), f"{torch.cuda.device_count()} visible devices")
     else:
-        check("codex_config", (Path(site["codex_home"])/"config.toml").is_file(), site["codex_home"])
+        if site.get("meta_execution")=="gpu_job":
+            check("meta_model",(Path(site["meta_model_path"])/"config.json").is_file(),site["meta_model_path"])
+        else:
+            check("codex_config", (Path(site["codex_home"])/"config.toml").is_file(), site["codex_home"])
         check("codex_program", shutil.which(site["codex_bin"]), site["codex_bin"])
         check("cctl_program", shutil.which(site["cctl_bin"]), site["cctl_bin"])
-        if codex_auth:
+        if codex_auth and site.get("meta_execution","api")=="api":
             try:
                 config_path = Path(site["codex_home"])/"config.toml"
                 config = tomllib.loads(config_path.read_text()) if config_path.is_file() else {}
@@ -65,12 +68,17 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
                                         env=cctl_env)
                 pools = json.loads(result.stdout) if result.returncode == 0 else []
                 rows = own_pool_rows(pools)
-                allowed = authorized_pool(rows)
+                pool=site.get('resource_pool','model-new')
+                allowed = authorized_pool(rows,pool)
+                if rows and not allowed:
+                    from llmgo.remote.resource_policy import SUBMISSION_POOLS
+                    detail_result=subprocess.run([site['cctl_bin'],'pool','get',pool,'--no-input','-o','json'],capture_output=True,text=True,timeout=90,env=cctl_env)
+                    allowed=detail_result.returncode==0 and json.loads(detail_result.stdout).get('id')==SUBMISSION_POOLS.get(pool)
                 detail = ("Authenticated own-pool lookup" if allowed else
-                          "model-autosft not found in own pools; returned: "+pool_summary(rows)) if result.returncode == 0 else cctl_failure_detail(result,cctl_env)
+                          pool+" not found in authorized pool lookup; returned: "+pool_summary(rows)) if result.returncode == 0 else cctl_failure_detail(result,cctl_env)
                 if result.returncode == 0 and not rows:
                     detail = ("cctl returned [] for own pools. Check cctl profile current/list and the logged-in account's "
-                              "pool membership on this server; do not bypass the model-autosft permission check.")
+                              "pool membership on this server; do not bypass the pool permission check (model-new).")
                 check("cctl_auth_and_pool", result.returncode == 0 and allowed, detail)
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 check("cctl_auth_and_pool", False, str(exc) if isinstance(exc,ValueError) else type(exc).__name__)
@@ -88,7 +96,7 @@ def parser():
     d.add_argument("--codex-auth", action="store_true", help="Check provider credential configuration or CLI login status, without inference")
     init = sub.add_parser("init")
     init.add_argument("campaign")
-    init.add_argument("--scope", choices=(PHASE1_SCOPE,phase2.SCOPE),default=PHASE1_SCOPE)
+    init.add_argument("--scope", choices=(PHASE1_SCOPE,phase2.SCOPE), help="Defaults to the site's research_scope, or Phase 1")
     init.add_argument("--checkpoint", help="Initial student HF checkpoint; default is the site base model")
     init.add_argument("--max-model-len",type=int,default=32768,help="Phase 2 inference context length")
     for name in ("status", "step", "run", "workspace", "prepare", "preview", "submit", "resume-failed", "resume", "recover-meta", "recover-training-review", "index-activity", "upgrade"):
@@ -128,7 +136,11 @@ def main(argv=None):
     from .contracts import identifier
     root = inside(site["user_root"], Path(site["campaign_root"]) / identifier(args.campaign))
     if args.command == "init":
-        controller = Controller.create(site, args.campaign, scope=args.scope,checkpoint=args.checkpoint,max_model_len=args.max_model_len)
+        controller = Controller.create(site, args.campaign,
+            scope=args.scope or site.get('research_scope', PHASE1_SCOPE),
+            checkpoint=args.checkpoint,max_model_len=args.max_model_len)
+        from .meta_jobs import publish_meta_overview
+        publish_meta_overview(controller.root,controller.site)
         result = {"campaign": str(root), "state": controller.state}
     else:
         if not root.is_dir():

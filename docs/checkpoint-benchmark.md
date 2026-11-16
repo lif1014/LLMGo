@@ -4,7 +4,11 @@
 
 配置：`configs/evaluation/checkpoint-elo-20261106.json`。base 累積 0 step、j000003 step-5 累積 5、j000007 step-5 累積 10、j000007 step-10 為累積 15 的分支、j000008 step-5 累積 15、j000010 step-5 累積 20。依權重父子關係重建，不重寫舊 manifest 的 lineage_steps；j000003 servable-v1 為原權重的匯出包裝修復，不另算一次 RL。
 
-每模型 40 局、白黑各 20，一卡一個 TP=1 vLLM，40 局同時進行，max_num_seqs=40。沿用現有最終測試的同步排程與 PIECEWISE CUDA Graph；Qwen／DeepSeek 都 non-thinking、原始 prompt、最後一個 boxed 合法 SAN、16384 tokens、300 半步、五次重複判和。學生與對手請求無客戶端期限。每次重新打完整 40 局，不混入過去不同解析版本的棋局。
+每模型 40 局、白黑各 20，一卡一個 TP=1 vLLM，最多40局同時進行，max_num_seqs=40。沿用現有最終測試的同步排程與 PIECEWISE CUDA Graph；Qwen／DeepSeek 都 non-thinking、原始 prompt、最後一個 boxed 合法 SAN、16384 tokens、300 半步、五次重複判和。學生與對手請求無客戶端期限。新測試打完整40局，不混入過去不同解析版本的棋局；中斷後可依下述身份核對機制補測。
+
+DeepSeek HTTP 307／308 的同站重新導向會保留 POST、JSON 與 request ID。沒有可跟隨地址或暫時網路／429／5xx 錯誤時，同一請求最多嘗試8次，退避2、4、8、16、30、30、30秒；不設單次請求期限，也不向另一站轉送登入憑證。重試耗盡時，該局記為技術中斷，不當敗局；其餘對局繼續收集。`final-test/progress.json` 即時保存 completed、failed、remaining 與錯誤，單局收據位於 `game_errors/`。未取得完整40局不發布最終得分。
+
+停止舊任務後，可在新的 run 使用 `scripts/run_final_test.py --resume-from <舊run>/final-test`。框架先核對模型SHA、prompt資源、對手、解析規則、局數與裁判協議，再重放已完成棋譜核對終局，將有效對局及原始事件複製至新run；中斷或尚未完成的局從初始局面重打。`resume.json` 記錄來源與復用局號，舊run保留。這是評測恢復，不是另做一批40局；更新live程式不會熱改其他執行中的凍結任務。
 
 統計 `S=(W+0.5D)/(W+D+L)`，四捨五入到整數百分比，再使用 [FIDE Rating Regulations §8.1.1](https://handbook.fide.com/chapter/B022024) 的 dp 表：表現分＝1800＋dp。65% 為 1910，50% 為 1800，全勝為 2600、全負為 1000；兩端的 ±800 是名義約定，不代表精確測得的實力差。不是官方 FIDE Elo，不用 K-factor，不估計區間。未完成整批或模型／協議身份不符時不發布表現分。
 

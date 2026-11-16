@@ -103,3 +103,104 @@ def test_reasoning_lifecycle_repair_is_delivered_and_original_evidence_is_preser
     assert [r['event'] for r in rows if r['kind']=='stream']==original
     assert len([r for r in rows if r['kind']=='stream_repair'])==2
     assert rows[-1]['kind']=='stream_normalization' and closed==[True]
+
+
+def test_qwen_thinking_reaches_upstream_without_affecting_api_defaults(tmp_path):
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    app=create_app('Qwen3.5-4B','http://127.0.0.1:8100/v1','unused','token',tmp_path/'qwen.jsonl',
+        responder=responder,thinking=True,max_output_tokens=16384)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello','max_output_tokens':32000})
+    assert seen[0]['extra_body']['chat_template_kwargs']['enable_thinking'] is True
+    assert seen[0]['max_output_tokens']==16384 and seen[0]['api_base']=='http://127.0.0.1:8100/v1'
+    seen.clear()
+    app=create_app('deepseek-v4.1-flash','https://provider/v1','unused','token',tmp_path/'api.jsonl',responder=responder)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello'})
+    assert 'extra_body' not in seen[0] and 'max_output_tokens' not in seen[0]
+
+
+def test_local_gpu_endpoint_bypasses_remote_proxy():
+    from llmgo.rsi.codex_bridge import proxy_environment
+    env={'HTTP_PROXY':'remote','https_proxy':'remote','ALL_PROXY':'remote'}
+    local=proxy_environment(env,'http://127.0.0.1:8100/v1')
+    assert not any('proxy' in k.lower() and k.lower()!='no_proxy' for k in local)
+    assert proxy_environment(env,'https://external/v1')['HTTPS_PROXY'].startswith('http://whitelist-proxy')
+
+
+def test_deepseek_thinking_is_explicit_without_qwen_sampling_or_output_limits(tmp_path):
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    app=create_app('deepseek-v4.1-flash','https://provider/v1','unused','token',tmp_path/'deepseek.jsonl',
+                   responder=responder,thinking=True)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},
+                    json={'input':'hello','reasoning':{'effort':'high'}})
+    sent=seen[0]
+    assert sent['extra_body']=={'thinking':{'type':'enabled'}}
+    assert sent['reasoning']=={'effort':'high'}
+    assert not any(k in sent for k in ('temperature','top_p','max_output_tokens'))
+
+
+def test_qwen_moves_interleaved_developer_instructions_before_tool_dialogue(tmp_path):
+    from llmgo.rsi.codex_bridge import qwen_instructions_first
+    source={'instructions':'initial','input':[
+        {'role':'user','content':'task'},
+        {'role':'developer','content':[{'type':'input_text','text':'environment'}]},
+        {'type':'function_call','call_id':'call1','name':'exec_command','arguments':'{}'},
+        {'type':'function_call_output','call_id':'call1','output':'done'},
+        {'role':'system','content':'additional rule'}]}
+    normalized,moved=qwen_instructions_first(source)
+    assert moved==2 and normalized['instructions']=='initial\n\nenvironment\n\nadditional rule'
+    assert [x.get('type') for x in normalized['input']]==[None,'function_call','function_call_output']
+    assert source['input'][1]['role']=='developer'  # Original receipt stays intact.
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    for model in ['Qwen3.5-4B','deepseek-v4.1-flash']:
+        app=create_app(model,'http://127.0.0.1:8100/v1','unused','token',tmp_path/(model+'.jsonl'),responder=responder)
+        with TestClient(app) as client:client.post('/v1/responses',headers={'Authorization':'Bearer token'},json=source)
+    assert seen[0]['instructions']==normalized['instructions']
+    assert seen[1]['input']==source['input'] and seen[1]['instructions']=='initial'
+
+
+def test_heartbeat_keeps_pending_read_without_duplicate_upstream_or_changing_events():
+    import asyncio
+    from llmgo.rsi.codex_bridge import heartbeat_events
+    async def run():
+        calls=[];closed=[]
+        async def source():
+            try:
+                calls.append('one request');await asyncio.sleep(.04)
+                yield {'type':'response.completed','response':{'status':'completed'}}
+            finally:closed.append(True)
+        result=[item async for item in heartbeat_events(source(),interval=.005)]
+        assert result.count(None)>=1 and result[-1]['type']=='response.completed'
+        assert calls==['one request'] and closed==[True]
+        iterator=heartbeat_events(source(),interval=.001)
+        assert await anext(iterator) is None
+        await iterator.aclose()
+        assert closed==[True,True]
+    asyncio.run(run())
+
+
+def test_qwen38_sampling_and_thinking_controls_are_forwarded_without_changing_api(tmp_path):
+    seen=[]
+    async def responder(**kwargs):
+        seen.append(kwargs);return {'id':'one','object':'response','output':[],'status':'completed'}
+    settings={'temperature':1.0,'top_p':.95,'top_k':20,'min_p':0.0,'presence_penalty':0.0,'repetition_penalty':1.0}
+    app=create_app('Qwen3.8-27B','http://127.0.0.1:8100/v1','unused','token',tmp_path/'qwen38.jsonl',
+                   responder=responder,thinking=True,max_output_tokens=65536,sampling=settings,
+                   reasoning_effort='xhigh',preserve_thinking=True)
+    with TestClient(app) as client:
+        client.post('/v1/responses',headers={'Authorization':'Bearer token'},json={'input':'hello','max_output_tokens':100000,'reasoning':{'effort':'medium'}})
+    sent=seen[0]
+    assert sent['max_output_tokens']==65536
+    assert sent['temperature']==1 and sent['presence_penalty']==0
+    assert sent['extra_body']['top_k']==20 and sent['extra_body']['min_p']==0
+    assert 'reasoning_effort' not in sent['extra_body'] and 'reasoning' not in sent
+    assert 'reasoning_effort' not in sent
+    assert sent['extra_body']['chat_template_kwargs']=={'enable_thinking':True,'preserve_thinking':True,'reasoning_effort':'xhigh'}

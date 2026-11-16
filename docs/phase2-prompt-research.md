@@ -6,32 +6,42 @@ Meta-Agent 可自由編寫 `harness.py`、追加提示、任意 skills、輔助�
 
 ## 建立與啟動
 
-以下命令供日後將此分支部署到遠端後，在自己的 0 GPU devspace 使用。本次開發只在本機驗證，沒有部署或提交任務。
+使用獨立0 GPU devspace；現有Phase 1 devspace、Controller、Executor與網頁保持運行。
 
-從 base 建立新研究：
+部署後的Phase 2來源為 `/user/lyh4170/LLMGo!/var/clean-starts/phase2-deepseek-v1`。
+`configs/rsi/site.phase2-deepseek.json` 預設 `research_scope=phase2_prompt_only`、
+`meta_execution=api`、`meta_model=deepseek-v4.1-flash`、`meta_thinking=true`。
+初始化只複製 `/user/lyh4170/.codex-rsi` 的provider設定及登入檔，保留舊DeepSeek的
+`model_reasoning_effort=high`；不加入Qwen的context、compaction、輸出上限或sampling設定。
+橋接器明確向DeepSeek傳送 `thinking.type=enabled`。溫度、top_p與token上限維持舊配置／provider預設。
+Meta不佔GPU；開發評測預設1 H800／model-autosft NORMAL，L2/L3各40局共用佇列，
+每副本最多20個請求。後續可在提案用 `evaluation_gpus` 指定1至8卡，局數及裁判不變。
+
+在新devspace，從base建立新研究：
 
 ```bash
-cd '/user/lyh4170/LLMGo!'
+cd '/user/lyh4170/LLMGo!/var/clean-starts/phase2-deepseek-v1'
 export RSI_PYTHON=/user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python
-"$RSI_PYTHON" scripts/rsi.py init chess-harness-base-v1 --scope phase2_prompt_only
-bash scripts/start_rsi.sh --campaign chess-harness-base-v1
+site=configs/rsi/site.phase2-deepseek.json
+campaign=chess-harness-deepseek-base-v1
+"$RSI_PYTHON" scripts/rsi.py --site "$site" init "$campaign"
+LLMGO_WEB_PORT=7861 bash scripts/start_rsi.sh --site "$site" --campaign "$campaign" --web
 ```
 
-從 Phase 1 成果建立**另一個**新研究（將路徑替換為實際導出的 HF 模型目錄）：
+若使用Phase 1成果，在新campaign的init命令加上 `--checkpoint /user/lyh4170/LLMGo!/var/runs/<run>/scaling/models/step-00000010`；
+不要對同名campaign重做init。必須是包含config、tokenizer與權重的HF模型目錄，而非原生verl分片。
+省略checkpoint便使用base Qwen3.5-4B。本研究固定該份模型，不隨Phase 1新checkpoint自動切換。
+`--max-model-len` 預設32768，指學生上下文，包含提示、歷史及最多16384 tokens回答，與Meta API窗口無關。
 
-```bash
-"$RSI_PYTHON" scripts/rsi.py init chess-harness-p1-v1 \
-  --scope phase2_prompt_only \
-  --checkpoint '/user/lyh4170/LLMGo!/var/runs/<phase1-experiment>/scaling/models/step-10' \
-  --max-model-len 32768
-bash scripts/start_rsi.sh --campaign chess-harness-p1-v1
-```
+首次評測指定模型的原始Chess-R1 prompt，無新增harness；L2/L3各40局完成後才建立starter候選並叫醒Meta。
+Agent只在結果返回時研究下一版，沒有每5step訓練審查。沿用launcher的 `--status`、`--logs`、`--resume`；
+平台輪詢600秒。終端重連或同名loop已運行時，重用同一site及campaign啟動命令，不再init。
 
-`--checkpoint` 要傳包含 `config.json`、tokenizer 和模型權重的 HF 目錄，不是原生 verl 分片 checkpoint。省略時使用 site 的 `base_model`。Phase 1 不使用此旗標。`--max-model-len` 是此 Phase 2 campaign 的推理上下文長度，預設32768，涵蓋提示、歷史和最多16384 tokens 的回答；它會一併傳入開發評測和最終測試。Agent 自行安排 skills 長度，無額外 skill schema、卡片數或文字長度限制，實際仍受模型上下文容量約束。
+在本機執行 `cctl devspace expose <新devspace-ID> --port 7861`，再從回傳網址開啟 `/rsi`。
+這是新版Phase 2網頁，不重啟既有1440760服務。兩個頁面可讀取共用campaign根目錄；新頁面包含Phase 2候選曲線及Meta/API狀態。
 
-首次只做指定起始模型的**原始 Chess-R1 prompt、無新增 harness**基線：L2、L3 各40局。完成後產生第一輪 workspace，附上可自由改寫的 [harness 範例](../examples/phase2/harness.py) 和一份簡單 skill。這份 starter 的額外提示不混入第0輪基線。
-
-初始化後可沿用 launcher 的 `--status`、`--logs`、`--resume` 及研究暫停／恢復命令，campaign 名稱必須對應 Phase 2。沿用現有網頁時不加 `--web`。Controller 與外部 Executor 仍是獨立程序；任務未返回結果時不持續呼叫 Meta-Agent，排程輪詢沿用600秒政策。
+若日後要另備乾淨來源，可在Phase 2分支部署目錄執行 `scripts/prepare_phase2_research.py --site <site> --target <新的來源目錄>`。
+準備腳本只整理來源，不建立campaign、不呼叫Meta、不提交GPU。
 
 ## 獨立性與目錄
 

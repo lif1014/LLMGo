@@ -3,11 +3,48 @@
 Training restrictions are instructions to the Meta-Agent, not admission rules.
 """
 from pathlib import Path
+import hashlib
 import shutil
 
-from .contracts import REPO, atomic_json, utc
+from .contracts import REPO, atomic_json, digest, file_hash, read_json, utc
 
 SCOPE = 'phase2_prompt_only'
+
+
+def prepare_source(repo, target, site_path):
+    """Prepare independent Phase 2 input, sharing immutable assets and artifact routing."""
+    repo, target = Path(repo), Path(target)
+    if target.exists():
+        raise FileExistsError('Phase 2 source already exists; keep its study intact')
+    target.mkdir(parents=True)
+    for name in ('src', 'scripts', 'tests', 'examples/phase2'):
+        shutil.copytree(repo/name, target/name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    for name in ('rsi-phase2', 'rsi-memory', 'rsi-executor', 'rsi-meta-execution'):
+        shutil.copytree(repo/'.agents/skills'/name, target/'.agents/skills'/name)
+    for path in repo.glob('requirements*.txt'):
+        shutil.copy2(path, target/path.name)
+    docs = target/'docs'; docs.mkdir()
+    for name in ('phase2-meta-prompt.md', 'phase2-prompt-research.md', 'meta-execution.md'):
+        shutil.copy2(repo/'docs'/name, docs/name)
+    # Commands and onboarding stay Phase 2-specific; do not import Phase 1 RL guidance.
+    shutil.copy2(repo/'docs/phase2-prompt-research.md', docs/'rsi-operations.md')
+    shutil.copy2(repo/'docs/phase2-meta-prompt.md', target/'AGENTS.md')
+    shutil.copy2(repo/'docs/phase2-prompt-research.md', target/'README.md')
+    (target/'configs/grpo').mkdir(parents=True)
+    shutil.copy2(repo/'configs/grpo/default.json', target/'configs/grpo/default.json')
+    site = read_json(site_path)
+    site.update(repo=str(target), research_scope=SCOPE)
+    atomic_json(target/'configs/rsi/site.phase2-deepseek.json', site)
+    atomic_json(target/'configs/rsi/site.beijing.json', site)
+    (target/'assets').symlink_to(repo/'assets', target_is_directory=True)
+    (target/'var').symlink_to(repo/'var', target_is_directory=True)
+    files = {str(p.relative_to(target)):file_hash(p) for p in target.rglob('*')
+             if p.is_file() and not p.is_relative_to(target/'assets') and not p.is_relative_to(target/'var')}
+    atomic_json(target/'clean-start.json', {'research_scope':SCOPE, 'source_files':files,
+        'source_sha256':digest(files), 'excluded':['campaign Memory', 'Codex sessions',
+            'historical results', 'Phase 1 training instructions'],
+        'isolation':'Separate source and campaign state; same-account shared filesystem is not an access sandbox.'})
+    return target/'configs/rsi/site.phase2-deepseek.json'
 
 
 def meta_instructions(state):
@@ -16,7 +53,9 @@ def meta_instructions(state):
 
 
 def campaign_site(site, campaign_id):
-    return {**site, 'codex_home': str(Path(site['repo'])/'var/meta/phase2'/campaign_id)}
+    runtime = Path(site['repo'])/'var/runtime'/('p2-'+hashlib.sha256(campaign_id.encode()).hexdigest()[:12])
+    return {**site, 'codex_home': str(Path(site['repo'])/'var/meta/phase2'/campaign_id),
+            'runtime_root': str(runtime), 'meta_bridge_root': str(runtime/'meta-bridge')}
 
 
 def prepare_meta_home(original_site, site):

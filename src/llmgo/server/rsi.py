@@ -228,6 +228,8 @@ def campaigns():
     for path in sorted(root.glob("*/campaign.json")):
         try:
             inside(root, path)
+            marker=path.parent/'archive.json'
+            if marker.is_file() and read_json(marker).get('archived'):continue
             state = read_json(path)
             result.append({k: state.get(k) for k in ("campaign_id", "phase", "updated")})
         except (ValueError, OSError):
@@ -267,6 +269,13 @@ def overview(name: str):
                   meta={k: session.get(k) for k in ("thread_id", "turn_id", "status", "cwd", "updated", "process", "token_usage")},
                   research_control=read_control(root), server_time=time.time())
     return result
+
+
+@router.get("/campaigns/{name}/meta")
+def meta_status(name: str):
+    from llmgo.rsi.meta_jobs import meta_overview
+    root=campaign(name)
+    return meta_overview(root,campaign_state(root).get("site",{}))
 
 
 @router.get("/campaigns/{name}/activity")

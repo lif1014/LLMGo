@@ -57,11 +57,19 @@ class CodexBackend:
         self.notifications = deque()
         self._secrets = ()
         self._heartbeat_at = 0.
+        self.status_mirror = None
+        self.overview_publisher = None
+        self._activity_at = 0.
 
     def _save(self, **changes):
         old_status = self.session.get("status")
         self.session.update(changes)
+        self.session.update(model=self.site.get("meta_model"),execution=self.site.get("meta_execution","api"),thinking=self.site.get("meta_thinking"))
         atomic_json(self.session_path, self.session)
+        if self.status_mirror:
+            atomic_json(self.status_mirror,self.session)
+        if self.overview_publisher:
+            self.overview_publisher()
         if "status" in changes and changes["status"] != old_status:
             self.memory.append("meta_status", {"status": changes["status"], "thread_id": self.session.get("thread_id"),
                 "turn_id": self.session.get("turn_id"), "cwd": self.session.get("cwd")})
@@ -86,6 +94,14 @@ class CodexBackend:
         """Persist a received message independently of active RPC dispatch."""
         self.memory.append("meta_event" if channel == "protocol" else "meta_stderr",
                            {"message": scrub_known(value, self._secrets), "thread_id": self.session.get("thread_id")})
+        if channel == "protocol" and isinstance(value, dict):
+            method=value.get("method", "")
+            if method.startswith("item/"):
+                item=value.get("params",{}).get("item",{})
+                activity="tool_execution" if self._is_action(item) else "thinking" if "reasoning" in method.lower() or item.get("type")=="reasoning" else "generating"
+                if activity!=self.session.get("activity") or time.monotonic()-self._activity_at>=2:
+                    self._activity_at=time.monotonic()
+                    self._save(activity=activity,updated=utc())
         if channel == "protocol" and isinstance(value, dict) and value.get("method") == "thread/tokenUsage/updated":
             usage = value.get("params", {}).get("tokenUsage")
             if isinstance(usage, dict):
@@ -189,14 +205,27 @@ class CodexBackend:
         self.notifications = deque()
         env = worker_environment(self.site)
         env["CODEX_HOME"] = str(inside(root, self.site["codex_home"]))
+        if self.site.get("meta_thinking") is not None:
+            env["LLMGO_META_THINKING"] = "true" if self.site["meta_thinking"] else "false"
+        if self.site.get("meta_max_output_tokens"):
+            env["LLMGO_META_MAX_OUTPUT_TOKENS"] = str(self.site["meta_max_output_tokens"])
+        if self.site.get('meta_sampling'):
+            env['LLMGO_META_SAMPLING']=json.dumps(self.site['meta_sampling'])
+        if self.site.get('meta_reasoning_effort'):
+            env['LLMGO_META_REASONING_EFFORT']=self.site['meta_reasoning_effort']
+        if 'meta_preserve_thinking' in self.site:
+            env['LLMGO_META_PRESERVE_THINKING']='true' if self.site['meta_preserve_thinking'] else 'false'
+        env["LLMGO_META_RUNTIME"] = str(self.site.get("meta_bridge_root",Path(self.site.get("runtime_root",root))/"meta-bridge"))
         env, self._secrets = runtime_auth(self.site, env)
         instructions = (
-            "你是国际象棋自主研究 Meta-Agent，在用户自己的 0 GPU devspace 工作。"
+            "你是国际象棋自主研究 Meta-Agent。推理可在本次独立GPU任务运行，研究工具与训练提交规则不变。"
             "当前是Phase 1：每轮先读持久Memory、失败记录与跨难度评测，只通过强化学习（RL）提升Qwen3.5-4B；可以修改RL算法、reward、数据选择与课程。"
             "禁止使用SFT（监督微调），包括SFT预热、辅助SFT损失、行为克隆和对教师答案的监督蒸馏；使用SFT，最终得分为0分。"
             "默认训练入口为 scripts/run_grpo.py，冻结配置为 configs/grpo/default.json；原始Qwen3.5-4B、题集、270M reward model 在本仓库 assets。"
             "默认仍使用已筛选的 assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet。另有可选完整Lichess训练池 assets/datasets/lichess/20261103/boxed-nonthinking-v2/train.parquet 和 index.parquet；仅在 verification.json 为passed时使用。"
             "完整池已排除现有dev/test的题目ID和重复局面；你自行决定是否使用、如何筛选或混合，可按rating、Themes、OpeningTags、学生失败模式制定课程，也可自行写选样程序。参阅 docs/lichess-data.md 和 scripts/select_lichess_data.py。"
+            "可选选样助手支持 --mix fork=1 pin=2 --num-puzzles N、难度范围、--list-tags、--preview 和 --spec JSON；比例按puzzle计数，同题只加入一次。不是必须使用：可以保留默认数据或自行写选样程序。"
+            "若研究副本仍是旧工具，可用 /user/lyh4170/venvs/llmgo-lichess-data-20261103/bin/python 调用 /user/lyh4170/LLMGo!/scripts/select_lichess_data.py；用法见 /user/lyh4170/LLMGo!/docs/lichess-data.md。新数据仅在replan实验配方中采用，不改变当前冻结训练。"
             "每轮交付选样程序或查询、选中的ID清单、分类统计，以及基于学生败局的选样假设；沿用默认数据也用 scripts/report_training_data.py 记录选择。没有败局证据时如实说明是首轮基线假设。无需提交random seed或算力预算比较；允许自主训练、修改RL算法、超参数和reward。"
             "初始checkpoint固定为 assets/models/Qwen3.5-4B，不可换另一初始模型或覆盖原始权重；持续训练可从该模型派生的本研究checkpoint继续。"
             "Phase 1固定Chess-R1非思考prompt、enable_thinking=false和\\boxed{SAN}答案；完整提示见docs/phase1-rl-scope.md和src/llmgo/training/chess_r1.py。训练任务会将recipe、checkpoint、日志和导出模型写入LLMGo!/var/runs/<实验ID>/grpo。"
@@ -212,7 +241,7 @@ class CodexBackend:
             "再返回ready和proposal绝对路径，由Executor提交及监控。--track model选择固定Prompt模型对照，--full-panel请求L2与L3完整验证。"
             "可以调用受保护evaluate.py；正式裁判、协议、引擎和结果记录不得更改。正式走棋由Qwen玩家完成，不用另一引擎替它选步。"
             "只写 /user/lyh4170，来源 /user/liyaohu4170 只读。不要修改用户其他任务的环境；新增依赖用本研究专用或实验独立venv与缓存，不原地升级系统/他人环境。"
-            "GPU任务每600秒查询一次，验证交接通过共享文件及时读取，不查询排程器。监控由独立Executor负责。只用beijing/model-autosft，默认HIGH，同时最多一个活动或提交结果不确定的HIGH任务；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
+            "GPU任务每600秒查询一次，验证交接通过共享文件及时读取，不查询排程器。监控由独立Executor负责。学生训练用beijing/model-autosft的HIGH，同时最多一个活动或提交不确定的HIGH；独立验证用model-autosft/NORMAL。Meta推理由框架在model-autosft/NORMAL与model-new、model-claw-tool、model-codeagent2/PREEMPTABLE之间选择；devspace 0 GPU，GPU工作通过job；不得停止他人任务。"
             "指定workspace是研究副本，可修改RL相关源码；Phase 1的prompt、harness和skills限制仍适用。用proposal.json登记计算命令和评测计划；"
             "Controller/Executor会快照和提交，避免重复提交同一实验。可以自行研究提交命令，遵守资源授权。"
             "没有研究总时间上限。失败也记录并继续，不要求每轮成功。"

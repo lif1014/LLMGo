@@ -172,3 +172,15 @@ def test_large_event_pages_have_budget_and_complete_record_cursors(tmp_path):
     with pytest.raises(Exception) as failure:
         page(path, 1, 80)
     assert failure.value.status_code == 400
+
+
+def test_meta_endpoint_is_read_only_and_compatible_with_legacy(tmp_path,monkeypatch):
+    root=tmp_path/'demo';root.mkdir()
+    atomic_json(root/'campaign.json',{'campaign_id':'demo','site':{'meta_model':'deepseek-v4.1-flash'},'jobs':{},'attempts':[]})
+    atomic_json(root/'meta-session.json',{'status':'paused'})
+    before={p.name:p.stat().st_mtime_ns for p in root.iterdir()}
+    client=client_for(root,monkeypatch)
+    data=client.get('/api/rsi/campaigns/demo/meta').json()
+    assert data['current']['model']=='deepseek-v4.1-flash' and data['current']['legacy']
+    assert data['requests']==[]
+    assert {p.name:p.stat().st_mtime_ns for p in root.iterdir()}==before

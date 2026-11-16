@@ -78,9 +78,9 @@ def test_empty_cli_cache_gets_a_project_default_without_copying_credentials(tmp_
     assert (cache/'profiles/llmgo-rsi/token').resolve()==token
 
 
-@pytest.mark.parametrize('pools,success', [([{'name':'model-autosft'}],True),([],False),
-    ({'data':[{'name':'model-autosft'}],'success':True},True),
-    ({'pools':[{'name':'resource-pools/525','alias':'model-autosft'}]},True),
+@pytest.mark.parametrize('pools,success', [([{'name':'model-new'}],True),([],False),
+    ({'data':[{'name':'model-new'}],'success':True},True),
+    ({'pools':[{'name':'resource-pools/523','alias':'model-new'}]},True),
     ({'data':[{'name':'other-pool'}],'success':True},False)])
 def test_doctor_normalizes_server_and_distinguishes_missing_pool(tmp_path,monkeypatch,pools,success):
     from llmgo.rsi.cli import doctor
@@ -94,7 +94,7 @@ def test_doctor_normalizes_server_and_distinguishes_missing_pool(tmp_path,monkey
     monkeypatch.setattr(cli.subprocess,'run',run)
     check=next(c for c in doctor(site,platform=True)['checks'] if c['name']=='cctl_auth_and_pool')
     assert check['ok']==success
-    if not success:assert 'model-autosft' in check['detail']
+    if not success:assert 'model-new' in check['detail']
     if pools==[]:assert 'profile current/list' in check['detail']
 
 

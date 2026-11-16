@@ -119,8 +119,9 @@ def loop_fixture(tmp_path):
         games=[{'game_id':f'{i}-{side}','pair_id':i,'model_seat':side,
                 'result':'draw' if step!=5 else f'{side}_win'} for i in range(payload['protocol']['games']//2) for side in ('white','black')]
         path=Path(payload['output'])/'metrics.json'
-        atomic_json(path,{'games':games,'model_identity':model_identity(payload['model_path']),
-            'source_identity':payload['source']['sha256'],'protocol_identity':digest(payload['protocol'])})
+        from evidence_fixtures import with_raw_games
+        atomic_json(path,with_raw_games({'games':games,'model_identity':model_identity(payload['model_path']),
+            'source_identity':payload['source']['sha256'],'protocol_identity':digest(payload['protocol'])},path.parent,payload['protocol']))
         return path
     def sleeper(_):
         path=Path(read_json(output/'scaling/pending-review.json')['path']);r=request(path)
@@ -339,26 +340,18 @@ def test_high_slot_blocks_other_own_jobs_and_unknown_intents(tmp_path):
     with high_slot(transport,second):atomic_json(second,{'status':'UNKNOWN'})
 
 
-def test_high_transport_submits_once_and_reserves_unknown_outcome(tmp_path,monkeypatch):
-    from llmgo.remote.cctl import CctlExecutor, SubmissionUncertain
+def test_training_high_submission_checks_shared_slot_before_create(tmp_path,monkeypatch):
+    from llmgo.remote.cctl import CctlExecutor
     from llmgo.rsi.memory import MemoryStore
-    site={'user_root':str(tmp_path),'repo':str(tmp_path/'repo'),'priority':'HIGH','cctl_bin':'cctl','project':'rsi'}
-    calls=[]
-    def runner(argv,**kw):
-        calls.append(argv[1:3])
-        if argv[1:3]==['pool','list']:value=[{'name':'model-autosft'}]
-        elif argv[1:3]==['task','list']:value={'tasks':[]}
-        else:
-            assert argv[1:3]==['job','create']
-            raise subprocess.TimeoutExpired(argv,90)
-        return subprocess.CompletedProcess(argv,0,json.dumps(value),'')
-    t=CctlExecutor(site,MemoryStore(tmp_path/'memory'),runner)
-    monkeypatch.setattr(t,'request',lambda path:(['job','create'],str(path)))
-    first=tmp_path/'first/manifest.json';second=tmp_path/'second/manifest.json'
-    with pytest.raises(SubmissionUncertain):t.submit(first)
-    assert read_json(first.with_name('submission.json'))['priority']=='HIGH'
-    with pytest.raises(AdmissionBusy):t.submit(second)
-    assert calls.count(['job','create'])==1
+    site={'resource_pool':'model-autosft','priority':'HIGH','project':'rsi','user_root':str(tmp_path),'repo':str(tmp_path/'repo')}
+    t=CctlExecutor(site,MemoryStore(tmp_path/'memory'))
+    monkeypatch.setattr(t,'request',lambda path:(['job','create','--priority','HIGH'],'training envelope'))
+    def command(args):
+        if args[:2]==['pool','list']:return [{'name':'model-autosft'}]
+        if args[:2]==['task','list']:return {'tasks':[{'id':9,'priority':'HIGH','status':'Running'}]}
+        raise AssertionError('A busy HIGH slot must not submit another job')
+    monkeypatch.setattr(t,'command',command)
+    with pytest.raises(AdmissionBusy,match='own HIGH'):t.submit(tmp_path/'manifest.json')
 
 
 def test_controller_review_guards_code_and_finishes_without_duplicate_evaluation(loop_fixture):

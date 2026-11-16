@@ -56,7 +56,7 @@ class JobExecutor:
 
     def _owned_output(self, payload):
         output = inside(self.site['user_root'], payload['output'])
-        runs = Path(self.site['repo'])/'var/runs'
+        runs = (Path(self.site['repo'])/'var/runs').resolve()
         if not output.is_relative_to(runs) and not output.is_relative_to(self.root):
             raise ValueError('Worker output is outside the project run directory')
         return output

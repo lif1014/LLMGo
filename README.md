@@ -2,6 +2,19 @@
 
 遠端專案根目錄是 `/user/lyh4170/LLMGo!`。以 Qwen3.5-4B 為初始學生，使用 Chess-R1 非思考 prompt、Lichess 棋題、searchless 270M reward model 與 verl GRPO 訓練。Phase 1 Meta-Agent 只研究 RL，固定 prompt、空 skills、無 harness，禁止 SFT；Phase 2 是獨立的固定權重研究，可選 base 或 Phase 1 checkpoint，自由修改 harness、追加提示和 skills；禁止訓練的規則只透過 Meta-Agent prompt 約定，違反判 0 分。開發驗證是 Qwen 對 Fairy-Stockfish L2、L2.5、L3；保留的最終測試是 Qwen 對 DeepSeek Flash non-thinking。詳見 [研究階段規則](docs/phase1-rl-scope.md) 和 [訓練目錄逐檔審核](docs/training-module-audit.md)。
 
+## Meta-Agent 執行方式
+
+DeepSeek API 與按需 GPU Qwen 共用同一套 Codex 工具、研究規則、提案交接與網頁。
+Qwen Meta 使用 Qwen3.8-27B、thinking 開啟，每次研究／checkpoint 審查才申請1張H800，
+完成後釋放；Student 仍為 non-thinking。Meta 卡可用 model-autosft／NORMAL，
+或 model-new、model-claw-tool、model-codeagent2／PREEMPTABLE，優先選空閒 H800 較多的池。
+HIGH 名額保留給學生訓練；Meta 的 NORMAL／PREEMPTABLE 推理不占用該名額。
+被 kill 的嘗試無效，先丟棄其工作副本修改，再重新選池。完整啟動、乾淨研究起點、
+重試與網頁說明見 [Meta 執行方式](docs/meta-execution.md)。新研究需明確啟動，安裝不恢復舊研究。
+
+新 Meta 研究的證據定位、完整棋譜統計與提案交接見 [操作手冊](docs/meta-research-operations.md)；
+不含歷史結論的訓練介面見 [新研究 GRPO 操作](docs/clean-grpo-pipeline.md)。
+
 ## 目錄
 
 | 路徑 | 用途 |
@@ -26,7 +39,7 @@
 
 大型權重、parquet、引擎、實驗輸出和憑證留在遠端，不進 Git；原始碼、配方、測試與文檔進 GitHub。逐檔 SHA-256 資產搬遷回執在遠端 `var/migrations/20261102/assets.json`。資料有 99,571 筆訓練、2,291 筆驗證、23,243 筆測試。詳細內容見 [GRPO pipeline](docs/grpo-pipeline.md)。
 
-預設仍用現有篩選資料。Meta-Agent 可自行決定是否使用新的完整 Lichess 訓練池，以及如何篩選、混合或安排課程；也可修改超參、reward 等 RL 設計。初始 Qwen3.5-4B checkpoint、prompt 與 non-thinking 模式固定。每輪記錄選樣程式／查詢、ID 清單、分類統計及基於敗局的假設，不要求資料選樣 random seed 或算力預算比較。工具與範例見 [Lichess 資料使用](docs/lichess-data.md)。
+預設仍用現有篩選資料。Meta-Agent 可自行決定是否使用新的完整 Lichess 訓練池，以及如何篩選、混合或安排課程；也可修改超參、reward 等 RL 設計。初始 Qwen3.5-4B checkpoint、prompt 與 non-thinking 模式固定。每輪記錄選樣程式／查詢、ID 清單、分類統計及基於敗局的假設，不要求資料選樣 random seed 或算力預算比較。可選選樣工具支援分類配比（如 `fork=1 pin=2`）、難度範圍及唯讀預覽；不強制使用，也可自行寫選樣程式。工具與範例見 [Lichess 資料使用](docs/lichess-data.md)。
 
 GRPO 預設 KL loss 係數為 `0.05`，entropy coefficient 為 `0`；實際 verl 設定由 `src/llmgo/training/chess_r1_config.py` 產生。Entropy 診斷仍保留。
 
@@ -84,7 +97,7 @@ DeepSeek 最終測試在 vLLM 服務就緒後直接開始正式對局，不額�
 
 Meta-Agent 的完整 Phase 2 prompt 在 [phase2-meta-prompt.md](docs/phase2-meta-prompt.md)，專用技能在 [.agents/skills/rsi-phase2/SKILL.md](.agents/skills/rsi-phase2/SKILL.md)。禁止訓練、保持指定 checkpoint／non-thinking 等研究限制只寫在 prompt，不增加訓練行為偵測或命令攔截。harness 可自行載入任意 skills、輔助程式與資源，並取得完整走棋歷史。
 
-網頁新增 Phase 2 候選區塊，分別呈現各版本 L2、L3 的勝／和／負與得分率，以及實際成績、觀測最佳曲線。最終 `final-candidate.json` 指向原 checkpoint 和完整凍結 harness／skills；DeepSeek 最終測試可用 `--final-candidate` 載入此組合。初始化、介面、停止與測試命令見 [Phase 2 操作](docs/phase2-prompt-research.md)。本分支只完成本機開發與測試，未部署遠端、未提交 GPU 任務。
+網頁新增 Phase 2 候選區塊，分別呈現各版本 L2、L3 的勝／和／負與得分率，以及實際成績、觀測最佳曲線。最終 `final-candidate.json` 指向原 checkpoint 和完整凍結 harness／skills；DeepSeek 最終測試可用 `--final-candidate` 載入此組合。初始化、介面、停止與測試命令見 [Phase 2 操作](docs/phase2-prompt-research.md)。Phase2已與最新main框架整合；DeepSeek thinking專用site與獨立來源準備入口見上述操作文件。發布程式不會自動啟動研究。
 
 網頁新增「DeepSeek · 最終測試」獨立專欄，每15秒從遠端 `var/runs` 讀取進度、逐局紀錄與正式結果，顯示學生勝／和／負、勝率與得分率，各次重試分開。沒有完整 `final-test/result.json` 時標為暫時統計；中斷留下的 `playing` 僅是磁碟紀錄，頁面列出最後落盤時間，不自行查詢平台。點各局「復盤」會載入同一頁的「學生 · 對局與復盤」棋盤，也可在其範圍選擇「DeepSeek 最終測試」。保留完整走棋、學生提示／回答、fallback 與原始事件的位元組引用；更新不會把測試分數寫入 Meta-Agent 的開發驗證或 Memory。
 
@@ -101,3 +114,13 @@ L2/L3 正式學生推論請求預設不設客戶端時間期限（`timeout=None`
 獨立 checkpoint 比較使用 `configs/evaluation/checkpoint-elo-20261106.json`：base 與五份已訓練權重各一個 model-new／PREEMPTABLE／1 H800 任務，每模型 40 局、白黑各 20，每卡 40 局並行且 vLLM max_num_seqs=40。沿用現有 DeepSeek non-thinking、last-box-san-v1、300 半步、五次重複判和及無請求逾時的最終測試協議。網頁「Checkpoint · Elo 對戰」讀取遠端衍生目錄，整批完成才顯示表現分；Teacher 固定 1800，得分率取最近整數百分比（半入）後查 FIDE 8.1.1 表，全勝／全負以名義 ±800 記分，非官方人類 Elo。詳見 [checkpoint 比較](docs/checkpoint-benchmark.md)。
 
 Qwen3-8B-Chess 獨立對戰使用主研究累積 20 步的 j000010 step-5：hf-mirror 下載並固定對手版本，model-new／PREEMPTABLE／1 H800 同卡雙 vLLM，各自 non-thinking、16,384 tokens，40 局／40 並行，白黑各 20。網頁另列 Qwen3-8B-Chess 專欄，並在「學生 · 對局與復盤」保留雙方原始輸出與隨機後備統計。設定與啟動入口見 [本地對手評測](docs/local-chess-match.md)。
+
+
+2026-11-16 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，
+學生仍是固定 Qwen3.5-4B non-thinking。學生訓練使用 model-autosft／HIGH，同時最多一個活動或提交不確定的 HIGH。
+Meta 推理使用 model-autosft／NORMAL，或 model-new、model-claw-tool、model-codeagent2／PREEMPTABLE；不使用 HIGH。
+獨立驗證使用 model-autosft／NORMAL；訓練 allocation 內的每5步驗證仍沿用該 HIGH allocation。
+此規則取代 11月13日禁用 model-autosft 的規則。新研究由使用者明確啟動，不恢復舊研究。
+詳見 [Qwen3.8 操作說明](docs/qwen38-meta.md)（在docs目錄閱讀時使用 qwen38-meta.md）。
+訓練審查交接必須包含當前context的 training_review.request_id、action、reason、selected_step；
+執行 check_research_proposal.py 檢查後才交接，格式錯誤留在本回合修正。

@@ -21,8 +21,8 @@ def own_pool_rows(response):
     raise ValueError("Unrecognized cctl own-pool response; expected a list, pools or data envelope")
 
 
-def authorized_pool(rows):
-    return any(row.get("name")=="model-autosft" or row.get("alias")=="model-autosft" for row in rows)
+def authorized_pool(rows, pool="model-new"):
+    return any(row.get("name")==pool or row.get("alias")==pool for row in rows)
 
 
 def pool_summary(rows):

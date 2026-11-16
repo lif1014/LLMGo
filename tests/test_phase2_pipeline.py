@@ -79,6 +79,15 @@ def test_phase2_site_default_initializes_phase2_without_an_extra_scope_flag(tmp_
     assert not any(k in state['site'] for k in ('meta_context_length','meta_max_output_tokens','meta_sampling'))
 
 
+def test_phase2_production_profile_loads_through_the_real_site_contract():
+    from llmgo.rsi.contracts import load_site
+    site=load_site(REPO/'configs/rsi/site.phase2-deepseek.json')
+    assert site['research_scope']==phase2.SCOPE and site['meta_execution']=='api'
+    assert site['meta_model']=='deepseek-v4.1-flash' and site['meta_thinking'] is True
+    assert site['priority']=='NORMAL' and site['gpu_count']==1
+    assert site['eval_vllm_max_num_seqs']==20
+
+
 def test_phase2_accepts_freeform_skills_and_generic_jobs_without_training_detection(tmp_path,monkeypatch):
     site,_=setup_site(tmp_path,monkeypatch)
     c=Controller.create(site,'open-phase2',scope=phase2.SCOPE);c.state['phase']='PLANNING';c.save();ws=c.workspace()

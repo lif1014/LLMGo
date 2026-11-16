@@ -26,7 +26,7 @@
   "gpu_model": "h800",
   "gpu_count": 1,
   "eval_games_per_gpu": 20,
-  "eval_max_parallel_games": 80,
+  "eval_max_parallel_games": 40,
   "eval_vllm_max_num_seqs": 20,
   "eval_shared_levels": true,
   "cpu": 8,

@@ -139,6 +139,61 @@ def test_failed_game_does_not_publish_a_complete_score(final_fixture,monkeypatch
     assert servers[0].stopped
 
 
+def test_failed_game_is_reported_while_peer_runs_and_peer_result_is_collected(final_fixture,monkeypatch):
+    module,model,candidate,output,servers=final_fixture
+    def play(index,*args):
+        if index == 0:
+            raise RuntimeError('DeepSeek HTTP 308')
+        import time
+        for _ in range(500):
+            path=output/'progress.json'
+            if path.is_file() and json.loads(path.read_text()).get('failed') == 1:
+                break
+            time.sleep(.01)
+        else:
+            pytest.fail('The coordinator waited for peers without reporting the failed game')
+        return {'index':index,'result':1}
+    monkeypatch.setattr(module,'play_game',play)
+    with pytest.raises(RuntimeError,match='1 valid games retained: DeepSeek HTTP 308'):
+        module.run(model,candidate,output,games=2,parallel_games=2)
+    assert json.loads((output/'game_results/01.json').read_text())['result']==1
+    progress=json.loads((output/'progress.json').read_text())
+    assert progress['completed']==1 and progress['failed']==1 and progress['remaining']==0
+    assert (output/'game_errors/00.json').is_file() and not (output/'result.json').exists()
+
+
+def test_replacement_reuses_verified_completed_game_and_replays_missing_game(final_fixture,monkeypatch):
+    module,model,candidate,output,servers=final_fixture
+    def play(index,folder,*args):
+        if index == 1:
+            raise RuntimeError('interrupted')
+        game_id=f'deepseek-final-{index:02d}'
+        game=folder/'games'/game_id;game.mkdir(parents=True)
+        board=chess.Board();events=[]
+        for i,uci in enumerate(['f2f3','e7e5','g2g4','d8h4']):
+            board.push_uci(uci)
+            events.append({'episode_id':game_id,'type':'student_move' if i%2==0 else 'opponent_move','uci':uci})
+        events.append({'episode_id':game_id,'type':'episode_finished','fen':board.fen(),'result':-1,'reason':'checkmate'})
+        (game/'events.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in events))
+        (game/'summary.json').write_text(json.dumps({'episode_id':game_id,'completed':True,'aborted':False,
+            'student_color':'white','seed':417000,'result':-1,'plies':4,'reason':'checkmate','random_moves':0}))
+        return {'index':index,'result':-1}
+    monkeypatch.setattr(module,'play_game',play)
+    with pytest.raises(RuntimeError,match='interrupted'):
+        module.run(model,candidate,output,games=2,parallel_games=2)
+    seen=[]
+    monkeypatch.setattr(module,'play_game',lambda index,*args:seen.append(index) or {'index':index,'result':0})
+    replacement=output.parent.parent/'replacement/final-test'
+    result=module.run(model,candidate,replacement,games=2,parallel_games=2,resume_from=output)
+    assert seen==[1] and result['losses']==1 and result['draws']==1
+    assert json.loads((replacement/'resume.json').read_text())['completed_indices']==[0]
+    assert (replacement/'games/deepseek-final-00/events.jsonl').read_bytes()==(output/'games/deepseek-final-00/events.jsonl').read_bytes()
+    # A model change must never import the old result.
+    (model/'model.safetensors').write_bytes(b'different weights')
+    with pytest.raises(ValueError,match='different model'):
+        module.run(model,candidate,output.parent.parent/'mismatch/final-test',games=2,resume_from=output)
+
+
 def test_final_replica_explicitly_disables_async_scheduler(tmp_path,monkeypatch):
     from llmgo.rsi.service import VllmServer
     from llmgo.rsi.deepseek_final import PROTOCOL

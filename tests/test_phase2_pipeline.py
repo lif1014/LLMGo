@@ -18,7 +18,9 @@ from test_rsi_executor import Platform
 
 
 def setup_site(tmp_path,monkeypatch):
-    site,_,stats=evaluation_fixture(tmp_path,monkeypatch,games=40)
+    # Full candidate/evidence snapshots use the real shared filesystem on the cluster.
+    # This is a test rendezvous deadline, not an inference or referee timeout.
+    site,_,stats=evaluation_fixture(tmp_path,monkeypatch,games=40,barrier_timeout=60)
     repo=Path(site['repo'])
     shutil.copytree(REPO/'examples/phase2',repo/'examples/phase2')
     home=tmp_path/'phase1-meta';home.mkdir()
@@ -56,6 +58,8 @@ def test_phase2_preparation_keeps_api_settings_and_excludes_phase1_instructions(
     site=read_json(path)
     assert site['research_scope']==phase2.SCOPE and site['repo']==str(target)
     assert site['codex_home']=='/original-private-home' and site['meta_execution']=='api'
+    assert Path(site['codex_bin']).is_file() and os.access(site['codex_bin'],os.X_OK)
+    assert 'parents[1]/"src"' in Path(site['codex_bin']).read_text()
     assert '禁止任何模型训练' in (target/'AGENTS.md').read_text()
     assert not (target/'docs/meta-workspace-agents.md').exists()
     assert not (target/'docs/phase1-rl-scope.md').exists()

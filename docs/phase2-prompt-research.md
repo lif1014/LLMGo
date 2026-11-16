@@ -16,6 +16,7 @@ Meta-Agent 可自由編寫 `harness.py`、追加提示、任意 skills、輔助�
 橋接器明確向DeepSeek傳送 `thinking.type=enabled`。溫度、top_p與token上限維持舊配置／provider預設。
 Meta不佔GPU；開發評測預設1 H800／model-autosft NORMAL，L2/L3各40局共用佇列，
 每副本最多20個請求。後續可在提案用 `evaluation_gpus` 指定1至8卡，局數及裁判不變。
+準備腳本會產生 `scripts/codex-phase2`，讓此site載入自己的橋接程式；共用Codex入口及其他研究不變。
 
 在新devspace，從base建立新研究：
 
@@ -128,6 +129,6 @@ python scripts/run_final_test.py \
 
 本機測試使用假的排程／推理服務、真實 harness 子程序與 Controller／Worker／網頁 API，驗證整個候選交接流程；它不代表已完成真實 GPU 推理、棋力提升或 DeepSeek 測試。
 
-## 本機驗證紀錄（2026-11-05）
+## 歷史本機驗證紀錄（2026-11-05）
 
 完整 pytest 套件194項通過；之後修正首次 starter 僅從凍結來源建立、保留 Agent 主動移除 harness 的選擇，最終 Phase 2 專項13項通過（包含新增案例）。測試涵蓋 base／Phase 1 checkpoint 初始化、獨立 Meta home 與真實假 app-server 協議、自由 skills／helper import／完整走棋歷史、兩輪80局的模擬評測與選最佳、無新評測直接交付、最終測試 bundle 與實際 harness 渲染、vLLM context 傳遞及網頁 API。另通過 JavaScript 語法與 DOM 渲染／切換 campaign 的本機 smoke check。沒有連接真實 Meta provider、GPU 或遠端排程。

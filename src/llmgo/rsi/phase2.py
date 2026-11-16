@@ -5,6 +5,7 @@ Training restrictions are instructions to the Meta-Agent, not admission rules.
 from pathlib import Path
 import hashlib
 import shutil
+import sys
 
 from .contracts import REPO, atomic_json, digest, file_hash, read_json, utc
 
@@ -34,6 +35,14 @@ def prepare_source(repo, target, site_path):
     shutil.copy2(repo/'configs/grpo/default.json', target/'configs/grpo/default.json')
     site = read_json(site_path)
     site.update(repo=str(target), research_scope=SCOPE)
+    launcher = target/'scripts/codex-phase2'
+    launcher.write_text('#!'+site.get('control_python', sys.executable)+'\n'
+        'import sys\nfrom pathlib import Path\n'
+        'sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))\n'
+        'from llmgo.rsi.codex_bridge import launch\n'
+        'raise SystemExit(launch(sys.argv[1:]))\n')
+    launcher.chmod(0o755)
+    site['codex_bin'] = str(launcher)
     atomic_json(target/'configs/rsi/site.phase2-deepseek.json', site)
     atomic_json(target/'configs/rsi/site.beijing.json', site)
     (target/'assets').symlink_to(repo/'assets', target_is_directory=True)

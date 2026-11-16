@@ -13,7 +13,7 @@ from llmgo.rsi.controller import Controller
 from llmgo.rsi.ladder import opponent
 
 
-def fixture(tmp_path,monkeypatch,gpu_count=8,fail=False,games=20):
+def fixture(tmp_path,monkeypatch,gpu_count=8,fail=False,games=20,barrier_timeout=5):
     repo=tmp_path/'repo';repo.mkdir();model=tmp_path/'model';model.mkdir()
     atomic_json(model/'config.json',{});(model/'model.safetensors').write_bytes(b'fixture weights')
     site={'user_root':str(tmp_path),'repo':str(repo),'base_model':str(model),'engine':'fixture',
@@ -51,7 +51,7 @@ def fixture(tmp_path,monkeypatch,gpu_count=8,fail=False,games=20):
         if not fail:
             if stats['barrier'] is None:stats['barrier']=asyncio.Event()
             if stats['active']==min(2*games,20*gpu_count):stats['barrier'].set()
-            await asyncio.wait_for(stats['barrier'].wait(),timeout=5)
+            await asyncio.wait_for(stats['barrier'].wait(),timeout=barrier_timeout)
         else:await asyncio.sleep(.001)
         gid=f"{p.get('game_id_prefix',p['job_id'])}-{index:02d}"
         events=Path(p.get('games_output',out))/'games'/gid/'events.jsonl'

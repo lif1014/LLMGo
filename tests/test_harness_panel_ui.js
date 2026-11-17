@@ -1,6 +1,10 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {levelStatistics,candidateRows}=require('../src/llmgo/server/static/rsi-phase2.js');
+const html=fs.readFileSync(path.join(__dirname,'../src/llmgo/server/static/rsi.html'),'utf8');
+const link=html.match(/href="([^"]+)"[^>]*>Harness \/ Skills<\/a>/)[1];
+for(const job of [1440760,1645220])assert.equal(new URL(link,`https://cybertron.modelbest.co/beijing/job/${job}/expose/`).pathname,
+  `/beijing/job/${job}/expose/rsi`,'the section link must preserve the dashboard route under its base URL');
 const game=(id,result,seat='white',reason='checkmate')=>({id,folder:'jobs/j000002/games/'+id,model_seat:seat,
   summary:result===null?null:{result,result_reason:reason,random_moves:1}});
 const games=[game('j000002-L2-00','white_win'),game('j000002-L2-01','white_win','black'),

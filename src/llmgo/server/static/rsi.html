@@ -10,7 +10,7 @@
       document.head.append(base);
       const stylesheet = document.createElement("link");
       stylesheet.rel = "stylesheet";
-      stylesheet.href = "static/rsi.css?v=meta-on-demand-2";
+      stylesheet.href = "static/rsi.css?v=harness-panel-20261117";
       document.head.append(stylesheet);
     })();
   </script>
@@ -18,7 +18,7 @@
 </head>
 <body>
   <header><a href="rsi">研究面板</a><h1>国际象棋 RSI</h1>
-    <label>研究 <select id="campaign"></select></label><a href="#grpo-metrics-panel">GRPO 训练指标</a><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
+    <label>研究 <select id="campaign"></select></label><a href="#phase2-panel">Harness / Skills</a><a href="#grpo-metrics-panel">GRPO 训练指标</a><button id="pause">暂停刷新</button><span id="connection">正在读取…</span></header>
   <p id="overview">上传框架并创建 campaign 后，这里显示远端研究状态。</p>
   <div class="status-grid">
     <section><h2>Meta-Agent 状态</h2><pre id="meta-status">尚未读取</pre><p id="meta-usage" class="muted">等待服务返回Token用量</p></section>
@@ -26,11 +26,26 @@
     <section><h2>Worker 进度</h2><pre id="worker-state">尚未读取</pre></section>
     <section><h2>自主研究与固定评测</h2><pre id="research-state">尚未读取</pre></section>
   </div>
-  <section id="phase2-panel" class="evaluation-panel" hidden>
-    <h2>Phase 2 · Harness / Skills</h2>
-    <p id="phase2-origin"></p><p id="phase2-delivery"></p>
-    <svg id="phase2-curve" viewBox="0 0 640 240" role="img" aria-label="提示候选版本与L2/L3得分"></svg>
+  <section id="phase2-panel" class="evaluation-panel final-dashboard harness-dashboard" aria-label="Harness与Skills研究">
+    <div class="grpo-heading"><div><p class="grpo-eyebrow">PROMPT &amp; SKILLS RESEARCH</p><h2>Harness / Skills · 研究与验证</h2>
+      <p class="grpo-subtitle">固定学生权重 · 每轮提示方案、L2 / L3 成绩与完整棋局</p></div>
+      <div class="grpo-controls"><label>Harness 研究 <select id="phase2-study"></select></label>
+        <label><input id="phase2-follow" type="checkbox" checked> 跟随最新版本</label></div></div>
+    <div class="grpo-run-banner"><strong id="phase2-origin"></strong><span id="phase2-badge" class="grpo-badge active">正在读取</span></div>
+    <p id="phase2-status" class="grpo-message" role="status">正在查找 harness 研究…</p>
+    <div class="grpo-progress-track"><div id="phase2-progress" class="grpo-progress-fill"></div></div>
+    <p id="phase2-updated" class="grpo-progress-note"></p>
+    <div id="phase2-levels" class="harness-levels"></div>
     <div id="phase2-candidates" class="matrix"></div>
+    <div class="harness-bottom">
+      <details class="harness-plan" open><summary>所选版本 · 方案与 skills</summary><pre id="phase2-plan">正在读取方案…</pre></details>
+      <details class="harness-curve" open><summary>候选版本 · 得分曲线</summary>
+        <svg id="phase2-curve" viewBox="0 0 640 240" role="img" aria-label="提示候选版本与L2/L3得分"></svg>
+        <p id="phase2-delivery" class="muted"></p></details>
+    </div>
+    <details class="harness-games"><summary>所选版本 · 对局与复盘</summary>
+      <p><button id="phase2-replay">在「学生 · 对局与复盘」打开此版本</button></p><div id="phase2-games" class="matrix"></div></details>
+    <p class="grpo-footnote">每15秒读取已有结果；未完成的对局不计为和棋或败局。原始 prompt 基线与每轮候选分别保留，观测最佳不代表能力单调提升。</p>
   </section>
   <section id="meta-jobs-panel" class="evaluation-panel final-dashboard" aria-label="Meta工作与算力">
     <div class="grpo-heading"><div><p class="grpo-eyebrow">META RESEARCH</p><h2>Meta-Agent · 工作与算力</h2>
@@ -154,12 +169,12 @@
       };
       document.body.append(script);
     }
-    loadDashboardScript("static/rsi.js?v=qwen38-meta-1", "connection");
+    loadDashboardScript("static/rsi.js?v=harness-panel-20261117", "connection");
   </script>
 <script src="static/rsi-final.js?v=meta-on-demand-2"></script>
 <script src="static/rsi-elo.js?v=checkpoint-elo-40parallel-1"></script>
 <script src="static/rsi-chess-r1.js?v=grpo-2"></script>
 <script src="static/rsi-grpo-metrics.js?v=grpo-metrics-1"></script>
 <script src="static/rsi-meta-acceptance.js?v=qwen38-meta-1"></script>
-<script src="static/rsi-phase2.js?v=phase2-main-sync-1"></script>
+<script src="static/rsi-phase2.js?v=harness-panel-20261117"></script>
 </body></html>

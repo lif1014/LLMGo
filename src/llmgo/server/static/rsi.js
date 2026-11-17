@@ -610,6 +610,13 @@ const finalGameBanks=new Map();
 function bankFinalGames(games,key){finalGameBanks.set(key,games);return Array.from(finalGameBanks.values()).flat();}
 globalThis.llmgoReplay={
   isPaused:()=>state.paused,
+  async openCampaignJob(campaign,job,game=null){
+    if(!Array.from(el("campaign").options).some(option=>option.value===campaign))await list();
+    if(state.campaign!==campaign){el("campaign").value=campaign;selectCampaign();}
+    selectJob(job);
+    if(game){state.autoGame=false;const viewer=openGame(game);await readGame(viewer);}
+    document.querySelector(".game-view")?.scrollIntoView({behavior:"smooth",block:"start"});
+  },
   setFinalGames(games,key="default"){
     state.finalGames=bankFinalGames(games,key);
     if(el("game-scope").value==="final")student(state.generation).catch(e=>el("game-loading").textContent=e.message);

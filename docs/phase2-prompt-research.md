@@ -110,6 +110,8 @@ def build_messages_with_history(request):
 
 每輪保存改動摘要、敗局假設、完整候選與評測證據。網頁依候選版本顯示 L2／L3 各自勝／和／負、得分率，以及原始分數與觀測最佳曲線。測量會波動；最佳值包絡與自適應選優本身不能證明實際能力單調或可擴展提升。DeepSeek 成績不回流作下一輪調整。
 
+網頁的「Harness / Skills · 研究與驗證」使用獨立研究選單；即使上方選中 Phase 1，也能同時查看 harness 研究。預設選擇未暫停的最新研究並跟隨最新版本，也可從版本表選取歷史候選。專欄從 overview、manifest、proposal、progress、正式 metrics 與逐局 summary 讀取資料；正在評測的候選不必等到 Controller 收集後才顯示。L2／L3 分別列出完成局數、勝和負及暫時得分率，完整 metrics 優先於可能稍晚更新的棋局列表。初始基線保持獨立，未完成和程序異常的對局不當作和棋或敗局。方案區列出假設、研究備註與凍結 harness／skills 檔案清單；每局「復盤」會在同頁棋盤載入該研究、該版本的完整對局。網頁每15秒只讀資料，不提交任務、不呼叫模型。
+
 ## 最終交付與 DeepSeek 測試
 
 `final-candidate.json` 包含 candidate ID、模型路徑／雜湊、model_origin、完整 source 的路徑和檔案雜湊、skills 引用、開發驗證引用及推理上下文長度。harness 和任意 skills／helper 資源在所指向的凍結 source 裡。`final_checkpoint` 只保留相容的模型引用，不代表訓練了新 checkpoint。

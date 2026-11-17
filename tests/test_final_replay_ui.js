@@ -97,5 +97,14 @@ class Element{
   context.llmgoReplay.setFinalGames([game],'deepseek-panel');
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(ids.get('game').value,localGame.folder,'Refreshing DeepSeek must preserve the selected local game');
-  console.log('Final replay: partial/formal scores, aborted games, UTF-8 byte cursors, shared board, prompt/output and raw references passed');
+  const study=new Element();study.value='harness-study';ids.get('campaign').add(study);
+  document.getElementById('raw').close=()=>{};
+  const harnessGame={...game,id:'j000002-L2-00',folder:'jobs/j000002/games/j000002-L2-00'};
+  await context.llmgoReplay.openCampaignJob('harness-study','j000002',harnessGame);
+  assert.equal(vm.runInContext('state.campaign',context),'harness-study');
+  assert.equal(vm.runInContext('state.job',context),'j000002');
+  assert.equal(vm.runInContext('state.autoGame',context),false);
+  assert.equal(ids.get('game-scope').value,'job');
+  assert.equal(vm.runInContext('state.viewer.folder',context),harnessGame.folder);
+  console.log('Final and harness replay: partial/formal scores, UTF-8 cursors, cross-study game selection and raw outputs passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

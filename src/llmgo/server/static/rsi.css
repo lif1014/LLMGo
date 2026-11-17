@@ -83,3 +83,18 @@ svg { width:100%; background:#fafcf9; } dialog { max-width:90vw; width:1000px; }
 .final-dashboard .grpo-kpi strong { font-size:24px; }.final-dashboard select { max-width:480px; }
 
 .meta-stages{display:flex;flex-wrap:wrap;gap:.6rem;list-style:none;padding:0;margin:1rem 0}.meta-stages li{padding:.4rem .7rem;border:1px solid #ccd7e4;border-radius:1.2rem;background:#f3f7fc;font-size:.85rem}.meta-cost{padding:.5rem 1rem;border-left:3px solid #3978b8;background:#f4f8fc}.meta-table{overflow-x:auto;margin-top:1rem}.meta-table table{width:100%;border-collapse:collapse;font-size:.85rem}.meta-table th,.meta-table td{text-align:left;padding:.65rem;border-bottom:1px solid #dce3ed;white-space:nowrap}.meta-invalid{opacity:.7}#meta-job-detail{max-height:28rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+
+#phase2-panel p { overflow-wrap:anywhere; }
+#phase2-curve { display:block; max-height:360px; margin:16px 0; border-radius:8px; }
+#phase2-curve text { font:11px system-ui,sans-serif; fill:#65766c; }
+#phase2-candidates td:last-child { text-align:left; min-width:240px; }
+.harness-dashboard{scroll-margin-top:16px}.harness-levels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0}
+.harness-level{border:1px solid #d8e4dd;border-top:3px solid var(--harness-color);border-radius:10px;background:#fff;padding:16px 20px}
+.harness-level h3{margin:0;color:#51665a;font-size:13px}.harness-level>strong{display:block;color:var(--harness-color);font-size:32px;font-variant-numeric:tabular-nums;margin:8px 0}
+.harness-level p{font-size:13px;margin:6px 0}.harness-level>span,.harness-baseline{font-size:11px!important;color:#728377}
+.harness-bottom{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.harness-bottom>details,.harness-games{border:1px solid #d8e4dd;border-radius:9px;background:#fff;padding:14px;min-width:0}
+.harness-bottom summary,.harness-games summary{font-size:13px;font-weight:600;color:#3c624c}.harness-plan pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font-size:12px;line-height:1.6;color:#54695b}
+.harness-curve p{font-size:11px}.harness-games{margin-top:16px}.harness-games .matrix{max-height:370px;overflow:auto}.harness-selected{background:#eef7ef}
+.harness-hypothesis{font-size:12px;line-height:1.5;max-width:400px}.harness-hypothesis button{display:block;margin-top:8px;font-size:11px}#phase2-progress{width:0}#phase2-games button{font-size:11px}
+@media(max-width:800px){.harness-bottom{grid-template-columns:1fr}.harness-level{padding:14px}.harness-level>strong{font-size:27px}}
+@media(max-width:500px){.harness-levels{grid-template-columns:1fr}}

@@ -38,6 +38,22 @@ def test_template_requires_selection_and_review_needs_no_puzzle_holdout(recipe,t
     assert json.loads(settings['data.val_files'])==[legacy['validation_file']]
 
 
+def test_standalone_training_skips_validation_without_changing_grpo(recipe,tmp_path):
+    recipe.update(steps=10,training_review=True,validation_file=None)
+    manual={**recipe,'training_review':False,'puzzle_validation':False}
+    assert overrides(manual,tmp_path)==overrides(recipe,tmp_path)
+    settings=dict(item.split('=',1) for item in overrides(manual,tmp_path))
+    assert json.loads(settings['trainer.val_before_train']) is False
+    assert json.loads(settings['trainer.test_freq'])==-1
+    assert json.loads(settings['trainer.save_freq'])==5
+    # Existing unreviewed recipes retain their explicit puzzle-validation split.
+    legacy={**recipe,'training_review':False,'validation_file':'/study/reserved/dev.parquet'}
+    settings=dict(item.split('=',1) for item in overrides(legacy,tmp_path))
+    assert json.loads(settings['trainer.val_before_train']) is True
+    assert json.loads(settings['trainer.test_freq'])==5
+    assert json.loads(settings['data.val_files'])==[legacy['validation_file']]
+
+
 @pytest.mark.parametrize('response', [512, 8192, 16384])
 def test_launcher_and_native_verl_agree_on_response_budget(recipe, tmp_path, response):
     spec = importlib.util.spec_from_file_location('train_chess_r1', ROOT/'scripts/train_chess_r1.py')

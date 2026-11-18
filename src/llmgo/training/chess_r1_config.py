@@ -53,6 +53,7 @@ def overrides(recipe, output):
                         presence_penalty=1.5, repetition_penalty=1):
         raise ValueError('This recipe must use the user-selected Qwen sampling settings')
     prompt_tokens, response_tokens = token_budgets(r)
+    validate_puzzles = not r.get('training_review', False) and r.get('puzzle_validation', True)
     values = {
         'actor_rollout_ref.model.path': r['model_path'],
         'actor_rollout_ref.model.external_lib': 'llmgo.training.chess_r1_compat',
@@ -111,8 +112,8 @@ def overrides(recipe, output):
         'algorithm.rollout_correction.bypass_mode': False,
         'data.train_files': [training_file(r)],
         # verl constructs a val loader even when its puzzle validation is disabled.
-        # Reviewed runs use L2/L3; this unused loader needs no held-out parquet.
-        'data.val_files': [r.get('validation_file') or training_file(r)] if r.get('training_review') else [r['validation_file']],
+        # Reviewed runs and explicit train-only runs need no held-out parquet.
+        'data.val_files': [r['validation_file']] if validate_puzzles else [r.get('validation_file') or training_file(r)],
         'data.train_batch_size': r['prompt_batch_size'],
         'data.val_batch_size': r.get('allocated_gpus',8)*r.get('rollout_max_num_seqs',128),
         'data.max_prompt_length': prompt_tokens,
@@ -133,8 +134,8 @@ def overrides(recipe, output):
         'trainer.project_name': 'llmgo-rsi-grpo',
         'trainer.experiment_name': r['run_id'],
         'trainer.logger': ['console'],
-        'trainer.val_before_train': not r.get('training_review', False),
-        'trainer.test_freq': -1 if r.get('training_review', False) else r.get('validation_every', 5),
+        'trainer.val_before_train': validate_puzzles,
+        'trainer.test_freq': r.get('validation_every', 5) if validate_puzzles else -1,
         'trainer.save_freq': r['checkpoint_every'],
         'trainer.max_actor_ckpt_to_keep': None,
         'trainer.default_local_dir': str(o/'native-checkpoints'),

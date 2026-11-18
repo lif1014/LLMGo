@@ -66,6 +66,8 @@ bash scripts/start_rsi.sh --campaign chess-grpo-v1
 
 配方凍結於 `var/runs/<實驗ID>/grpo/recipe.json`，原生 verl checkpoint、指標與 oracle 日誌在 `grpo/`，每次驗證的 HF 模型在 `scaling/models/step-N/`，供 Controller 收集的 `submission.json` 在實驗根。作業限 `beijing / model-autosft`，預設 HIGH，同時最多一個活動或提交不確定的 HIGH 任務；每項最多 8 GPU，devspace 0 GPU。
 
+操作員可另提交固定配方、只訓練與匯出的獨立實驗：該配方指定 `training_review=false`、`puzzle_validation=false`，保留 checkpoint 儲存與 GRPO 指標，完整用法見 [GRPO pipeline](docs/grpo-pipeline.md)。這不改變新 Meta 研究的自主選樣及每5步 L2/L3 驗證預設。
+
 遠端已有專用 verl、teacher 與推理環境。首次新 campaign 用 `bash scripts/start_rsi.sh --campaign chess-grpo-v1 --web`；不沿用舊 campaign 的凍結快照。詳見 [RSI 操作](docs/rsi-operations.md)。網頁讀取 `var/runs/` 的指標和日誌，驗證棋局的 `events.jsonl` 可逐手復盤，包含輸棋每一步、模型回覆和隨機後備。
 
 Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時提交 L2/L3。只有 L2 和 L3 兩檔齊備時才更新可比較的驗證分數。選定成果後，在獨立的 1 GPU job 執行 `scripts/run_final_test.py`，預設 10 局、白黑各 5 局，對手為 DeepSeek Flash non-thinking；所有原始走棋與回覆存於 `var/runs/<實驗ID>/final-test/`。`run_deepseek_loose.py` 是 DeepSeek 對 Fairy 的參考流程，不是 Qwen 對 DeepSeek 的最終測試。密鑰在 `/user/lyh4170/.config/llmgo/deepseek-api-key`，只對 DeepSeek API 使用內部白名單代理。

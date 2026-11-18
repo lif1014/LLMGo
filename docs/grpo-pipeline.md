@@ -14,6 +14,8 @@ Meta 可在新配方以整數 `max_response_tokens` 設定 512–16,384，`max_p
 
 `configs/grpo/default.json` 是新任務模板。提案用 `scripts/run_grpo.py` 登記標準訓練；受保護 Worker 的 `rsi/training_loop.py` 凍結配方，在 step 0 評測前檢查長度設定，每 5 step 呼叫 GPU 入口、核對 checkpoint，再驗證與等待 Meta 決策。模型合併使用候選任務凍結的 `scripts/export_grpo.py`，讓訓練程式修復能生效；正式棋局評測仍使用受保護程式。匯出保留 merger 新產生的權重索引，不複製 base model 的舊索引或舊匯出收據，並修正 Transformers 5.4 權重命名。原生 checkpoint 含 actor、optimizer、RNG 和 dataloader；續訓只認同一實驗、同一配方及完整收據。改 reward、模型或配方時建立新實驗。
 
+操作員獨立提交的固定配方訓練，可在該實驗設 `training_review=false`、`puzzle_validation=false`，透過 `scripts/run_grpo.py` 直接訓練及匯出。此模式不啟動 Controller、L2/L3 或 Agent 審查，verl 的訓練前及週期題目驗證也關閉；checkpoint 儲存頻率仍由 `checkpoint_every` 決定。既有配方未指定 `puzzle_validation` 時維持原行為，Meta 研究的正式驗證流程不變。
+
 首次啟動允許 supervisor 已建立的 `progress.json`、配方、鎖與 logs；沒有 `identity.json` 卻已有更新、checkpoint 或 oracle 產物時仍拒絕覆寫。這些修復的原因、測試和舊 campaign 採用邊界見 [共用程式修復](grpo-maintenance-20261104.md)。
 
 訓練路徑：`var/runs/<實驗ID>/grpo/{recipe.json,identity.json,progress.json,result.json,logs/train.log,oracle.log,updates/,tables/,sampling/,checkpoints/,native-checkpoints/}`。分段匯出在 `scaling/models/step-N/`，驗證與決策在 `scaling/evaluations/`、`scaling/reviews/`；Worker 收據在實驗根的 result.json、submission.json。兩種 result.json 位於不同目錄。導出前核對對應 step 收據與各 shard 大小。舊的非分段配方仍可使用 grpo/model/。

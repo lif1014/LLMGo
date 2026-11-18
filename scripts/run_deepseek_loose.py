@@ -33,7 +33,7 @@ async def main():
  OUT.mkdir(parents=True,exist_ok=True)
  system=protocol.NONTHINKING_SYSTEM_PROMPT
  atomic(OUT/'protocol.json',{'model_label':'DeepSeek Flash · thinking disabled','model':'deepseek-flash','system_prompt':system,
-   'prompt_source':str(ROOT/'assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet'),'opponents':[opponent(LEVEL)],
+   'prompt_source':str(ROOT/'src/llmgo/training/chess_r1.py'),'opponents':[opponent(LEVEL)],
    'games_per_level':10,'white':5,'black':5,'scheduling':'independent_games','harness':False,'skills':False,
    'invalid_move_policy':'random_legal','max_plies':200,'thinking':{'type':'disabled'},'temperature':1,
    'answer_protocol':'unique_legal_boxed_san_loose_v1','answer_extraction':'all boxed SAN occurrences must be valid and identical; surrounding text and repeated identical boxes allowed; truncated answers rejected',

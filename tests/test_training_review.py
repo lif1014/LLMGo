@@ -87,7 +87,8 @@ def loop_fixture(tmp_path):
     atomic_json(model/'config.json',{'step':0})
     (model/'model.safetensors').write_bytes(b'fixture weights')
     atomic_json(repo/'configs/grpo/default.json',{'steps':10,'enable_thinking':False,
-        'resume_on_restart':True,'validation_every':5,'checkpoint_every':5})
+        'resume_on_restart':True,'validation_every':5,'checkpoint_every':5,
+        'train_file':str(root/'data-selection/train.parquet')})
     output=repo/'var/runs/demo-j000001'
     source={'root':str(repo),'sha256':'protected'}
     p={'site':{'user_root':str(root),'repo':str(repo),'gpu_count':2,'engine':'fixture',

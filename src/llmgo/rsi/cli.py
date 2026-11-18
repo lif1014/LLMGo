@@ -30,7 +30,9 @@ def doctor(site, *, worker=False, platform=False, codex_auth=False):
     if worker:
         for name in ("torch", "transformers", "peft", "vllm", "chess", "httpx", "tokenizers"):
             check(name, importlib.util.find_spec(name) is not None, "Worker Python dependency")
-        check("grpo_dataset", (Path(site["repo"])/"assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet").is_file(), "Chess-R1 train split")
+        pool=Path(site['repo'])/'assets/datasets/lichess/20261103/boxed-nonthinking-v2'
+        check("grpo_dataset", all((pool/name).is_file() for name in ('train.parquet','index.parquet','manifest.json','verification.json')),
+              "Lichess training-only pool; Meta selects the experiment dataset")
         check("reward_checkpoint", (Path(site["repo"])/"assets/models/searchless-270M/270M/6400000").is_dir(), "Searchless Chess 270M")
         if importlib.util.find_spec("torch"):
             import torch

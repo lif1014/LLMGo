@@ -7,8 +7,8 @@
 ## 資產與預設
 
 - 初始學生：assets/models/Qwen3.5-4B（固定；本研究可續訓其派生 checkpoint）。
-- 預設資料：assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet。
-- 可選完整 Lichess 池：assets/datasets/lichess/20261103/boxed-nonthinking-v2；先核對 verification.json。
+- 沒有預選訓練集；模板 train_file 為 null，先選樣，再填入實驗配方。
+- 唯一提供的完整 Lichess 訓練池：assets/datasets/lichess/20261103/boxed-nonthinking-v2；先核對 verification.json。
 - Reward model：assets/models/searchless-270M/270M；上游介面在 assets/vendor/Chess-R1-830c0597。
 - 配方模板：configs/grpo/default.json。不要從其他研究複製配方／checkpoint／結論。
 
@@ -44,7 +44,7 @@ training_review=true，不能藉關掉審查避開。用本次 finish_command �
 
 CPU 的資料檢查使用有對應依賴的專案 interpreter。先測 import chess,pyarrow,zstandard；
 可查看 site 的 worker_venv 或 requirements-rsi-data.txt，缺依賴時建本研究獨立環境。
-沿用資料可使用 scripts/report_training_data.py，選樣使用 scripts/select_lichess_data.py；
+重用本研究已選資料可使用 scripts/report_training_data.py，首次選樣可用 scripts/select_lichess_data.py；
 先讀 --help，交付選樣程式／查詢、selected_ids.txt、selected_positions.txt、stats.json 與假設。
 不要求 random seed 或算力預算比較。
 
@@ -96,9 +96,9 @@ finish_research.py 與 Controller 共用此格式檢查；格式錯誤會在當�
 先用 `--list-tags` 查真實分類、`--preview` 查配額是否可滿足；複合分類／各組難度用 `--spec` JSON。
 用 `/user/lyh4170/venvs/llmgo-lichess-data-20261103/bin/python` 執行 CPU 選樣。
 比例以 puzzle 計算，同題只加入一次，再保留其在訓練池中的全部局面；每輪保留交付檔。
-詳見 `docs/lichess-data.md`。**不一定需要用這個腳本**：可以保留預設資料，也可以自行寫選樣程式。
-是否使用、分類配比及難度由你根據本研究敗局自主決定，不是強制課程。
-只修改實驗配方的 train_file，不改預設資料、固定學生 prompt、non-thinking 或正式評測協議。
+詳見 `docs/lichess-data.md`。**不一定需要用這個腳本**：也可以自行寫查詢／選樣程式；新研究必須從完整 Lichess 訓練池自行選樣，沒有預選子集。
+分類配比及難度由你根據本研究敗局自主決定，不是強制課程；不得讀取其他研究的選樣結果。
+將選樣產物填入實驗配方的 train_file；模板預設為空。固定學生 prompt、non-thinking 與正式評測協議不變。
 
 
 2026-11-16 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，

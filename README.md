@@ -21,8 +21,7 @@ HIGH 名額保留給學生訓練；Meta 的 NORMAL／PREEMPTABLE 推理不占用
 | --- | --- |
 | `assets/models/Qwen3.5-4B/` | 學生 HF 權重與 tokenizer |
 | `assets/models/searchless-270M/270M/` | Chess-R1 動作價值 reward model |
-| `assets/datasets/chess-r1/boxed-nonthinking-v2/` | GRPO 訓練與驗證 parquet |
-| `assets/datasets/lichess/20261103/boxed-nonthinking-v2/` | 可選完整 Lichess 訓練池及分類索引，已排除現有 dev/test；使用前核對 verification.json |
+| `assets/datasets/lichess/20261103/boxed-nonthinking-v2/` | 新研究唯一提供的完整 Lichess 訓練池及分類索引，已排除現有 dev/test；使用前核對 verification.json |
 | `assets/vendor/Chess-R1-830c0597/` | searchless Chess 上游原始碼 |
 | `assets/engines/` | Fairy-Stockfish 與 NNUE |
 | `configs/grpo/default.json` | GRPO 配方模板 |
@@ -75,6 +74,8 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 
 ## 研究起點
 
+新 RL 研究不帶入歷史預選訓練集：先從完整 Lichess 訓練池自主選樣，將選出的 train.parquet 填入實驗配方（模板 train_file=null）。選樣助手可選，選樣本身必須完成。原有研究的資料、checkpoint 與凍結配方保留供續跑／核對。使用 scripts/prepare_qwen_research.py 建立 v2 乾淨起點，資產僅列出本次所需的模型、reward 依賴及訓練池；共用帳號檔案系統不是權限隔離。
+
 新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 40 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
 
 預設每 5 個 GRPO step（verl `global_step`，每步含多次 optimizer minibatch 更新）完成 L2/L3 各 40 局驗證，由 Meta-Agent 選擇 continue / replan / finish，保留中間 checkpoint、原始分數與 observed-best 曲線。Controller 使用外部 Executor，GPU 排程查詢間隔 600 秒。流程與輸出路徑見 [分段訓練說明](docs/training-reviews.md)。
@@ -82,6 +83,8 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 L2/L3 基線和驗證共用 80 局佇列，每檔 40 局、白黑各 20 局。每卡一個 TP=1 vLLM，max_num_seqs=20，每副本最多 20 局並行；8 卡可同時進行 80 局（每卡約 10 局），1 卡時最多並行 20 局，其餘排隊。兩檔各自保存指標和完整棋譜。新受保護驗證版本固定此政策，覆蓋相容 site 中的舊併發值；GRPO 訓練 rollout 384 seqs 和獨立 DeepSeek 測試不受此更改影響。
 
 網頁評測表按 L2、L3 分行顯示勝／和／負、勝率與得分率；跨難度總表與 GRPO 的每個 checkpoint 表另列兩檔的實際局數。新驗證每檔40局，歷史20局批次保留各自分母，不因預設值更新而重算成40局。勝率為勝局／有效完成局，得分率為（勝局＋半數和局）／有效完成局。
+
+網頁新增「Harness / Skills · 研究與驗證」獨立專欄，可另選 harness 研究、查看基線及每輪方案、L2／L3 即時進度與勝和負，並直接開啟對局復盤。詳見 [RSI 操作](docs/rsi-operations.md)。
 
 「GRPO · 訓練指標」為獨立區塊，可選每次 RL 實驗，查看 Reward、270M Q、Reference KL、entropy、合法／格式比例、回答長度、梯度、policy loss 與零優勢組比例。每 15 秒從遠端指標檔增量讀取，支援任意標量曲線與逐步表格；沒有完成更新時顯示等待，不把採樣或準備階段的目標 step 當成已完成訓練。此顯示只讀檔案，不呼叫模型或查詢排程器。
 

@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--hypothesis',required=True)
     parser.add_argument('--evidence',action='append',default=[])
-    parser.add_argument('--query',default='use existing filtered training data')
+    parser.add_argument('--query',default="reuse this study's selected training data")
     args=parser.parse_args()
     print(json.dumps(report_training_data(args.train,args.output,hypothesis=args.hypothesis,
                                          evidence=args.evidence,query=args.query)),flush=True)

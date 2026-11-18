@@ -43,20 +43,23 @@ cd '/user/lyh4170/LLMGo!'
 /user/lyh4170/venvs/llmgo-rsi-control-20261022/bin/python -B scripts/prepare_qwen_research.py
 ```
 
-This builds `var/clean-starts/qwen38-27b-meta-v1`, with no Git history, prior campaign Memory,
+This builds `var/clean-starts/qwen38-27b-meta-v2`, with no Git history, prior campaign Memory,
 Codex sessions, benchmark recipes or research conclusions. It retains common implementation
 fixes, the default GRPO template, generic skills/tests and clean research instructions.
-`assets` and `var` route to the project assets/artifact roots so existing workers and Web
-APIs can read the new outputs. This is clean input, not a security sandbox: same-account
+`assets` exposes only the required initial models, reward dependencies and verified full
+Lichess training-only pool. It does not include a preselected training subset or held-out
+parquet files. The template has train_file=null: Meta selects data independently and fills
+the experiment recipe. The helper is optional; selection is required.
+`var` still routes to the shared artifact root so workers and Web APIs can read outputs. This is clean input, not a security sandbox: same-account
 filesystem/network access can still reach other studies. The new instructions forbid that;
 strict read isolation requires a separate filesystem/container policy.
 
 Start the new study explicitly, from its prepared source:
 
 ```bash
-bash '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v1/scripts/start_rsi.sh' \
-  --site '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v1/configs/rsi/site.qwen38-meta.json' \
-  --campaign chess-grpo-qwen38-27b-meta-v1
+bash '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v2/scripts/start_rsi.sh' \
+  --site '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v2/configs/rsi/site.qwen38-meta.json' \
+  --campaign chess-grpo-qwen38-27b-meta-v2
 ```
 
 Fresh initialization measures Student L2/L3 baselines and imports no old trained checkpoint

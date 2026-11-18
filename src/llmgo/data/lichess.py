@@ -414,8 +414,8 @@ def select(pool, output, *, hypothesis, rating_min=None, rating_max=None, themes
     return result
 
 
-def report_training_data(paths, output, *, hypothesis, evidence=(), query='use existing filtered training data'):
-    """Record the same delivery artifacts when retaining the default dataset."""
+def report_training_data(paths, output, *, hypothesis, evidence=(), query="reuse this study's selected training data"):
+    """Record delivery artifacts when reusing this study's selected dataset."""
     output = Path(output)
     if output.exists():
         raise FileExistsError(output)

@@ -53,7 +53,7 @@ Normal research uses the executable proposal contract. A checkpoint review inste
 An empty research proposal cannot masquerade as a review. Invalid handoffs return an error
 inside the same Meta turn; they do not authorize an automatic operator decision.
 
-The optional Lichess selection helper remains optional. The Agent may retain default data,
+The optional Lichess selection helper remains optional. The Agent must independently select data from the supplied training-only pool,
 use category mixtures or write its own selector. Every claimed data change must be reflected
 in the submitted recipe and delivery receipts, not only narrative text.
 

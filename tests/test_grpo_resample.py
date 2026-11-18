@@ -19,7 +19,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def recipe():
-    return json.loads((ROOT/'configs/grpo/default.json').read_text())
+    return {**json.loads((ROOT/'configs/grpo/default.json').read_text()),
+            'train_file':'/study/data-selection/train.parquet'}
+
+
+def test_template_requires_selection_and_review_needs_no_puzzle_holdout(recipe,tmp_path):
+    template=json.loads((ROOT/'configs/grpo/default.json').read_text())
+    assert template['train_file'] is None and template['validation_file'] is None
+    with pytest.raises(ValueError,match='Select training data'):
+        validate_recipe(template)
+    settings=dict(item.split('=',1) for item in overrides(recipe,tmp_path))
+    assert json.loads(settings['data.train_files'])==[recipe['train_file']]
+    assert json.loads(settings['data.val_files'])==[recipe['train_file']]
+    assert json.loads(settings['trainer.test_freq'])==-1
+    assert json.loads(settings['trainer.val_before_train']) is False
+    legacy={**recipe,'validation_file':'/study/reserved/dev.parquet'}
+    settings=dict(item.split('=',1) for item in overrides(legacy,tmp_path))
+    assert json.loads(settings['data.val_files'])==[legacy['validation_file']]
 
 
 @pytest.mark.parametrize('response', [512, 8192, 16384])

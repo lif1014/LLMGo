@@ -12,6 +12,6 @@ def main():
     parser.add_argument('--site',type=Path,default=Path(__file__).resolve().parents[1]/'configs/rsi/site.qwen38-meta.json')
     parser.add_argument('--target',type=Path)
     args=parser.parse_args();site=read_json(args.site)
-    target=inside(site['user_root'],args.target or Path(site['repo'])/'var/clean-starts/qwen38-27b-meta-v1')
+    target=inside(site['user_root'],args.target or Path(site['repo'])/'var/clean-starts/qwen38-27b-meta-v2')
     print(prepare(site['repo'],target,args.site))
 if __name__=='__main__':main()

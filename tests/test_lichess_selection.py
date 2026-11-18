@@ -76,6 +76,20 @@ def test_mixture_assigns_overlap_once_and_keeps_all_solver_positions(pool):
     assert 'seed' not in result['query']
 
 
+def test_clean_pool_view_preserves_verified_selection_without_historical_inputs(pool):
+    import shutil
+    from llmgo.rsi.clean_start import prepare_assets,POOL
+    repo=pool.parent/'repo';target=pool.parent/'fresh-source'
+    shutil.copytree(pool,repo/POOL)
+    prepare_assets(repo,target,{})
+    view=target/POOL
+    result=select_mix(view,pool.parent/'fresh-selection',groups=[{'name':'fork','weight':1}],
+                      num_puzzles=2,hypothesis='Independent initial selection')
+    assert result['status']=='selected' and result['puzzles']==2
+    assert 'reference' not in json.loads((view/'manifest.json').read_text())
+    assert 'heldouts' not in json.loads((view/'verification.json').read_text())
+
+
 def test_preview_and_catalog_are_read_only_and_count_puzzles(pool):
     before = {p: p.stat().st_mtime_ns for p in pool.rglob('*')}
     preview, chosen = inspect_pool(pool, groups=[{'name': 'fork'}, {'name': 'pin'}],

@@ -21,8 +21,7 @@ HIGH 名額保留給學生訓練；Meta 的 NORMAL／PREEMPTABLE 推理不占用
 | --- | --- |
 | `assets/models/Qwen3.5-4B/` | 學生 HF 權重與 tokenizer |
 | `assets/models/searchless-270M/270M/` | Chess-R1 動作價值 reward model |
-| `assets/datasets/chess-r1/boxed-nonthinking-v2/` | GRPO 訓練與驗證 parquet |
-| `assets/datasets/lichess/20261103/boxed-nonthinking-v2/` | 可選完整 Lichess 訓練池及分類索引，已排除現有 dev/test；使用前核對 verification.json |
+| `assets/datasets/lichess/20261103/boxed-nonthinking-v2/` | 新研究唯一提供的完整 Lichess 訓練池及分類索引，已排除現有 dev/test；使用前核對 verification.json |
 | `assets/vendor/Chess-R1-830c0597/` | searchless Chess 上游原始碼 |
 | `assets/engines/` | Fairy-Stockfish 與 NNUE |
 | `configs/grpo/default.json` | GRPO 配方模板 |
@@ -74,6 +73,8 @@ Meta-Agent 可提交單檔 L2、L2.5、L3 驗證，或以 `--full-panel` 同時�
 最終測試預設十局；`--games 20 --parallel-games 20` 可在單卡並行二十局、白黑各十局。使用同步排程和 PIECEWISE CUDA Graph，正式棋局前先完成獨立的學生生成自檢。任何基礎設施失敗保留原始記錄，不發布完整成績或算作棋局敗局。API provider 與模型名稱須先核實，詳見 [RSI 操作](docs/rsi-operations.md)。
 
 ## 研究起點
+
+新 RL 研究不帶入歷史預選訓練集：先從完整 Lichess 訓練池自主選樣，將選出的 train.parquet 填入實驗配方（模板 train_file=null）。選樣助手可選，選樣本身必須完成。原有研究的資料、checkpoint 與凍結配方保留供續跑／核對。使用 scripts/prepare_qwen_research.py 建立 v2 乾淨起點，資產僅列出本次所需的模型、reward 依賴及訓練池；共用帳號檔案系統不是權限隔離。
 
 新 campaign 從 Qwen3.5-4B、固定 Chess-R1 非思考 prompt 開始，先做 L2、L3 各 40 局基線，再提出 Phase 1 RL 研究。現有 campaign 恢復持久狀態；已啟動的 job 使用提交時的凍結快照，live 倉庫更新不會熱改已有實驗。
 

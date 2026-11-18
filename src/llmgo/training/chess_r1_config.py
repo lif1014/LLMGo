@@ -35,6 +35,14 @@ def validate_recipe(recipe):
     interval = recipe.get('checkpoint_every')
     if type(interval) is not int or interval <= 0:
         raise ValueError('checkpoint_every must be a positive integer')
+    training_file(recipe)
+
+
+def training_file(recipe):
+    path=recipe.get('train_file')
+    if not isinstance(path,str) or not path.strip():
+        raise ValueError('Select training data from the Lichess pool and set the experiment train_file before training')
+    return path
 
 
 def overrides(recipe, output):
@@ -101,8 +109,10 @@ def overrides(recipe, output):
         'algorithm.norm_adv_by_std_in_grpo': True,
         'algorithm.use_kl_in_reward': False,
         'algorithm.rollout_correction.bypass_mode': False,
-        'data.train_files': [r['train_file']],
-        'data.val_files': [r['validation_file']],
+        'data.train_files': [training_file(r)],
+        # verl constructs a val loader even when its puzzle validation is disabled.
+        # Reviewed runs use L2/L3; this unused loader needs no held-out parquet.
+        'data.val_files': [r.get('validation_file') or training_file(r)] if r.get('training_review') else [r['validation_file']],
         'data.train_batch_size': r['prompt_batch_size'],
         'data.val_batch_size': r.get('allocated_gpus',8)*r.get('rollout_max_num_seqs',128),
         'data.max_prompt_length': prompt_tokens,

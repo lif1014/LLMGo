@@ -2,7 +2,7 @@
 
 ## 來源與資料
 
-學生原始權重在 `/user/liyaohu4170/models/Qwen3.5-4B`（來源只讀），本專案核驗副本在 `assets/models/Qwen3.5-4B`。270M 權重原址是 `/user/lyh4170/models/chess-r1/searchless-270M-relayed/extracted/270M`，副本在 `assets/models/searchless-270M/270M`。上游程式在 `assets/vendor/Chess-R1-830c0597`。資料原址是 Chess-R1 實驗的 `data/boxed-nonthinking-v2`，副本在 `assets/datasets/chess-r1/boxed-nonthinking-v2`。
+學生原始權重在 `/user/liyaohu4170/models/Qwen3.5-4B`（來源只讀），本專案核驗副本在 `assets/models/Qwen3.5-4B`。270M 權重原址是 `/user/lyh4170/models/chess-r1/searchless-270M-relayed/extracted/270M`，副本在 `assets/models/searchless-270M/270M`。上游程式在 `assets/vendor/Chess-R1-830c0597`。新研究僅提供 `assets/datasets/lichess/20261103/boxed-nonthinking-v2` 完整訓練池，由 Meta-Agent 從頭選樣，沒有預選訓練子集。
 
 預設 prompt 要求唯一合法 SAN 步，以 `\\boxed{Nf3}` 作答，關閉 thinking。response 預設上限 16,384 tokens；temperature 1、top-p 0.95、top-k 20、presence penalty 1.5、repetition penalty 1。每題 8 個回答，GRPO 同題分組；達到回答上限的組整組拒收並補新資料。reward = 270M 的 Q(s,a) + 0.1 格式 + 0.1 英文；Lichess 標準答案僅作驗證指標。
 
@@ -20,7 +20,7 @@ Meta 可在新配方以整數 `max_response_tokens` 設定 512–16,384，`max_p
 
 當前 W&B 預設 offline；更新 JSON、分組表和原生日誌是權威證據。要用遠端 W&B 時需另立新實驗和 run ID。
 
-完整 Lichess 訓練池是額外選項，預設配方仍使用現有篩選資料。Meta-Agent 可自行選樣或沿用預設，並修改超參、reward 等 RL 設計；初始學生 checkpoint、prompt 與 non-thinking 模式固定。每輪資料選擇需要程式／查詢、ID 清單、分類統計與基於敗局的假設，不要求 random seed 或算力預算比較。詳見 [資料使用與轉檔](lichess-data.md)。
+新研究必須從完整 Lichess 訓練池自主選樣，模板 train_file=null。可用選樣助手或自行寫查詢／程式，再將產物填入實驗配方；後續可沿用本研究已選資料並記錄依據。Meta-Agent 可修改超參、reward 等 RL 設計；初始學生 checkpoint、prompt 與 non-thinking 模式固定。每輪資料選擇需要程式／查詢、ID 清單、分類統計與基於敗局的假設，不要求 random seed 或算力預算比較。詳見 [資料使用與轉檔](lichess-data.md)。
 
 ## 評測與 Meta-Agent
 

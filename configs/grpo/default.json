@@ -18,7 +18,7 @@
   "teacher_python": "/user/lyh4170/venvs/llmgo-chess-r1-teacher-cpu-20261029/bin/python",
   "teacher_upstream": "/user/lyh4170/LLMGo!/assets/vendor/Chess-R1-830c0597",
   "teacher_checkpoint": "/user/lyh4170/LLMGo!/assets/models/searchless-270M/270M",
-  "train_file": "/user/lyh4170/LLMGo!/assets/datasets/chess-r1/boxed-nonthinking-v2/train.parquet",
+  "train_file": null,
   "reward": {
     "format": 0.1,
     "english": 0.1,
@@ -40,7 +40,7 @@
   "prompt_batch_size": 128,
   "minibatch_prompts": 16,
   "run_id": "chess-r1-grpo-template",
-  "validation_file": "/user/lyh4170/LLMGo!/assets/datasets/chess-r1/boxed-nonthinking-v2/dev.parquet",
+  "validation_file": null,
   "resume_on_restart": true,
   "allocated_gpus": 8,
   "memory_gib": 512,

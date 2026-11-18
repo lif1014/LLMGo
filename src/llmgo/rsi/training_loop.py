@@ -14,7 +14,7 @@ from .evaluator import engine_identity, evaluate, evaluate_many
 from .ladder import batch_stats, opponent
 from .training_review import publish, decision
 from .research_control import require_research
-from llmgo.training.chess_r1_config import token_budgets
+from llmgo.training.chess_r1_config import token_budgets, training_file
 
 
 def freeze_recipe(payload, output):
@@ -27,6 +27,7 @@ def freeze_recipe(payload, output):
     recipe = read_json(template)
     # Reject invalid token budgets before allocating time to the step-0 panel.
     token_budgets(recipe)
+    training_file(recipe)
     recipe.update(model_path=payload['model_path'], run_id=output.name, run_directory=output.name,
                   attempt=output.name, allocated_gpus=payload.get('resources',{}).get('gpu_count',payload['site']['gpu_count']),
                   training_review=True)

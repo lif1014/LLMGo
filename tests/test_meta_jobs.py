@@ -190,7 +190,7 @@ def test_gpu_worker_uses_same_codex_runner_and_releases_service(tmp_path,monkeyp
 
 
 def test_clean_start_excludes_teacher_history_and_routes_outputs(tmp_path):
-    from llmgo.rsi.clean_start import prepare,DOCS
+    from llmgo.rsi.clean_start import prepare,DOCS,POOL
     repo=tmp_path/'repo';repo.mkdir()
     for folder in ('src','scripts','tests','.agents','configs/grpo','assets','var/runs','docs'):(repo/folder).mkdir(parents=True,exist_ok=True)
     (repo/'src/code.py').write_text('print(1)')
@@ -198,6 +198,12 @@ def test_clean_start_excludes_teacher_history_and_routes_outputs(tmp_path):
     (repo/'docs/grpo-maintenance.md').write_text('OLD_RESEARCH_CONCLUSION')
     for name in DOCS:(repo/'docs'/name).write_text('generic contract '+name)
     atomic_json(repo/'configs/grpo/default.json',{})
+    atomic_json(repo/POOL/'manifest.json',{'files':{},'reference':{'path':'historical-input'},
+        'heldouts':{'path':'reserved-input'},'source':{'path':'raw-input','sha256':'source-identity'}})
+    atomic_json(repo/POOL/'verification.json',{'status':'passed','heldouts':{'path':'reserved-input'}})
+    (repo/'assets/datasets/legacy-training').mkdir(parents=True)
+    (repo/'scripts/prepare_lichess_pool.py').write_text('historical-input')
+    (repo/'scripts/run_deepseek_loose.py').write_text('historical-input')
     site=tmp_path/'site.json';atomic_json(site,{'repo':str(repo)})
     target=tmp_path/'clean';result=prepare(repo,target,site)
     assert result.exists() and not (target/'docs/grpo-maintenance.md').exists()
@@ -205,8 +211,19 @@ def test_clean_start_excludes_teacher_history_and_routes_outputs(tmp_path):
     assert (target/'docs/rsi-operations.md').read_text()=='generic contract meta-research-operations.md'
     assert (target/'AGENTS.md').read_text()=='generic contract meta-workspace-agents.md'
     assert not (target/'.git').exists() and (target/'var/runs').resolve()==repo/'var/runs'
+    assert not (target/'assets').is_symlink()
+    assert sorted(p.name for p in (target/'assets/datasets').iterdir())==['lichess']
+    assert (target/POOL/'train.parquet').is_symlink()
+    assert not (target/'scripts/prepare_lichess_pool.py').exists()
+    assert not (target/'scripts/run_deepseek_loose.py').exists()
+    pool_manifest=read_json(target/POOL/'manifest.json')
+    assert not {'reference','heldouts'}&pool_manifest.keys()
+    assert pool_manifest['source']=={'sha256':'source-identity'}
+    assert read_json(target/POOL/'verification.json')=={'status':'passed'}
     manifest=read_json(target/'clean-start.json')
     assert not any('old-results' in n or 'maintenance' in n for n in manifest['source_files'])
+    assert manifest['data_policy']['selection_required'] is True
+    assert 'No training subset is preselected' in (target/'README.md').read_text()
     with pytest.raises(FileExistsError):prepare(repo,target,site)
 
 

@@ -130,7 +130,7 @@ summary 必須寫明具體問題。低分、零勝、需要再測一檔、可修
 ## 訓練交付與監管
 
 訓練提案範本與欄位見 `docs/clean-grpo-pipeline.md`。每輪交付資料選擇程式／查詢、
-ID 清單、分類統計與敗局假設；沿用預設資料也記錄。不要捏造已執行、已選樣或已提高分數。
+ID 清單、分類統計與敗局假設；沿用本研究已選資料也記錄。不要捏造已執行、已選樣或已提高分數。
 每5個 GRPO step 保存完整 checkpoint，完成 L2/L3 各40局後，Meta 決定 continue/replan/finish。
 模型交付不是強制達到固定步數；保留全部中間點及原始分數。DeepSeek 最終測試留給使用者。
 所有產物寫本研究的遠端 workspace/campaign/var/runs，沿用既有網頁與 Executor。
@@ -154,9 +154,9 @@ finish_research.py 與 Controller 共用此格式檢查；格式錯誤會在當�
 先用 `--list-tags` 查真實分類、`--preview` 查配額是否可滿足；複合分類／各組難度用 `--spec` JSON。
 用 `/user/lyh4170/venvs/llmgo-lichess-data-20261103/bin/python` 執行 CPU 選樣。
 比例以 puzzle 計算，同題只加入一次，再保留其在訓練池中的全部局面；每輪保留交付檔。
-詳見 `docs/lichess-data.md`。**不一定需要用這個腳本**：可以保留預設資料，也可以自行寫選樣程式。
-是否使用、分類配比及難度由你根據本研究敗局自主決定，不是強制課程。
-只修改實驗配方的 train_file，不改預設資料、固定學生 prompt、non-thinking 或正式評測協議。
+詳見 `docs/lichess-data.md`。**不一定需要用這個腳本**：也可以自行寫查詢／選樣程式；新研究必須從完整 Lichess 訓練池自行選樣，沒有預選子集。
+分類配比及難度由你根據本研究敗局自主決定，不是強制課程；不得讀取其他研究的選樣結果。
+將選樣產物填入實驗配方的 train_file；模板預設為空。固定學生 prompt、non-thinking 與正式評測協議不變。
 
 
 2026-11-16 現行啟動規則：Meta 使用 Qwen3.8-27B thinking，128K context／64K最大輸出／56K compaction，

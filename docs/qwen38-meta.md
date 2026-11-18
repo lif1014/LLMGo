@@ -107,10 +107,12 @@ install -m 600 "$HOME/.cybertronctl/profiles/modelbest/token" \
 After reviewing acceptance results, the user explicitly starts:
 
 ```bash
-bash '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v1/scripts/start_rsi.sh' \
-  --site '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v1/configs/rsi/site.qwen38-meta.json' \
-  --campaign chess-grpo-qwen38-27b-meta-v1
+bash '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v2/scripts/start_rsi.sh' \
+  --site '/user/lyh4170/LLMGo!/var/clean-starts/qwen38-27b-meta-v2/configs/rsi/site.qwen38-meta.json' \
+  --campaign chess-grpo-qwen38-27b-meta-v2
 ```
+
+The v2 clean source exposes only the complete training-only Lichess pool and required model/reward assets. It supplies no preselected training subset. The Meta-Agent selects data afresh, records the selection deliveries, and fills train_file in an experiment recipe. Existing studies retain their frozen sources and may be resumed separately.
 
 Fresh initialization measures Student L2/L3 baselines before the first research proposal.
 Do not import the old Qwen4B teacher's checkpoint or records. Its paused campaign may be
